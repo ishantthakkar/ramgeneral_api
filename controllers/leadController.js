@@ -1,0 +1,148 @@
+const Lead = require('../models/Lead');
+
+const ALLOWED_STATUSES = ['New', 'In Progress', 'Closed', 'Converted To Customer'];
+
+exports.createLead = async (req, res) => {
+  try {
+    const { name, company, mobileNumber, salesPerson, lastActivity, status } = req.body;
+
+    if (!name || !company || !mobileNumber || !salesPerson || !status) {
+      return res.status(400).json({ message: 'All lead fields are required.' });
+    }
+
+    if (!ALLOWED_STATUSES.includes(status)) {
+      return res.status(400).json({
+        message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
+      });
+    }
+
+    const lead = await Lead.create({
+      name,
+      company,
+      mobileNumber,
+      salesPerson,
+      lastActivity: lastActivity ? new Date(lastActivity) : Date.now(),
+      status,
+      convertedToCustomer: status === 'Converted To Customer',
+    });
+
+    return res.status(201).json({ lead, message: 'Lead created successfully.' });
+  } catch (error) {
+    console.error('Create lead error:', error);
+    return res.status(500).json({ message: 'Server error creating lead.' });
+  }
+};
+
+exports.listLeads = async (req, res) => {
+  try {
+    const { status, salesPerson, includeConverted } = req.query;
+    const filter = {};
+
+    if (!includeConverted || includeConverted === 'false') {
+      filter.convertedToCustomer = false;
+    }
+
+    if (status) {
+      if (!ALLOWED_STATUSES.includes(status)) {
+        return res.status(400).json({
+          message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
+        });
+      }
+      filter.status = status;
+    }
+
+    if (salesPerson) {
+      filter.salesPerson = salesPerson;
+    }
+
+    const leads = await Lead.find(filter).sort({ createdAt: -1 });
+    const leadSummaries = leads.map((lead) => ({
+      id: lead._id,
+      name: lead.name,
+      company: lead.company,
+      mobileNumber: lead.mobileNumber,
+      createdDate: lead.createdAt,
+      salesPerson: lead.salesPerson,
+      lastActivity: lead.lastActivity,
+      status: lead.status,
+    }));
+
+    return res.status(200).json({ leads: leadSummaries });
+  } catch (error) {
+    console.error('List leads error:', error);
+    return res.status(500).json({ message: 'Server error listing leads.' });
+  }
+};
+
+exports.getLead = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const lead = await Lead.findById(id);
+
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    return res.status(200).json({ lead });
+  } catch (error) {
+    console.error('Get lead error:', error);
+    return res.status(500).json({ message: 'Server error fetching lead.' });
+  }
+};
+
+exports.updateLead = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, company, mobileNumber, salesPerson, lastActivity, status } = req.body;
+    const updateData = {};
+
+    if (name) updateData.name = name;
+    if (company) updateData.company = company;
+    if (mobileNumber) updateData.mobileNumber = mobileNumber;
+    if (salesPerson) updateData.salesPerson = salesPerson;
+    if (lastActivity) updateData.lastActivity = new Date(lastActivity);
+    if (status) {
+      if (!ALLOWED_STATUSES.includes(status)) {
+        return res.status(400).json({
+          message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
+        });
+      }
+      updateData.status = status;
+      updateData.convertedToCustomer = status === 'Converted To Customer';
+    }
+
+    const updatedLead = await Lead.findByIdAndUpdate(id, updateData, {
+      new: true,
+      runValidators: true,
+    });
+
+    if (!updatedLead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    return res.status(200).json({ lead: updatedLead, message: 'Lead updated successfully.' });
+  } catch (error) {
+    console.error('Update lead error:', error);
+    return res.status(500).json({ message: 'Server error updating lead.' });
+  }
+};
+
+exports.convertToCustomer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const lead = await Lead.findById(id);
+
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    lead.status = 'Converted To Customer';
+    lead.convertedToCustomer = true;
+    await lead.save();
+
+    return res.status(200).json({ lead, message: 'Lead converted to customer.' });
+  } catch (error) {
+    console.error('Convert lead error:', error);
+    return res.status(500).json({ message: 'Server error converting lead.' });
+  }
+};
