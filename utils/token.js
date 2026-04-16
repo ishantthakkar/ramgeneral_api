@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey';
-const ACCESS_TOKEN_EXPIRES_IN = '15m';
+const ACCESS_TOKEN_EXPIRES_IN = '7d';
 const REFRESH_TOKEN_EXPIRES_IN = '7d';
 
 const generateAccessToken = (admin) => {
