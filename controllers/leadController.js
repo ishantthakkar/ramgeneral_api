@@ -1,13 +1,22 @@
 const Lead = require('../models/Lead');
+const Customer = require('../models/Customer');
+const User = require('../models/User');
 
 const ALLOWED_STATUSES = ['New', 'In Progress', 'Closed', 'Converted To Customer'];
 
 exports.createLead = async (req, res) => {
   try {
-    const { name, company, mobileNumber, salesPerson, lastActivity, status } = req.body;
+    const { name, company, mobileNumber, email, leadSource, status, street, city, state, zip, notes, salesPerson: salesPersonBody, lastActivity } = req.body;
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid user token.' });
+    }
+
+    const salesPerson = salesPersonBody || (user.userRole === 'sales_person' ? user.fullName : undefined);
 
     if (!name || !company || !mobileNumber || !salesPerson || !status) {
-      return res.status(400).json({ message: 'All lead fields are required.' });
+      return res.status(400).json({ message: 'name, company, mobileNumber, salesPerson and status are required.' });
     }
 
     if (!ALLOWED_STATUSES.includes(status)) {
@@ -20,6 +29,17 @@ exports.createLead = async (req, res) => {
       name,
       company,
       mobileNumber,
+      email: email ? email.toLowerCase() : '',
+      leadSource: leadSource || '',
+      street: street || '',
+      city: city || '',
+      state: state || '',
+      zip: zip || '',
+      notes: notes || '',
+      user_id: user._id,
+      createdByName: user.fullName,
+      createdByEmail: user.email,
+      createdByRole: user.userRole,
       salesPerson,
       lastActivity: lastActivity ? new Date(lastActivity) : Date.now(),
       status,
@@ -61,10 +81,19 @@ exports.listLeads = async (req, res) => {
       name: lead.name,
       company: lead.company,
       mobileNumber: lead.mobileNumber,
+      email: lead.email,
+      leadSource: lead.leadSource,
+      street: lead.street,
+      city: lead.city,
+      state: lead.state,
+      zip: lead.zip,
+      notes: lead.notes,
       createdDate: lead.createdAt,
       salesPerson: lead.salesPerson,
       lastActivity: lead.lastActivity,
       status: lead.status,
+      user_id: lead.user_id,
+      createdByName: lead.createdByName,
     }));
 
     return res.status(200).json({ leads: leadSummaries });
@@ -93,12 +122,19 @@ exports.getLead = async (req, res) => {
 exports.updateLead = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, company, mobileNumber, salesPerson, lastActivity, status } = req.body;
+    const { name, company, mobileNumber, email, leadSource, status, address, notes, salesPerson, lastActivity } = req.body;
     const updateData = {};
 
     if (name) updateData.name = name;
     if (company) updateData.company = company;
     if (mobileNumber) updateData.mobileNumber = mobileNumber;
+    if (email) updateData.email = email.toLowerCase();
+    if (leadSource) updateData.leadSource = leadSource;
+    if (street) updateData.street = street;
+    if (city) updateData.city = city;
+    if (state) updateData.state = state;
+    if (zip) updateData.zip = zip;
+    if (notes) updateData.notes = notes;
     if (salesPerson) updateData.salesPerson = salesPerson;
     if (lastActivity) updateData.lastActivity = new Date(lastActivity);
     if (status) {
@@ -136,11 +172,35 @@ exports.convertToCustomer = async (req, res) => {
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
+    let customer = await Customer.findOne({ leadId: lead._id });
+    if (!customer) {
+      customer = await Customer.create({
+        leadId: lead._id,
+        user_id: req.user.id,
+        name: lead.name,
+        company: lead.company,
+        mobileNumber: lead.mobileNumber,
+        email: lead.email,
+        leadSource: lead.leadSource,
+        salesPerson: lead.salesPerson,
+        convertedDate: new Date(),
+        lastActivity: lead.lastActivity,
+        status: 'New',
+        address: {
+          street: lead.street,
+          city: lead.city,
+          state: lead.state,
+          zip: lead.zip,
+        },
+        notes: lead.notes ? [{ note: lead.notes, createdAt: new Date() }] : [],
+      });
+    }
+
     lead.status = 'Converted To Customer';
     lead.convertedToCustomer = true;
     await lead.save();
 
-    return res.status(200).json({ lead, message: 'Lead converted to customer.' });
+    return res.status(200).json({ lead, customer, message: 'Lead converted to customer.' });
   } catch (error) {
     console.error('Convert lead error:', error);
     return res.status(500).json({ message: 'Server error converting lead.' });

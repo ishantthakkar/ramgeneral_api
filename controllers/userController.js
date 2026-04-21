@@ -1,6 +1,58 @@
 const User = require('../models/User');
+const { generateAccessToken, generateRefreshToken } = require('../utils/token');
 
 const ALLOWED_ROLES = ['sales_person', 'contractor', 'project_manager'];
+const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
+
+exports.loginUser = async (req, res) => {
+    try {
+        const { mobileNumber, email, otp } = req.body;
+
+        if ((!mobileNumber && !email) || !otp) {
+            return res.status(400).json({ message: 'mobileNumber or email and otp are required.' });
+        }
+
+        const filter = { otpCode: otp };
+        if (mobileNumber) filter.mobileNumber = mobileNumber;
+        if (email) filter.email = email.toLowerCase();
+
+        const user = await User.findOne(filter);
+        if (!user) {
+            return res.status(401).json({ message: 'Invalid OTP or user details.' });
+        }
+
+        if (!user.otpExpiresAt || user.otpExpiresAt < new Date()) {
+            return res.status(401).json({ message: 'OTP has expired.' });
+        }
+
+        user.otpVerified = true;
+        user.otpCode = '';
+        user.otpExpiresAt = null;
+
+        const accessToken = generateAccessToken(user);
+        const refreshToken = generateRefreshToken(user);
+        user.refreshTokens.push({ token: refreshToken });
+        await user.save();
+
+        return res.json({
+            accessToken,
+            refreshToken,
+            verifyToken: refreshToken,
+            user: {
+                id: user._id,
+                fullName: user.fullName,
+                company: user.company,
+                mobileNumber: user.mobileNumber,
+                email: user.email,
+                userRole: user.userRole,
+                status: user.status,
+            },
+        });
+    } catch (error) {
+        console.error('User login error:', error);
+        return res.status(500).json({ message: 'Server error during user login.' });
+    }
+};
 
 exports.createUser = async (req, res) => {
     try {
@@ -171,4 +223,83 @@ exports.listUsers = async (req, res) => {
         console.error('List users error:', error);
         return res.status(500).json({ message: 'Server error listing users.' });
     }
+};
+
+exports.sendUserOtp = async (req, res) => {
+  try {
+    const { mobileNumber } = req.body;
+
+    if (!mobileNumber) {
+      return res.status(400).json({ message: 'mobileNumber is required.' });
+    }
+
+    const user = await User.findOne(mobileNumber ? { mobileNumber } : {});
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const otpCode = generateOtp();
+    const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+    user.otpCode = otpCode;
+    user.otpExpiresAt = otpExpiresAt;
+    user.otpVerified = false;
+    await user.save();
+
+    return res.json({
+      message: 'OTP sent successfully.',
+      ...(process.env.NODE_ENV !== 'production' ? { otpCode } : {}),
+    });
+  } catch (error) {
+    console.error('Send user OTP error:', error);
+    return res.status(500).json({ message: 'Server error sending OTP.' });
+  }
+};
+
+exports.verifyUserOtp = async (req, res) => {
+  try {
+    const { mobileNumber, email, otp } = req.body;
+
+    if ((!mobileNumber && !email) || !otp) {
+      return res.status(400).json({ message: 'mobileNumber or email and otp are required.' });
+    }
+
+    const filter = { otpCode: otp };
+    if (mobileNumber) filter.mobileNumber = mobileNumber;
+    if (email) filter.email = email.toLowerCase();
+
+    const user = await User.findOne(filter);
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid OTP or user details.' });
+    }
+
+    if (!user.otpExpiresAt || user.otpExpiresAt < new Date()) {
+      return res.status(401).json({ message: 'OTP has expired.' });
+    }
+
+    user.otpVerified = true;
+    user.otpCode = '';
+    user.otpExpiresAt = null;
+
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+    user.refreshTokens.push({ token: refreshToken });
+    await user.save();
+
+    return res.json({
+      accessToken,
+      refreshToken,
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        company: user.company,
+        mobileNumber: user.mobileNumber,
+        email: user.email,
+        userRole: user.userRole,
+      },
+    });
+  } catch (error) {
+    console.error('Verify user OTP error:', error);
+    return res.status(500).json({ message: 'Server error verifying OTP.' });
+  }
 };
