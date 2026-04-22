@@ -128,23 +128,33 @@ exports.getCustomer = async (req, res) => {
     // ✅ Get all surveys of this customer
     const surveys = await Survey.find({ customer_id: id }).sort({ createdAt: -1 });
 
-    const baseUrl = "https://ramgeneral-api.onrender.com/uploads/surveys/";
+    const baseUrl = "https://ramgeneral-api.onrender.com/uploads/survey/";    // ✅ Get entries for each survey
 
-    // ✅ Convert survey images to full URLs
-    const surveysWithFullUrls = surveys.map(survey => {
-      const surveyObj = survey.toObject();
+    const surveysWithEntries = await Promise.all(
+      surveys.map(async (survey) => {
+        const entries = await Survey.find({ survey_id: survey._id });
 
-      // ✅ Convert image filenames to full URLs
-      surveyObj.images = (surveyObj.images || []).map(img =>
-        `${baseUrl}${img}`
-      );
+        const updatedEntries = entries.map(entry => {
+          const entryObj = entry.toObject();
 
-      return surveyObj;
-    });
+          // ✅ convert image filenames to full URL
+          entryObj.images = (entryObj.images || []).map(img =>
+            `${baseUrl}${img}`
+          );
+          console.log('Updated entry images:', entryObj.images); // ✅ Log the updated images array
+          return entryObj;
+        });
+
+        return {
+          ...survey.toObject(),
+          entries: updatedEntries,
+        };
+      })
+    );
 
     return res.status(200).json({
       customer,
-      surveys: surveysWithFullUrls,
+      surveys: surveysWithEntries,
     });
 
   } catch (error) {

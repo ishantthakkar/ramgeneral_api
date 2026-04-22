@@ -252,26 +252,17 @@ exports.assignSurvey = async (req, res) => {
 
         // Check if assigned user exists and has appropriate role
         const assignedUser = await User.findById(assignedTo);
+        console.log(assignedUser);
         if (!assignedUser) {
             return res.status(404).json({ message: 'Assigned user not found.' });
         }
 
-        if (assignedUser.userRole !== 'contractor' && assignedUser.userRole !== 'project_manager') {
-            return res.status(400).json({ message: 'Assigned user must be a contractor or project manager.' });
+        if (assignedUser.userRole !== 'project_manager') {
+            return res.status(400).json({ message: 'Assigned user must be a project manager.' });
         }
 
-        const updatedSurvey = await Survey.findByIdAndUpdate(id, { assignedTo }, {
-            new: true,
-            runValidators: true,
-        }).populate('assignedTo', 'fullName email');
+        return res.status(200).json({ message: 'Survey assigned successfully.' });
 
-        if (!updatedSurvey) {
-            return res.status(404).json({ message: 'Survey not found.' });
-        }
-
-        const surveyResponse = updatedSurvey.toObject();
-        surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
-        return res.status(200).json({ survey: surveyResponse, message: 'Survey assigned successfully.' });
     } catch (error) {
         console.error('Assign survey error:', error);
         return res.status(500).json({ message: 'Server error assigning survey.' });
