@@ -87,7 +87,7 @@ exports.createSurvey = async (req, res) => {
 
         // Add full image URLs to response
         const surveyResponse = survey.toObject();
-        surveyResponse.images = surveyResponse.images.map(img => `http://localhost:5000/uploads/surveys/${img}`);
+        surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
 
         return res.status(201).json({ survey: surveyResponse, message: 'Survey stored successfully.' });
     } catch (error) {
@@ -125,7 +125,7 @@ exports.listSurveys = async (req, res) => {
         const surveys = await Survey.find(filter).sort({ createdAt: -1 }).populate('assignedTo', 'fullName email');
         const surveysResponse = surveys.map(survey => {
             const surveyObj = survey.toObject();
-            surveyObj.images = surveyObj.images.map(img => `http://localhost:5000/uploads/surveys/${img}`);
+            surveyObj.images = surveyObj.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
             return surveyObj;
         });
         return res.status(200).json({ surveys: surveysResponse });
@@ -164,7 +164,7 @@ exports.listAssignedSurveys = async (req, res) => {
 
         const surveysResponse = surveys.map(survey => {
             const surveyObj = survey.toObject();
-            surveyObj.images = surveyObj.images.map(img => `http://localhost:5000/uploads/surveys/${img}`);
+            surveyObj.images = surveyObj.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
             return surveyObj;
         });
 
@@ -187,7 +187,7 @@ exports.getSurvey = async (req, res) => {
             return res.status(404).json({ message: 'Survey not found.' });
         }
         const surveyResponse = survey.toObject();
-        surveyResponse.images = surveyResponse.images.map(img => `http://localhost:5000/uploads/surveys/${img}`);
+        surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
         return res.status(200).json({ survey: surveyResponse });
     } catch (error) {
         console.error('Get survey error:', error);
@@ -226,7 +226,7 @@ exports.updateSurvey = async (req, res) => {
     }
 
     const surveyResponse = updatedSurvey.toObject();
-    surveyResponse.images = surveyResponse.images.map(img => `http://localhost:5000/uploads/surveys/${img}`);
+    surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
     return res.status(200).json({ survey: surveyResponse, message: 'Survey updated successfully.' });
   } catch (error) {
     console.error('Update survey error:', error);
@@ -270,46 +270,10 @@ exports.assignSurvey = async (req, res) => {
         }
 
         const surveyResponse = updatedSurvey.toObject();
-        surveyResponse.images = surveyResponse.images.map(img => `http://localhost:5000/uploads/surveys/${img}`);
+        surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
         return res.status(200).json({ survey: surveyResponse, message: 'Survey assigned successfully.' });
     } catch (error) {
         console.error('Assign survey error:', error);
         return res.status(500).json({ message: 'Server error assigning survey.' });
     }
-};
-
-exports.updateCustomerSurveyStatus = async (req, res) => {
-  try {
-    const { customerId, status } = req.params;
-
-    // ✅ Validate allowed statuses
-    const allowedStatuses = ['in_progress', 'Draft', 'Completed'];
-
-    if (!allowedStatuses.includes(status)) {
-      return res.status(400).json({
-        message: `Invalid status. Allowed: ${allowedStatuses.join(', ')}`,
-      });
-    }
-
-    // ✅ Check customer exists
-    const customer = await Customer.findById(customerId);
-    if (!customer) {
-      return res.status(404).json({ message: 'Customer not found.' });
-    }
-
-    // ✅ Update status
-    customer.status = status;
-    await customer.save();
-
-    return res.status(200).json({
-      message: `Customer survey status updated to '${status}' successfully.`,
-      customer,
-    });
-
-  } catch (error) {
-    console.error('Update customer survey status error:', error);
-    return res.status(500).json({
-      message: 'Server error updating customer survey status.',
-    });
-  }
 };

@@ -127,22 +127,24 @@ exports.getCustomer = async (req, res) => {
 
     // ✅ Get all surveys of this customer
     const surveys = await Survey.find({ customer_id: id }).sort({ createdAt: -1 });
-    console.log(`Found ${surveys.length} surveys for customer ${id}`);
-    // ✅ Get entries for each survey
-    const surveysWithEntries = await Promise.all(
-      surveys.map(async (survey) => {
-        const entries = await Survey.find({ survey_id: survey._id });
 
-        return {
-          ...survey.toObject(),
-          entries,
-        };
-      })
-    );
+    const baseUrl = "https://ramgeneral-api.onrender.com/uploads/surveys/";
+
+    // ✅ Convert survey images to full URLs
+    const surveysWithFullUrls = surveys.map(survey => {
+      const surveyObj = survey.toObject();
+
+      // ✅ Convert image filenames to full URLs
+      surveyObj.images = (surveyObj.images || []).map(img =>
+        `${baseUrl}${img}`
+      );
+
+      return surveyObj;
+    });
 
     return res.status(200).json({
       customer,
-      surveys: surveysWithEntries,
+      surveys: surveysWithFullUrls,
     });
 
   } catch (error) {
