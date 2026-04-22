@@ -23,7 +23,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/admin', authRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api', leadRoutes);
-app.use('/api/admin', customerRoutes);
+app.use('/api/customer', customerRoutes);
 app.use('/api', surveyRoutes);
 
 // Health check

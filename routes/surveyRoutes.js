@@ -35,6 +35,7 @@ const upload = multer({
 
 router.post('/surveys', verifyToken, upload.array('images', 5), surveyController.createSurvey);
 router.get('/surveys', verifyToken, surveyController.listSurveys);
+router.get('/surveys/assigned', verifyToken, surveyController.listAssignedSurveys);
 router.get('/surveys/:id', verifyToken, surveyController.getSurvey);
 router.put('/surveys/:id', verifyToken, surveyController.updateSurvey);
 router.post('/surveys/:id/assign', verifyToken, surveyController.assignSurvey);

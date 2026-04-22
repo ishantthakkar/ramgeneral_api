@@ -48,6 +48,10 @@ const customerSchema = new mongoose.Schema({
     trim: true,
     default: '',
   },
+  assignedTo: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  },
   lastActivity: {
     type: Date,
     default: Date.now,
@@ -59,7 +63,7 @@ const customerSchema = new mongoose.Schema({
   status: {
     type: String,
     required: true,
-    enum: ['New', 'In Progress', 'Closed'],
+    enum: ['in_progress', 'draft', 'completed'],
     default: 'New',
     trim: true,
   },

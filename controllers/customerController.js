@@ -1,11 +1,25 @@
 const Customer = require('../models/Customer');
+const Survey = require('../models/Survey');
 
 const ALLOWED_STATUSES = ['New', 'In Progress', 'Closed'];
 
 exports.listCustomers = async (req, res) => {
   try {
+    const user_id = req.user.id;
     const { status, salesPerson, contractor } = req.query;
     const filter = {};
+
+    // Get user to check role
+    const User = require('../models/User');
+    const user = await User.findById(user_id);
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid authenticated user.' });
+    }
+
+    // If contractor or project manager, only show assigned customers
+    if (user.userRole === 'contractor' || user.userRole === 'project_manager') {
+      filter.assignedTo = user_id;
+    }
 
     if (status) {
       filter.status = status;
@@ -32,6 +46,7 @@ exports.listCustomers = async (req, res) => {
       contractor: customer.contractor,
       lastActivity: customer.lastActivity,
       status: customer.status,
+
     }));
 
     return res.status(200).json({ customers: customerSummaries });
@@ -78,14 +93,14 @@ exports.listConvertedCustomers = async (req, res) => {
       lastActivity: customer.lastActivity,
       lead: customer.leadId
         ? {
-            id: customer.leadId._id,
-            name: customer.leadId.name,
-            company: customer.leadId.company,
-            email: customer.leadId.email,
-            mobileNumber: customer.leadId.mobileNumber,
-            leadSource: customer.leadId.leadSource,
-            status: customer.leadId.status,
-          }
+          id: customer.leadId._id,
+          name: customer.leadId.name,
+          company: customer.leadId.company,
+          email: customer.leadId.email,
+          mobileNumber: customer.leadId.mobileNumber,
+          leadSource: customer.leadId.leadSource,
+          status: customer.leadId.status,
+        }
         : null,
     }));
 
@@ -103,13 +118,33 @@ exports.listConvertedCustomers = async (req, res) => {
 exports.getCustomer = async (req, res) => {
   try {
     const { id } = req.params;
-    const customer = await Customer.findById(id);
 
+    // ✅ Get customer
+    const customer = await Customer.findById(id);
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
     }
 
-    return res.status(200).json({ customer });
+    // ✅ Get all surveys of this customer
+    const surveys = await Survey.find({ customer_id: id }).sort({ createdAt: -1 });
+    console.log(`Found ${surveys.length} surveys for customer ${id}`);
+    // ✅ Get entries for each survey
+    const surveysWithEntries = await Promise.all(
+      surveys.map(async (survey) => {
+        const entries = await Survey.find({ survey_id: survey._id });
+
+        return {
+          ...survey.toObject(),
+          entries,
+        };
+      })
+    );
+
+    return res.status(200).json({
+      customer,
+      surveys: surveysWithEntries,
+    });
+
   } catch (error) {
     console.error('Get customer error:', error);
     return res.status(500).json({ message: 'Server error fetching customer.' });
@@ -196,5 +231,147 @@ exports.assignContractor = async (req, res) => {
   } catch (error) {
     console.error('Assign contractor error:', error);
     return res.status(500).json({ message: 'Server error assigning contractor.' });
+  }
+};
+
+exports.listAssignedCustomers = async (req, res) => {
+  try {
+    const user_id = req.user.id;
+    const { status, salesPerson } = req.query;
+
+    // Get user to check role
+    const User = require('../models/User');
+    const user = await User.findById(user_id);
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid authenticated user.' });
+    }
+
+    // Only allow contractors and project managers to access this endpoint
+    if (user.userRole !== 'contractor' && user.userRole !== 'project_manager') {
+      return res.status(403).json({ message: 'Access denied. Only contractors and project managers can view assigned customers.' });
+    }
+
+    const filter = { assignedTo: user_id };
+
+    if (status) {
+      filter.status = status;
+    }
+
+    if (salesPerson) {
+      filter.salesPerson = salesPerson;
+    }
+
+    const customers = await Customer.find(filter)
+      .sort({ createdAt: -1 })
+      .populate('assignedTo', 'fullName email userRole')
+      .populate('user_id', 'fullName email');
+
+    const customerSummaries = customers.map((customer) => ({
+      id: customer._id,
+      accountNumber: customer.accountNumber,
+      name: customer.name,
+      company: customer.company,
+      mobileNumber: customer.mobileNumber,
+      email: customer.email,
+      leadSource: customer.leadSource,
+      createdDate: customer.createdAt,
+      convertedDate: customer.convertedDate,
+      salesPerson: customer.salesPerson,
+      contractor: customer.contractor,
+      lastActivity: customer.lastActivity,
+      status: customer.status,
+      assignedTo: customer.assignedTo,
+      createdBy: customer.user_id,
+    }));
+
+    return res.status(200).json({
+      message: 'Assigned customers retrieved successfully.',
+      total: customerSummaries.length,
+      customers: customerSummaries,
+    });
+  } catch (error) {
+    console.error('List assigned customers error:', error);
+    return res.status(500).json({ message: 'Server error listing assigned customers.' });
+  }
+};
+
+exports.assignCustomer = async (req, res) => {
+  try {
+    const user_id = req.user.id;
+    const { id } = req.params;
+    const { assignedTo } = req.body;
+
+    // Check if user is admin
+    const Admin = require('../models/Admin');
+    const admin = await Admin.findById(user_id);
+    if (!admin) {
+      return res.status(403).json({ message: 'Only admins can assign customers.' });
+    }
+
+    if (!assignedTo) {
+      return res.status(400).json({ message: 'assignedTo is required.' });
+    }
+
+    // Check if assigned user exists and has appropriate role
+    const User = require('../models/User');
+    const assignedUser = await User.findById(assignedTo);
+    if (!assignedUser) {
+      return res.status(404).json({ message: 'Assigned user not found.' });
+    }
+
+    if (assignedUser.userRole !== 'contractor' && assignedUser.userRole !== 'project_manager') {
+      return res.status(400).json({ message: 'Assigned user must be a contractor or project manager.' });
+    }
+
+    const customer = await Customer.findByIdAndUpdate(
+      id,
+      { assignedTo },
+      { new: true, runValidators: true }
+    ).populate('assignedTo', 'fullName email userRole');
+
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    return res.status(200).json({ customer, message: 'Customer assigned successfully.' });
+  } catch (error) {
+    console.error('Assign customer error:', error);
+    return res.status(500).json({ message: 'Server error assigning customer.' });
+  }
+};
+
+exports.updateCustomerSurveyStatus = async (req, res) => {
+  try {
+    const { customerId, status } = req.params;
+
+    // ✅ Validate allowed statuses
+    const allowedStatuses = ['in_progress', 'draft', 'completed'];
+
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        message: `Invalid status. Allowed: ${allowedStatuses.join(', ')}`,
+      });
+    }
+
+    // ✅ Check customer exists
+    const customer = await Customer.findById(customerId);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    // ✅ Update status
+    customer.status = status;
+    await customer.save();
+
+    return res.status(200).json({
+      message: `Customer survey status updated to '${status}' successfully.`,
+      customer,
+    });
+
+  } catch (error) {
+    console.error('Update customer survey status error:', error);
+    return res.status(500).json({
+      message: 'Server error updating customer survey status.',
+    });
   }
 };

@@ -135,6 +135,50 @@ exports.listSurveys = async (req, res) => {
     }
 };
 
+exports.listAssignedSurveys = async (req, res) => {
+    try {
+        const user_id = req.user.id;
+        const { customer_id, status } = req.query;
+
+        // Get user to check role
+        const user = await User.findById(user_id);
+        if (!user) {
+            return res.status(401).json({ message: 'Invalid authenticated user.' });
+        }
+
+        // Only allow contractors and project managers to access this endpoint
+        if (user.userRole !== 'contractor' && user.userRole !== 'project_manager') {
+            return res.status(403).json({ message: 'Access denied. Only contractors and project managers can view assigned surveys.' });
+        }
+
+        const filter = { assignedTo: user_id };
+
+        if (customer_id) filter.customer_id = customer_id;
+        if (status) filter.status = status;
+
+        const surveys = await Survey.find(filter)
+            .sort({ createdAt: -1 })
+            .populate('customer_id', 'name company mobileNumber email')
+            .populate('user_id', 'fullName email')
+            .populate('assignedTo', 'fullName email');
+
+        const surveysResponse = surveys.map(survey => {
+            const surveyObj = survey.toObject();
+            surveyObj.images = surveyObj.images.map(img => `http://localhost:5000/uploads/surveys/${img}`);
+            return surveyObj;
+        });
+
+        return res.status(200).json({
+            message: 'Assigned surveys retrieved successfully.',
+            total: surveysResponse.length,
+            surveys: surveysResponse
+        });
+    } catch (error) {
+        console.error('List assigned surveys error:', error);
+        return res.status(500).json({ message: 'Server error listing assigned surveys.' });
+    }
+};
+
 exports.getSurvey = async (req, res) => {
     try {
         const { id } = req.params;
@@ -232,4 +276,40 @@ exports.assignSurvey = async (req, res) => {
         console.error('Assign survey error:', error);
         return res.status(500).json({ message: 'Server error assigning survey.' });
     }
+};
+
+exports.updateCustomerSurveyStatus = async (req, res) => {
+  try {
+    const { customerId, status } = req.params;
+
+    // ✅ Validate allowed statuses
+    const allowedStatuses = ['in_progress', 'Draft', 'Completed'];
+
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        message: `Invalid status. Allowed: ${allowedStatuses.join(', ')}`,
+      });
+    }
+
+    // ✅ Check customer exists
+    const customer = await Customer.findById(customerId);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    // ✅ Update status
+    customer.status = status;
+    await customer.save();
+
+    return res.status(200).json({
+      message: `Customer survey status updated to '${status}' successfully.`,
+      customer,
+    });
+
+  } catch (error) {
+    console.error('Update customer survey status error:', error);
+    return res.status(500).json({
+      message: 'Server error updating customer survey status.',
+    });
+  }
 };
