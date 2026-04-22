@@ -6,6 +6,7 @@ const ALLOWED_STATUSES = ['New', 'In Progress', 'Closed'];
 exports.listCustomers = async (req, res) => {
   try {
     const user_id = req.user.id;
+    console.log(user_id);
     const { status, salesPerson, contractor } = req.query;
     const filter = {};
 
@@ -19,6 +20,9 @@ exports.listCustomers = async (req, res) => {
     // If contractor or project manager, only show assigned customers
     if (user.userRole === 'contractor' || user.userRole === 'project_manager') {
       filter.assignedTo = user_id;
+      console.log(`User ${user.fullName} (${user.userRole}) filtering customers by assignedTo: ${user_id}`);
+    } else {
+      console.log(`User ${user.fullName} (${user.userRole}) seeing all customers`);
     }
 
     if (status) {
@@ -129,33 +133,23 @@ exports.getCustomer = async (req, res) => {
     // ✅ Get all surveys of this customer
     const surveys = await Survey.find({ customer_id: id }).sort({ createdAt: -1 });
 
-    const baseUrl = "https://ramgeneral-api.onrender.com/uploads/survey/";    // ✅ Get entries for each survey
+    const baseUrl = "https://ramgeneral-api.onrender.com/uploads/surveys/";
 
-    const surveysWithEntries = await Promise.all(
-      surveys.map(async (survey) => {
-        const entries = await Survey.find({ survey_id: survey._id });
+    // ✅ Convert survey images to full URLs
+    const surveysWithFullUrls = surveys.map(survey => {
+      const surveyObj = survey.toObject();
 
-        const updatedEntries = entries.map(entry => {
-          const entryObj = entry.toObject();
+      // ✅ Convert image filenames to full URLs
+      surveyObj.images = (surveyObj.images || []).map(img =>
+        `${baseUrl}${img}`
+      );
 
-          // ✅ convert image filenames to full URL
-          entryObj.images = (entryObj.images || []).map(img =>
-            `${baseUrl}${img}`
-          );
-          console.log('Updated entry images:', entryObj.images); // ✅ Log the updated images array
-          return entryObj;
-        });
-
-        return {
-          ...survey.toObject(),
-          entries: updatedEntries,
-        };
-      })
-    );
+      return surveyObj;
+    });
 
     return res.status(200).json({
       customer,
-      surveys: surveysWithEntries,
+      surveys: surveysWithFullUrls,
     });
 
   } catch (error) {
