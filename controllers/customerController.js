@@ -46,7 +46,7 @@ exports.listCustomers = async (req, res) => {
       contractor: customer.contractor,
       lastActivity: customer.lastActivity,
       status: customer.status,
-
+      assignedTo: customer.assignedTo,
     }));
 
     return res.status(200).json({ customers: customerSummaries });

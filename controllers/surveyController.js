@@ -204,34 +204,34 @@ exports.updateSurvey = async (req, res) => {
         if (notes !== undefined) updateData.notes = notes;
         if (status) updateData.status = status;
         if (surveyDate) updateData.surveyDate = new Date(surveyDate);
-    if (area !== undefined) updateData.area = area;
-    if (heightInInches !== undefined) updateData.heightInInches = heightInInches;
-    if (existingFixtureType !== undefined) updateData.existingFixtureType = existingFixtureType;
-    if (otherFixtureType !== undefined) updateData.otherFixtureType = otherFixtureType;
-    if (existingBulbs !== undefined) updateData.existingBulbs = existingBulbs;
-    if (existingQuantity !== undefined) updateData.existingQuantity = existingQuantity;
-    if (proposedFixture !== undefined) updateData.proposedFixture = proposedFixture;
-    if (proposedQuantity !== undefined) updateData.proposedQuantity = proposedQuantity;
-    if (pricePerUnit !== undefined) updateData.pricePerUnit = pricePerUnit;
-    if (totalPrice !== undefined) updateData.totalPrice = totalPrice;
-    if (note !== undefined) updateData.note = note;
+        if (area !== undefined) updateData.area = area;
+        if (heightInInches !== undefined) updateData.heightInInches = heightInInches;
+        if (existingFixtureType !== undefined) updateData.existingFixtureType = existingFixtureType;
+        if (otherFixtureType !== undefined) updateData.otherFixtureType = otherFixtureType;
+        if (existingBulbs !== undefined) updateData.existingBulbs = existingBulbs;
+        if (existingQuantity !== undefined) updateData.existingQuantity = existingQuantity;
+        if (proposedFixture !== undefined) updateData.proposedFixture = proposedFixture;
+        if (proposedQuantity !== undefined) updateData.proposedQuantity = proposedQuantity;
+        if (pricePerUnit !== undefined) updateData.pricePerUnit = pricePerUnit;
+        if (totalPrice !== undefined) updateData.totalPrice = totalPrice;
+        if (note !== undefined) updateData.note = note;
 
-    const updatedSurvey = await Survey.findByIdAndUpdate(id, updateData, {
-      new: true,
-      runValidators: true,
-    });
+        const updatedSurvey = await Survey.findByIdAndUpdate(id, updateData, {
+            new: true,
+            runValidators: true,
+        });
 
-    if (!updatedSurvey) {
-      return res.status(404).json({ message: 'Survey not found.' });
+        if (!updatedSurvey) {
+            return res.status(404).json({ message: 'Survey not found.' });
+        }
+
+        const surveyResponse = updatedSurvey.toObject();
+        surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
+        return res.status(200).json({ survey: surveyResponse, message: 'Survey updated successfully.' });
+    } catch (error) {
+        console.error('Update survey error:', error);
+        return res.status(500).json({ message: 'Server error updating survey.' });
     }
-
-    const surveyResponse = updatedSurvey.toObject();
-    surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
-    return res.status(200).json({ survey: surveyResponse, message: 'Survey updated successfully.' });
-  } catch (error) {
-    console.error('Update survey error:', error);
-    return res.status(500).json({ message: 'Server error updating survey.' });
-  }
 };
 
 exports.assignSurvey = async (req, res) => {
@@ -259,6 +259,16 @@ exports.assignSurvey = async (req, res) => {
 
         if (assignedUser.userRole !== 'project_manager') {
             return res.status(400).json({ message: 'Assigned user must be a project manager.' });
+        }
+
+        const customer = await Customer.findByIdAndUpdate(
+            id,
+            { assignedTo: assignedTo },
+            { new: true }
+        );
+
+        if (!customer) {
+            return res.status(404).json({ message: 'Customer not found.' });
         }
 
         return res.status(200).json({ message: 'Survey assigned successfully.' });
