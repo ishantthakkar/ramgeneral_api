@@ -278,3 +278,37 @@ exports.assignSurvey = async (req, res) => {
         return res.status(500).json({ message: 'Server error assigning survey.' });
     }
 };
+
+exports.installation = async (req, res) => {
+    try {
+        const filter = { assignToContractor: { $ne: null } };
+
+        const customers = await Customer.find(filter)
+            .sort({ updatedAt: -1 })
+            .populate('assignToContractor', 'fullName email userRole mobileNumber')
+            .populate('assignedTo', 'fullName email userRole');
+
+        const customerSummaries = customers.map((customer) => ({
+            id: customer._id,
+            accountNumber: customer.accountNumber,
+            name: customer.name,
+            company: customer.company,
+            mobileNumber: customer.mobileNumber,
+            status: customer.status,
+            lastActivity: customer.lastActivity,
+            assignToContractor: customer.assignToContractor,
+            assignedTo: customer.assignedTo,
+            contractorName: customer.contractor,
+            contractorStatus: customer.contractorStatus,
+        }));
+
+        return res.status(200).json({
+            message: 'Installations retrieved successfully.',
+            total: customerSummaries.length,
+            installations: customerSummaries,
+        });
+    } catch (error) {
+        console.error('List installations error:', error);
+        return res.status(500).json({ message: 'Server error listing installations.' });
+    }
+};

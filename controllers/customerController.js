@@ -17,10 +17,14 @@ exports.listCustomers = async (req, res) => {
       return res.status(401).json({ message: 'Invalid authenticated user.' });
     }
 
-    // If contractor or project manager, only show assigned customers
-    if (user.userRole === 'contractor' || user.userRole === 'project_manager') {
+    // If contractor, show assigned customers; if project manager, show customers with assigned surveys
+    if (user.userRole === 'contractor') {
       filter.assignedTo = user_id;
       console.log(`User ${user.fullName} (${user.userRole}) filtering customers by assignedTo: ${user_id}`);
+    } else if (user.userRole === 'project_manager') {
+      const assignedCustomerIds = await Customer.distinct('_id', { assignedTo: user_id });
+      filter._id = { $in: assignedCustomerIds };
+      console.log(`User ${user.fullName} (${user.userRole}) filtering customers by surveys assignedTo: ${user_id}`);
     } else {
       console.log(`User ${user.fullName} (${user.userRole}) seeing all customers`);
     }
@@ -172,8 +176,6 @@ exports.updateCustomer = async (req, res) => {
       lastActivity,
       convertedDate,
       status,
-      address,
-      activities,
       notes,
     } = req.body;
 
@@ -382,3 +384,147 @@ exports.updateCustomerSurveyStatus = async (req, res) => {
     });
   }
 };
+
+exports.addCustomerMaterial = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const materials = req.body; // Expecting an array of materials
+
+    // Role check
+    const User = require('../models/User');
+    const user = await User.findById(req.user.id);
+
+    if (!user || user.userRole !== 'project_manager') {
+      return res.status(403).json({ message: 'Access denied. Only project managers can add materials.' });
+    }
+
+    if (!Array.isArray(materials) || materials.length === 0) {
+      return res.status(400).json({ message: 'Request body must be a non-empty array of materials.' });
+    }
+
+    const customer = await Customer.findById(id);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    // Add each material from the request array
+    for (const item of materials) {
+      if (!item.item_name || item.issued_qty === undefined) {
+        return res.status(400).json({ message: 'Each material must have item_name and issued_qty.' });
+      }
+      customer.material.push({
+        item_name: item.item_name,
+        issued_qty: item.issued_qty,
+        issued_date: item.issued_date ? new Date(item.issued_date) : new Date(),
+      });
+    }
+
+    await customer.save();
+
+    return res.status(200).json({
+      message: 'Materials added successfully.',
+      total_added: materials.length,
+      customer,
+    });
+  } catch (error) {
+    console.error('Add customer material error:', error);
+    return res.status(500).json({ message: 'Server error adding materials.' });
+  }
+};
+
+exports.assignToContractor = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { contractorId, contractorName } = req.body;
+
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required.' });
+    }
+
+    // Verify user exists and is a contractor
+    const User = require('../models/User');
+    const contractorUser = await User.findById(contractorId);
+
+    if (!contractorUser) {
+      return res.status(404).json({ message: 'Contractor user not found.' });
+    }
+
+    if (contractorUser.userRole !== 'contractor') {
+      return res.status(400).json({ message: 'Assigned user must have the role of contractor.' });
+    }
+
+    const updatedData = {
+      assignToContractor: contractorId,
+      contractorStatus: 'New',
+    };
+
+    if (contractorName) {
+      updatedData.contractor = contractorName;
+    } else {
+      updatedData.contractor = contractorUser.fullName;
+    }
+
+    const customer = await Customer.findByIdAndUpdate(
+      id,
+      updatedData,
+      { new: true, runValidators: true }
+    ).populate('assignToContractor', 'fullName email userRole');
+
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    return res.status(200).json({ 
+      message: 'Customer assigned to contractor successfully.', 
+      customer 
+    });
+  } catch (error) {
+    console.error('Assign to contractor error:', error);
+    return res.status(500).json({ message: 'Server error assigning to contractor.' });
+  }
+};
+
+exports.verifyCustomer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body; // 'verified' or 'rejected'
+
+    if (!['verified', 'rejected'].includes(status)) {
+      return res.status(400).json({ message: "Invalid status. Use 'verified' or 'rejected'." });
+    }
+
+    const user_id = req.user.id;
+
+    // Check if user is Admin
+    const Admin = require('../models/Admin');
+    const isAdmin = await Admin.findById(user_id);
+
+    if (!isAdmin) {
+      // Check if user is Project Manager
+      const User = require('../models/User');
+      const user = await User.findById(user_id);
+      if (!user || user.userRole !== 'project_manager') {
+        return res.status(403).json({ message: 'Only Admins or Project Managers can verify customers.' });
+      }
+    }
+
+    const customer = await Customer.findByIdAndUpdate(
+      id,
+      { verifyStatus: status },
+      { new: true, runValidators: true }
+    );
+
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    return res.status(200).json({
+      message: `Customer survey ${status} successfully.`,
+      customer,
+    });
+  } catch (error) {
+    console.error('Verify customer error:', error);
+    return res.status(500).json({ message: 'Server error verifying customer.' });
+  }
+};
+

@@ -12,4 +12,7 @@ router.put('/customers/:id', verifyToken, customerController.updateCustomer);
 router.patch('/customers/:id/assign-contractor', verifyToken, customerController.assignContractor);
 router.post('/customers/:id/assign', verifyToken, customerController.assignCustomer);
 router.post('/:customerId/:status/update-status', verifyToken, customerController.updateCustomerSurveyStatus);
+router.post('/customers/:id/materials', verifyToken, customerController.addCustomerMaterial);
+router.post('/customers/:id/assign-to-contractor', verifyToken, customerController.assignToContractor);
+router.patch('/customers/:id/verify', verifyToken, customerController.verifyCustomer);
 module.exports = router;

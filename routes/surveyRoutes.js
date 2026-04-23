@@ -39,5 +39,6 @@ router.get('/surveys/assigned', verifyToken, surveyController.listAssignedSurvey
 router.get('/surveys/:id', verifyToken, surveyController.getSurvey);
 router.put('/surveys/:id', verifyToken, surveyController.updateSurvey);
 router.post('/surveys/:id/assign', verifyToken, surveyController.assignSurvey);
+router.get('/installation', verifyToken, surveyController.installation);
 
 module.exports = router;

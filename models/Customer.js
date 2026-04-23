@@ -52,6 +52,22 @@ const customerSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
   },
+  assignToContractor: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  },
+  contractorStatus: {
+    type: String,
+    enum: ['New', 'In Progress', 'Completed'],
+    default: 'New',
+    trim: true,
+  },
+  verifyStatus: {
+    type: String,
+    enum: ['pending', 'verified'],
+    default: 'pending',
+    trim: true,
+  },
   lastActivity: {
     type: Date,
     default: Date.now,
@@ -63,7 +79,7 @@ const customerSchema = new mongoose.Schema({
   status: {
     type: String,
     required: true,
-    enum: ['in_progress', 'draft', 'completed'],
+    enum: ['New', 'in_progress', 'draft', 'completed'],
     default: 'New',
     trim: true,
   },
@@ -85,6 +101,13 @@ const customerSchema = new mongoose.Schema({
     {
       note: { type: String, trim: true, required: true },
       createdAt: { type: Date, default: Date.now },
+    },
+  ],
+  material: [
+    {
+      item_name: { type: String, trim: true },
+      issued_qty: { type: Number, default: 0 },
+      issued_date: { type: Date, default: Date.now },
     },
   ],
 }, {
