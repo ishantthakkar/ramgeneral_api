@@ -177,6 +177,9 @@ exports.updateCustomer = async (req, res) => {
       convertedDate,
       status,
       notes,
+      address,
+      activities,
+      surveys, // Array of survey objects to update
     } = req.body;
 
     if (status && !ALLOWED_STATUSES.includes(status)) {
@@ -210,7 +213,29 @@ exports.updateCustomer = async (req, res) => {
       return res.status(404).json({ message: 'Customer not found.' });
     }
 
-    return res.status(200).json({ customer, message: 'Customer updated successfully.' });
+    // ✅ If surveys are provided, update them
+    if (surveys && Array.isArray(surveys)) {
+      const Survey = require('../models/Survey');
+      for (const surveyData of surveys) {
+        if (surveyData._id) {
+          const { _id, ...updateFields } = surveyData;
+          await Survey.findByIdAndUpdate(_id, updateFields, {
+            new: true,
+            runValidators: true,
+          });
+        }
+      }
+    }
+
+    // ✅ Get updated surveys to return in response
+    const Survey = require('../models/Survey');
+    const updatedSurveys = await Survey.find({ customer_id: id }).sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      customer,
+      surveys: updatedSurveys,
+      message: 'Customer and surveys updated successfully.'
+    });
   } catch (error) {
     console.error('Update customer error:', error);
     return res.status(500).json({ message: 'Server error updating customer.' });
@@ -474,9 +499,9 @@ exports.assignToContractor = async (req, res) => {
       return res.status(404).json({ message: 'Customer not found.' });
     }
 
-    return res.status(200).json({ 
-      message: 'Customer assigned to contractor successfully.', 
-      customer 
+    return res.status(200).json({
+      message: 'Customer assigned to contractor successfully.',
+      customer
     });
   } catch (error) {
     console.error('Assign to contractor error:', error);
