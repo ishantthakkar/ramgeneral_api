@@ -102,6 +102,7 @@ exports.listConvertedCustomers = async (req, res) => {
       status: customer.status,
       lastActivity: customer.lastActivity,
       assignedTo: customer.assignedTo ?? null,
+      verifyStatus: customer.verifyStatus,
       lead: customer.leadId
         ? {
           id: customer.leadId._id,
