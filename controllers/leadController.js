@@ -61,10 +61,6 @@ exports.listLeads = async (req, res) => {
     const { status, salesPerson, includeConverted } = req.query;
     const filter = {};
 
-    if (!includeConverted || includeConverted === 'false') {
-      filter.convertedToCustomer = false;
-    }
-
     if (status) {
       if (!ALLOWED_STATUSES.includes(status)) {
         return res.status(400).json({
@@ -72,10 +68,6 @@ exports.listLeads = async (req, res) => {
         });
       }
       filter.status = status;
-    }
-
-    if (salesPerson) {
-      filter.salesPerson = salesPerson;
     }
 
     const leads = await Lead.find(filter).sort({ createdAt: -1 });
