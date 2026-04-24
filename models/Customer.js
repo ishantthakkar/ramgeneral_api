@@ -68,6 +68,15 @@ const customerSchema = new mongoose.Schema({
     default: 'pending',
     trim: true,
   },
+  commissions: [
+    {
+      commissionType: { type: String, enum: ['Survey', 'Installation', 'Other'], required: true },
+      date: { type: Date, default: Date.now },
+      name: { type: String, trim: true },
+      amount: { type: Number, default: 0 },
+      paymentDate: { type: Date },
+    },
+  ],
   lastActivity: {
     type: Date,
     default: Date.now,

@@ -618,3 +618,35 @@ exports.getCustomerActivities = async (req, res) => {
   }
 };
 
+exports.updateCustomerCommissions = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { commissions } = req.body; // Expecting an array of commission objects
+
+    if (!Array.isArray(commissions)) {
+      return res.status(400).json({ message: 'commissions must be an array.' });
+    }
+
+    const customer = await Customer.findById(id);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    // This replaces or appends? I'll overwrite with new set if they send the whole list,
+    // or just append. Usually "add" APIs append. I'll append for now.
+    customer.commissions = [...customer.commissions, ...commissions];
+    await customer.save();
+
+    const { createLog } = require('../utils/logger');
+    await createLog('Commissions Updated', req.user.id, customer.name, 'Customer', customer._id);
+
+    return res.status(200).json({
+      message: 'Commissions updated successfully.',
+      customer,
+    });
+  } catch (error) {
+    console.error('Update commissions error:', error);
+    return res.status(500).json({ message: 'Server error updating commissions.' });
+  }
+};
+

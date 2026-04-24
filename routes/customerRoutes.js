@@ -16,5 +16,6 @@ router.post('/customers/:id/materials', verifyToken, customerController.addCusto
 router.post('/customers/:id/assign-to-contractor', verifyToken, customerController.assignToContractor);
 router.post('/customers/:id/verify', verifyToken, customerController.verifyCustomer);
 router.post('/customers/:id/activities', verifyToken, customerController.addCustomerActivity);
+router.post('/customers/:id/commissions', verifyToken, customerController.updateCustomerCommissions);
 router.get('/customers/:id/activities', verifyToken, customerController.getCustomerActivities);
 module.exports = router;

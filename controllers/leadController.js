@@ -7,7 +7,22 @@ const ALLOWED_STATUSES = ['New', 'In Progress', 'Lost Leads', 'Converted To Cust
 
 exports.createLead = async (req, res) => {
   try {
-    const { name, company, mobileNumber, email, leadSource, status, street, city, state, zip, notes, salesPerson: salesPersonBody, lastActivity } = req.body;
+    const { 
+      id, // Added this to check for update
+      name, 
+      company, 
+      mobileNumber, 
+      email, 
+      leadSource, 
+      status, 
+      street, 
+      city, 
+      state, 
+      zip, 
+      notes, 
+      salesPerson: salesPersonBody, 
+      lastActivity 
+    } = req.body;
 
     const user = await User.findById(req.user.id);
     if (!user) {
@@ -26,33 +41,67 @@ exports.createLead = async (req, res) => {
       });
     }
 
-    const lead = await Lead.create({
-      name,
-      company,
-      mobileNumber,
-      email: email ? email.toLowerCase() : '',
-      leadSource: leadSource || '',
-      street: street || '',
-      city: city || '',
-      state: state || '',
-      zip: zip || '',
-      notes: notes || '',
-      user_id: user._id,
-      createdByName: user.fullName,
-      createdByEmail: user.email,
-      createdByRole: user.userRole,
-      salesPerson,
-      lastActivity: lastActivity ? new Date(lastActivity) : Date.now(),
-      status,
-      convertedToCustomer: status === 'Converted To Customer',
-    });
+    if (id) {
+      // UPDATE RECORD
+      const updateData = {
+        name,
+        company,
+        mobileNumber,
+        email: email ? email.toLowerCase() : '',
+        leadSource: leadSource || '',
+        street: street || '',
+        city: city || '',
+        state: state || '',
+        zip: zip || '',
+        notes: notes || '',
+        salesPerson,
+        lastActivity: lastActivity ? new Date(lastActivity) : Date.now(),
+        status,
+        convertedToCustomer: status === 'Converted To Customer',
+      };
 
-    await createLog('Lead Created', req.user.id, name, 'Lead', lead._id);
+      const updatedLead = await Lead.findByIdAndUpdate(id, updateData, {
+        new: true,
+        runValidators: true,
+      });
 
-    return res.status(201).json({ lead, message: 'Lead created successfully.' });
+      if (!updatedLead) {
+        return res.status(404).json({ message: 'Lead not found.' });
+      }
+
+      await createLog(`Lead Updated`, req.user.id, name, 'Lead', updatedLead._id);
+
+      return res.status(200).json({ lead: updatedLead, message: 'Lead updated successfully.' });
+    } else {
+      // CREATE RECORD
+      const lead = await Lead.create({
+        name,
+        company,
+        mobileNumber,
+        email: email ? email.toLowerCase() : '',
+        leadSource: leadSource || '',
+        street: street || '',
+        city: city || '',
+        state: state || '',
+        zip: zip || '',
+        notes: notes || '',
+        user_id: user._id,
+        createdByName: user.fullName,
+        createdByEmail: user.email,
+        createdByRole: user.userRole,
+        salesPerson,
+        lastActivity: lastActivity ? new Date(lastActivity) : Date.now(),
+        status,
+        convertedToCustomer: status === 'Converted To Customer',
+      });
+
+      await createLog('Lead Created', req.user.id, name, 'Lead', lead._id);
+
+      return res.status(201).json({ lead, message: 'Lead created successfully.' });
+    }
   } catch (error) {
-    console.error('Create lead error:', error);
-    return res.status(500).json({ message: 'Server error creating lead.' });
+    console.error('Save lead error:', error);
+    return res.status(500).json({ message: 'Server error saving lead.' });
   }
 };
 
@@ -111,50 +160,6 @@ exports.getLead = async (req, res) => {
   } catch (error) {
     console.error('Get lead error:', error);
     return res.status(500).json({ message: 'Server error fetching lead.' });
-  }
-};
-
-exports.updateLead = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { name, company, mobileNumber, email, leadSource, status, address, notes, salesPerson, lastActivity } = req.body;
-    const updateData = {};
-
-    if (name) updateData.name = name;
-    if (company) updateData.company = company;
-    if (mobileNumber) updateData.mobileNumber = mobileNumber;
-    if (email) updateData.email = email.toLowerCase();
-    if (leadSource) updateData.leadSource = leadSource;
-    if (street) updateData.street = street;
-    if (city) updateData.city = city;
-    if (state) updateData.state = state;
-    if (zip) updateData.zip = zip;
-    if (notes) updateData.notes = notes;
-    if (salesPerson) updateData.salesPerson = salesPerson;
-    if (lastActivity) updateData.lastActivity = new Date(lastActivity);
-    if (status) {
-      if (!ALLOWED_STATUSES.includes(status)) {
-        return res.status(400).json({
-          message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
-        });
-      }
-      updateData.status = status;
-      updateData.convertedToCustomer = status === 'Converted To Customer';
-    }
-
-    const updatedLead = await Lead.findByIdAndUpdate(id, updateData, {
-      new: true,
-      runValidators: true,
-    });
-
-    if (!updatedLead) {
-      return res.status(404).json({ message: 'Lead not found.' });
-    }
-
-    return res.status(200).json({ lead: updatedLead, message: 'Lead updated successfully.' });
-  } catch (error) {
-    console.error('Update lead error:', error);
-    return res.status(500).json({ message: 'Server error updating lead.' });
   }
 };
 
