@@ -14,5 +14,7 @@ router.post('/customers/:id/assign', verifyToken, customerController.assignCusto
 router.post('/:customerId/:status/update-status', verifyToken, customerController.updateCustomerSurveyStatus);
 router.post('/customers/:id/materials', verifyToken, customerController.addCustomerMaterial);
 router.post('/customers/:id/assign-to-contractor', verifyToken, customerController.assignToContractor);
-router.patch('/customers/:id/verify', verifyToken, customerController.verifyCustomer);
+router.post('/customers/:id/verify', verifyToken, customerController.verifyCustomer);
+router.post('/customers/:id/activities', verifyToken, customerController.addCustomerActivity);
+router.get('/customers/:id/activities', verifyToken, customerController.getCustomerActivities);
 module.exports = router;

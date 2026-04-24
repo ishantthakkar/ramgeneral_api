@@ -1,5 +1,7 @@
 const Customer = require('../models/Customer');
 const Survey = require('../models/Survey');
+const CustomerActivity = require('../models/CustomerActivity');
+const { createLog } = require('../utils/logger');
 
 const ALLOWED_STATUSES = ['New', 'In Progress', 'Closed'];
 
@@ -137,6 +139,11 @@ exports.getCustomer = async (req, res) => {
     // ✅ Get all surveys of this customer
     const surveys = await Survey.find({ customer_id: id }).sort({ createdAt: -1 });
 
+    // ✅ Get all activities of this customer
+    const activitiesList = await CustomerActivity.find({ customer_id: id })
+      .sort({ date: -1 })
+      .populate('user_id', 'fullName email');
+
     const baseUrl = "https://ramgeneral-api.onrender.com/uploads/surveys/";
 
     // ✅ Convert survey images to full URLs
@@ -154,6 +161,7 @@ exports.getCustomer = async (req, res) => {
     return res.status(200).json({
       customer,
       surveys: surveysWithFullUrls,
+      activities: activitiesList,
     });
 
   } catch (error) {
@@ -512,10 +520,10 @@ exports.assignToContractor = async (req, res) => {
 exports.verifyCustomer = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body; // 'verified' or 'rejected'
+    const { status } = req.body; // 'verified' or 'pending'
 
-    if (!['verified', 'rejected'].includes(status)) {
-      return res.status(400).json({ message: "Invalid status. Use 'verified' or 'rejected'." });
+    if (!['verified', 'pending'].includes(status)) {
+      return res.status(400).json({ message: "Invalid status. Use 'verified' or 'pending'." });
     }
 
     const user_id = req.user.id;
@@ -543,6 +551,9 @@ exports.verifyCustomer = async (req, res) => {
       return res.status(404).json({ message: 'Customer not found.' });
     }
 
+    const { createLog } = require('../utils/logger');
+    await createLog(`Customer Survey ${status}`, user_id, customer.name, 'Customer', customer._id);
+
     return res.status(200).json({
       message: `Customer survey ${status} successfully.`,
       customer,
@@ -550,6 +561,60 @@ exports.verifyCustomer = async (req, res) => {
   } catch (error) {
     console.error('Verify customer error:', error);
     return res.status(500).json({ message: 'Server error verifying customer.' });
+  }
+};
+
+exports.addCustomerActivity = async (req, res) => {
+  try {
+    const { id: customer_id } = req.params;
+    const user_id = req.user.id;
+    const { activityType, date, outcome, nextFollowUpDate } = req.body;
+
+    if (!activityType) {
+      return res.status(400).json({ message: 'activityType is required.' });
+    }
+
+    const customer = await Customer.findById(customer_id);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const activity = await CustomerActivity.create({
+      customer_id,
+      user_id,
+      activityType,
+      date: date || Date.now(),
+      outcome: outcome || '',
+      nextFollowUpDate,
+    });
+
+    // Log the activity in the general activity log
+    await createLog(`Activity Recorded: ${activityType}`, user_id, customer.name, 'Customer', customer._id);
+
+    return res.status(201).json({
+      message: 'Activity recorded successfully.',
+      activity,
+    });
+  } catch (error) {
+    console.error('Add customer activity error:', error);
+    return res.status(500).json({ message: 'Server error recording activity.' });
+  }
+};
+
+exports.getCustomerActivities = async (req, res) => {
+  try {
+    const { id: customer_id } = req.params;
+
+    const activities = await CustomerActivity.find({ customer_id })
+      .sort({ date: -1 })
+      .populate('user_id', 'fullName email');
+
+    return res.status(200).json({
+      activities,
+    });
+  } catch (error) {
+    console.error('Get customer activities error:', error);
+    return res.status(500).json({ message: 'Server error fetching activities.' });
   }
 };
 

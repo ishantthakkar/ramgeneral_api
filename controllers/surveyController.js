@@ -286,7 +286,7 @@ exports.assignSurvey = async (req, res) => {
 
 exports.installation = async (req, res) => {
     try {
-        const filter = {};
+        const filter = { verifyStatus: 'verified' };
 
         const customers = await Customer.find(filter)
             .sort({ updatedAt: -1 })
