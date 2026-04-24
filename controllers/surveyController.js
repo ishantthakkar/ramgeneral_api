@@ -286,7 +286,7 @@ exports.assignSurvey = async (req, res) => {
 
 exports.installation = async (req, res) => {
     try {
-        const filter = { assignToContractor: { $ne: null } };
+        const filter = {};
 
         const customers = await Customer.find(filter)
             .sort({ updatedAt: -1 })
