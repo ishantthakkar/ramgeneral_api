@@ -79,7 +79,7 @@ const leadSchema = new mongoose.Schema({
   status: {
     type: String,
     required: true,
-    enum: ['New', 'In Progress', 'Closed', 'Converted To Customer'],
+    enum: ['New', 'In Progress', 'Lost Leads', 'Converted To Customer'],
     default: 'New',
     trim: true,
   },

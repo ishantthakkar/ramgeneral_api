@@ -3,7 +3,7 @@ const Customer = require('../models/Customer');
 const User = require('../models/User');
 const { createLog } = require('../utils/logger');
 
-const ALLOWED_STATUSES = ['New', 'In Progress', 'Closed', 'Converted To Customer'];
+const ALLOWED_STATUSES = ['New', 'In Progress', 'Lost Leads', 'Converted To Customer'];
 
 exports.createLead = async (req, res) => {
   try {
@@ -191,7 +191,7 @@ exports.convertToCustomer = async (req, res) => {
       });
     }
 
-    lead.status = 'Closed';
+    lead.status = 'Converted To Customer';
     lead.convertedToCustomer = true;
     await lead.save();
 
@@ -201,5 +201,45 @@ exports.convertToCustomer = async (req, res) => {
   } catch (error) {
     console.error('Convert lead error:', error);
     return res.status(500).json({ message: 'Server error converting lead.' });
+  }
+};
+
+exports.updateLeadStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!status) {
+      return res.status(400).json({ message: 'Status is required.' });
+    }
+
+    if (!ALLOWED_STATUSES.includes(status)) {
+      return res.status(400).json({
+        message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
+      });
+    }
+
+    const lead = await Lead.findByIdAndUpdate(
+      id,
+      {
+        status,
+        convertedToCustomer: status === 'Converted To Customer'
+      },
+      { new: true, runValidators: true }
+    );
+
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    await createLog(`Lead Status Updated to ${status}`, req.user.id, lead.name, 'Lead', lead._id);
+
+    return res.status(200).json({
+      message: `Lead status updated to ${status} successfully.`,
+      lead,
+    });
+  } catch (error) {
+    console.error('Update lead status error:', error);
+    return res.status(500).json({ message: 'Server error updating lead status.' });
   }
 };
