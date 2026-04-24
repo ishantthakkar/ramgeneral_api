@@ -199,7 +199,7 @@ exports.convertToCustomer = async (req, res) => {
       });
     }
 
-    lead.status = 'Converted To Customer';
+    lead.status = 'Closed';
     lead.convertedToCustomer = true;
     await lead.save();
 
