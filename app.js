@@ -7,6 +7,7 @@ const userRoutes = require('./routes/userRoutes');
 const leadRoutes = require('./routes/leadRoutes');
 const customerRoutes = require('./routes/customerRoutes');
 const surveyRoutes = require('./routes/surveyRoutes');
+const dashboardRoutes = require('./routes/dashboardRoutes');
 
 const app = express();
 
@@ -25,6 +26,7 @@ app.use('/api/user', userRoutes);
 app.use('/api', leadRoutes);
 app.use('/api/customer', customerRoutes);
 app.use('/api', surveyRoutes);
+app.use('/api/admin/dashboard', dashboardRoutes);
 
 // Health check
 app.get('/', (req, res) => {

@@ -1,6 +1,7 @@
 const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
 const User = require('../models/User');
+const { createLog } = require('../utils/logger');
 
 const ALLOWED_STATUSES = ['New', 'In Progress', 'Closed', 'Converted To Customer'];
 
@@ -45,6 +46,8 @@ exports.createLead = async (req, res) => {
       status,
       convertedToCustomer: status === 'Converted To Customer',
     });
+
+    await createLog('Lead Created', req.user.id, name, 'Lead', lead._id);
 
     return res.status(201).json({ lead, message: 'Lead created successfully.' });
   } catch (error) {
@@ -199,6 +202,8 @@ exports.convertToCustomer = async (req, res) => {
     lead.status = 'Converted To Customer';
     lead.convertedToCustomer = true;
     await lead.save();
+
+    await createLog('Lead Converted to Customer', req.user.id, lead.name, 'Customer', customer._id);
 
     return res.status(200).json({ lead, customer, message: 'Lead converted to customer.' });
   } catch (error) {

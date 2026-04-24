@@ -5,6 +5,7 @@ const Survey = require('../models/Survey');
 const Customer = require('../models/Customer');
 const User = require('../models/User');
 const Admin = require('../models/Admin');
+const { createLog } = require('../utils/logger');
 const UPLOAD_DIR = path.join(__dirname, '../uploads/surveys');
 const COMPRESS_THRESHOLD = 800 * 1024;
 
@@ -84,6 +85,8 @@ exports.createSurvey = async (req, res) => {
             status: status || 'Draft',
             notes: notes || '',
         });
+
+        await createLog('Survey Created', user_id, customer.name, 'Survey', survey._id);
 
         // Add full image URLs to response
         const surveyResponse = survey.toObject();
@@ -270,6 +273,8 @@ exports.assignSurvey = async (req, res) => {
         if (!customer) {
             return res.status(404).json({ message: 'Customer not found.' });
         }
+
+        await createLog('Survey Assigned to PM', user_id, customer.name, 'Assignment', customer._id);
 
         return res.status(200).json({ message: 'Survey assigned successfully.' });
 
