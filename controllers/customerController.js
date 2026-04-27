@@ -141,7 +141,45 @@ exports.listConvertedCustomers = async (req, res) => {
     });
   } catch (error) {
     console.error('List converted customers error:', error);
-    return res.status(500).json({ message: 'Server error listing converted customers.' });
+    return res.status(500).json({ message: 'Server error retrieving converted customers.' });
+  }
+};
+
+exports.listInspections = async (req, res) => {
+  try {
+    const customers = await Customer.find({
+      material: { $exists: true, $not: { $size: 0 } },
+      contractorStatus: 'completed'
+    })
+      .populate('assignToContractor', 'fullName email')
+      .populate('assignedTo', 'fullName email')
+      .sort({ updatedAt: -1 });
+
+    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
+
+    const customerList = customers.map(customer => {
+      const customerObj = customer.toObject();
+      if (customerObj.material) {
+        customerObj.material = customerObj.material.map(item => ({
+          ...item,
+          image: item.image ? `${materialBaseUrl}${item.image}` : ''
+        }));
+      }
+      return {
+        ...customerObj,
+        id: customerObj._id,
+        contractorName: customer.assignToContractor?.fullName || ''
+      };
+    });
+
+    return res.status(200).json({
+      message: 'Inspection list retrieved successfully.',
+      total: customerList.length,
+      customers: customerList
+    });
+  } catch (error) {
+    console.error('List inspections error:', error);
+    return res.status(500).json({ message: 'Server error retrieving inspection list.' });
   }
 };
 
