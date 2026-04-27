@@ -8,6 +8,7 @@ const leadRoutes = require('./routes/leadRoutes');
 const customerRoutes = require('./routes/customerRoutes');
 const surveyRoutes = require('./routes/surveyRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
+const cors = require('cors');
 
 const app = express();
 
@@ -16,6 +17,21 @@ connectDB();
 
 // Body parser
 app.use(express.json());
+const allowedOrigins = [
+  'http://localhost:3000',          // local frontend
+  'https://ramgeneral-admin.vercel.app'          // live frontend
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
 
 // Serve static files from uploads directory
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
