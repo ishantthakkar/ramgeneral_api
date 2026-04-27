@@ -24,12 +24,20 @@ exports.createLead = async (req, res) => {
       lastActivity 
     } = req.body;
 
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(401).json({ message: 'Invalid user token.' });
+    const Admin = require('../models/Admin');
+    let currentUser = await User.findById(req.user.id);
+    let is_admin = false;
+
+    if (!currentUser) {
+      currentUser = await Admin.findById(req.user.id);
+      is_admin = !!currentUser;
     }
 
-    const salesPerson = salesPersonBody || (user.userRole === 'sales_person' ? user.fullName : undefined);
+    if (!currentUser) {
+      return res.status(401).json({ message: 'Invalid token or user not found.' });
+    }
+
+    const salesPerson = salesPersonBody || (!is_admin && currentUser.userRole === 'sales_person' ? currentUser.fullName : undefined);
 
     if (!name || !company || !mobileNumber || !salesPerson || !status) {
       return res.status(400).json({ message: 'name, company, mobileNumber, salesPerson and status are required.' });
@@ -85,10 +93,10 @@ exports.createLead = async (req, res) => {
         state: state || '',
         zip: zip || '',
         notes: notes || '',
-        user_id: user._id,
-        createdByName: user.fullName,
-        createdByEmail: user.email,
-        createdByRole: user.userRole,
+        user_id: currentUser._id,
+        createdByName: is_admin ? currentUser.email : currentUser.fullName,
+        createdByEmail: currentUser.email,
+        createdByRole: is_admin ? 'admin' : currentUser.userRole,
         salesPerson,
         lastActivity: lastActivity ? new Date(lastActivity) : Date.now(),
         status,
