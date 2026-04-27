@@ -65,6 +65,8 @@ exports.listCustomers = async (req, res) => {
       .populate('assignToContractor', 'fullName email')
       .sort({ createdAt: -1 });
 
+    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
+
     const customerSummaries = customers.map((customer) => ({
       id: customer._id,
       accountNumber: customer.accountNumber,
@@ -78,6 +80,10 @@ exports.listCustomers = async (req, res) => {
       lastActivity: customer.lastActivity,
       status: customer.status,
       assignedTo: customer.assignedTo,
+      material: (customer.material || []).map(m => ({
+        ...m.toObject(),
+        image: m.image ? `${materialBaseUrl}${m.image}` : ''
+      }))
     }));
 
     return res.status(200).json({ customers: customerSummaries });
@@ -105,6 +111,8 @@ exports.listConvertedCustomers = async (req, res) => {
       .populate('assignToContractor', 'fullName email')
       .sort({ convertedDate: -1 });
 
+    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
+
     const customerSummaries = customers.map((customer) => ({
       id: customer._id,
       accountNumber: customer.accountNumber,
@@ -121,6 +129,10 @@ exports.listConvertedCustomers = async (req, res) => {
       lastActivity: customer.lastActivity,
       assignedTo: customer.assignedTo ?? null,
       verifyStatus: customer.verifyStatus,
+      material: (customer.material || []).map(m => ({
+        ...m.toObject(),
+        image: m.image ? `${materialBaseUrl}${m.image}` : ''
+      })),
       lead: customer.leadId
         ? {
           id: customer.leadId._id,
@@ -188,7 +200,10 @@ exports.getCustomer = async (req, res) => {
     const { id } = req.params;
 
     // ✅ Get customer
-    const customer = await Customer.findById(id);
+    const customer = await Customer.findById(id)
+      .populate('assignToContractor', 'fullName email mobileNumber')
+      .populate('assignedTo', 'fullName email mobileNumber');
+
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
     }
@@ -223,6 +238,7 @@ exports.getCustomer = async (req, res) => {
     return res.status(200).json({
       customer: updatedCustomer,
       surveys: surveysWithFullUrls,
+      materials: updatedCustomer.material || [],
       activities: activitiesList,
     });
 
@@ -379,6 +395,8 @@ exports.listAssignedCustomers = async (req, res) => {
       .populate('assignedTo', 'fullName email userRole')
       .populate('user_id', 'fullName email');
 
+    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
+
     const customerSummaries = customers.map((customer) => ({
       id: customer._id,
       accountNumber: customer.accountNumber,
@@ -395,6 +413,10 @@ exports.listAssignedCustomers = async (req, res) => {
       status: customer.status,
       assignedTo: customer.assignedTo,
       createdBy: customer.user_id,
+      material: (customer.material || []).map(m => ({
+        ...m.toObject(),
+        image: m.image ? `${materialBaseUrl}${m.image}` : ''
+      }))
     }));
 
     return res.status(200).json({
