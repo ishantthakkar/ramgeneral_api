@@ -2,8 +2,34 @@ const Customer = require('../models/Customer');
 const Survey = require('../models/Survey');
 const CustomerActivity = require('../models/CustomerActivity');
 const { createLog } = require('../utils/logger');
+const path = require('path');
+const fs = require('fs');
 
 const ALLOWED_STATUSES = ['New', 'In Progress', 'Closed'];
+
+// Helper function to save base64 image
+const saveBase64Image = (base64String, uploadDir) => {
+  try {
+    const matches = base64String.match(/^data:([A-Za-z-+\/]+);base64,([\s\S]+)$/);
+    if (!matches || matches.length !== 3) return null;
+
+    const type = matches[1];
+    const buffer = Buffer.from(matches[2], 'base64');
+    const extension = type.split('/')[1].split('+')[0] || 'jpg';
+    const fileName = `${Date.now()}-${Math.floor(Math.random() * 10000)}.${extension}`;
+    const filePath = path.join(uploadDir, fileName);
+
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    fs.writeFileSync(filePath, buffer);
+    return fileName;
+  } catch (error) {
+    console.error('Error saving base64 image:', error);
+    return null;
+  }
+};
 
 exports.listCustomers = async (req, res) => {
   try {
@@ -137,22 +163,27 @@ exports.getCustomer = async (req, res) => {
       .sort({ date: -1 })
       .populate('user_id', 'fullName email');
 
-    const baseUrl = "https://ramgeneral-api.onrender.com/uploads/surveys/";
+    const surveyBaseUrl = "https://ramgeneral-api.onrender.com/uploads/surveys/";
+    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
 
     // ✅ Convert survey images to full URLs
     const surveysWithFullUrls = surveys.map(survey => {
       const surveyObj = survey.toObject();
-
-      // ✅ Convert image filenames to full URLs
-      surveyObj.images = (surveyObj.images || []).map(img =>
-        `${baseUrl}${img}`
-      );
-
+      surveyObj.images = (surveyObj.images || []).map(img => `${surveyBaseUrl}${img}`);
       return surveyObj;
     });
 
+    // ✅ Convert material image to full URLs
+    const updatedCustomer = customer.toObject();
+    if (updatedCustomer.material && Array.isArray(updatedCustomer.material)) {
+      updatedCustomer.material = updatedCustomer.material.map(item => ({
+        ...item,
+        image: item.image ? `${materialBaseUrl}${item.image}` : ''
+      }));
+    }
+
     return res.status(200).json({
-      customer,
+      customer: updatedCustomer,
       surveys: surveysWithFullUrls,
       activities: activitiesList,
     });
@@ -173,7 +204,6 @@ exports.updateCustomer = async (req, res) => {
       email,
       leadSource,
       salesPerson,
-      contractor,
       lastActivity,
       convertedDate,
       status,
@@ -188,6 +218,7 @@ exports.updateCustomer = async (req, res) => {
         message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
       });
     }
+
 
     const updatedData = {
       ...(name && { name }),
@@ -231,9 +262,19 @@ exports.updateCustomer = async (req, res) => {
     const Survey = require('../models/Survey');
     const updatedSurveys = await Survey.find({ customer_id: id }).sort({ createdAt: -1 });
 
+    // ✅ Convert survey and material images to full URLs for the response
+    const surveyBaseUrl = "https://ramgeneral-api.onrender.com/uploads/surveys/";
+    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
+
+    const surveysWithFullUrls = updatedSurveys.map(survey => {
+      const surveyObj = survey.toObject();
+      surveyObj.images = (surveyObj.images || []).map(img => `${surveyBaseUrl}${img}`);
+      return surveyObj;
+    });
+
     return res.status(200).json({
       customer,
-      surveys: updatedSurveys,
+      surveys: surveysWithFullUrls,
       message: 'Customer and surveys updated successfully.'
     });
   } catch (error) {
@@ -413,18 +454,25 @@ exports.updateCustomerSurveyStatus = async (req, res) => {
 exports.addCustomerMaterial = async (req, res) => {
   try {
     const { id } = req.params;
-    const materials = req.body; // Expecting an array of materials
+    const { materials, materialStatus } = req.body;
 
-    // Role check
-    const User = require('../models/User');
-    const user = await User.findById(req.user.id);
+    const user_id = req.user.id;
 
-    if (!user || user.userRole !== 'project_manager') {
-      return res.status(403).json({ message: 'Access denied. Only project managers can add materials.' });
+    // Check permissions (Admin or Project Manager)
+    const Admin = require('../models/Admin');
+    const isAdmin = await Admin.findById(user_id);
+    let isAuthorized = !!isAdmin;
+
+    if (!isAuthorized) {
+      const User = require('../models/User');
+      const user = await User.findById(user_id);
+      if (user && user.userRole === 'project_manager') {
+        isAuthorized = true;
+      }
     }
 
-    if (!Array.isArray(materials) || materials.length === 0) {
-      return res.status(400).json({ message: 'Request body must be a non-empty array of materials.' });
+    if (!isAuthorized) {
+      return res.status(403).json({ message: 'Only admins or project managers can update materials.' });
     }
 
     const customer = await Customer.findById(id);
@@ -432,28 +480,56 @@ exports.addCustomerMaterial = async (req, res) => {
       return res.status(404).json({ message: 'Customer not found.' });
     }
 
-    // Add each material from the request array
-    for (const item of materials) {
-      if (!item.item_name || item.issued_qty === undefined) {
-        return res.status(400).json({ message: 'Each material must have item_name and issued_qty.' });
+    const uploadDir = path.join(__dirname, '../uploads/materials');
+
+    // Handle materials array if provided
+    if (materials && Array.isArray(materials)) {
+      for (const item of materials) {
+        if (!item.item_name || item.issued_qty === undefined) {
+          return res.status(400).json({ message: 'Each material must have item_name and issued_qty.' });
+        }
+
+        let savedFilename = '';
+        if (item.image) {
+          if (item.image.startsWith('data:')) {
+            savedFilename = saveBase64Image(item.image, uploadDir) || '';
+          } else {
+            savedFilename = item.image.split('/').pop();
+          }
+        }
+
+        customer.material.push({
+          item_name: item.item_name,
+          issued_qty: item.issued_qty,
+          issued_date: item.issued_date ? new Date(item.issued_date) : new Date(),
+          image: savedFilename
+        });
       }
-      customer.material.push({
-        item_name: item.item_name,
-        issued_qty: item.issued_qty,
-        issued_date: item.issued_date ? new Date(item.issued_date) : new Date(),
-      });
+    }
+
+    if (materialStatus) {
+      customer.materialStatus = materialStatus;
     }
 
     await customer.save();
 
+    // Map image to full URL for response
+    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
+    const updatedCustomer = customer.toObject();
+    if (updatedCustomer.material) {
+      updatedCustomer.material = updatedCustomer.material.map(item => ({
+        ...item,
+        image: item.image ? `${materialBaseUrl}${item.image}` : ''
+      }));
+    }
+
     return res.status(200).json({
-      message: 'Materials added successfully.',
-      total_added: materials.length,
-      customer,
+      message: 'Materials updated successfully.',
+      customer: updatedCustomer,
     });
   } catch (error) {
     console.error('Add customer material error:', error);
-    return res.status(500).json({ message: 'Server error adding materials.' });
+    return res.status(500).json({ message: 'Server error updating materials.' });
   }
 };
 
