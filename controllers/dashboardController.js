@@ -5,10 +5,12 @@ const ActivityLog = require('../models/ActivityLog');
 
 exports.getAdminDashboardStats = async (req, res) => {
   try {
-    const totalActiveLeads = await Lead.countDocuments({ convertedToCustomer: false });
+    const totalActiveLeads = await Lead.countDocuments({
+      status: { $nin: ["Lost Leads", "Converted To Customer"] }
+    });
     const totalCustomers = await Customer.countDocuments({});
     const submittedSurveys = await Customer.countDocuments({ status: 'completed' });
-    
+
     // As per user request, these should show 0 for now
     const completedInstallations = 0;
     const completedInspections = 0;
