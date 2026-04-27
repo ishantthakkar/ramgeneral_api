@@ -6,7 +6,7 @@ const router = express.Router();
 
 router.get('/leads', verifyToken, leadController.listLeads);
 router.get('/leads/:id', verifyToken, leadController.getLead);
-router.post('/leads', verifyToken, leadController.createLead);
+router.post('/leads-create', verifyToken, leadController.createLead);
 router.post('/leads/:id/convert', verifyToken, leadController.convertToCustomer);
 router.post('/leads/:id/status', verifyToken, leadController.updateLeadStatus);
 
