@@ -241,8 +241,8 @@ exports.assignSurvey = async (req, res) => {
     try {
         const user_id = req.user.id;
         console.log(user_id);
-        const user = await Admin.findById(user_id);
-        if (!user) {
+        const admin = await Admin.findById(user_id);
+        if (!admin) {
             return res.status(403).json({ message: 'Only admins can assign surveys.' });
         }
 
@@ -255,7 +255,6 @@ exports.assignSurvey = async (req, res) => {
 
         // Check if assigned user exists and has appropriate role
         const assignedUser = await User.findById(assignedTo);
-        console.log(assignedUser);
         if (!assignedUser) {
             return res.status(404).json({ message: 'Assigned user not found.' });
         }
@@ -267,20 +266,80 @@ exports.assignSurvey = async (req, res) => {
         const customer = await Customer.findByIdAndUpdate(
             id,
             { assignedTo: assignedTo },
-            { new: true }
+            { new: true },
+            { contractorStatus: 'to-do' }
         );
 
         if (!customer) {
             return res.status(404).json({ message: 'Customer not found.' });
         }
 
-        await createLog('Survey Assigned to PM', user_id, customer.name, 'Assignment', customer._id);
-
         return res.status(200).json({ message: 'Survey assigned successfully.' });
 
     } catch (error) {
         console.error('Assign survey error:', error);
         return res.status(500).json({ message: 'Server error assigning survey.' });
+    }
+};
+
+exports.assignContractor = async (req, res) => {
+    try {
+        const user_id = req.user.id;
+
+        // Check if user is Admin
+        const admin = await Admin.findById(user_id);
+        let isAuthorized = !!admin;
+
+        if (!isAuthorized) {
+            // Check if user is Project Manager
+            const user = await User.findById(user_id);
+            if (user && user.userRole === 'project_manager') {
+                isAuthorized = true;
+            }
+        }
+
+        if (!isAuthorized) {
+            return res.status(403).json({ message: 'Only admins or project managers can assign contractors.' });
+        }
+
+        const { id } = req.params; // Customer ID
+        const { contractorId } = req.body;
+
+        if (!contractorId) {
+            return res.status(400).json({ message: 'contractorId is required.' });
+        }
+
+        const contractorUser = await User.findById(contractorId);
+        if (!contractorUser) {
+            return res.status(404).json({ message: 'Contractor user not found.' });
+        }
+
+        if (contractorUser.userRole !== 'contractor') {
+            return res.status(400).json({ message: 'Assigned user must be a contractor.' });
+        }
+
+        const customer = await Customer.findByIdAndUpdate(
+            id,
+            {
+                assignToContractor: contractorId,
+                contractorStatus: 'New'
+            },
+            { new: true }
+        ).populate('assignToContractor', 'fullName email userRole mobileNumber');
+
+        if (!customer) {
+            return res.status(404).json({ message: 'Customer not found.' });
+        }
+
+        await createLog('Contractor Assigned', user_id, customer.name, 'Assignment', customer._id);
+
+        return res.status(200).json({
+            message: 'Contractor assigned successfully.',
+            customer
+        });
+    } catch (error) {
+        console.error('Assign contractor error:', error);
+        return res.status(500).json({ message: 'Server error assigning contractor.' });
     }
 };
 
@@ -303,7 +362,7 @@ exports.installation = async (req, res) => {
             lastActivity: customer.lastActivity,
             assignToContractor: customer.assignToContractor,
             assignedTo: customer.assignedTo,
-            contractorName: customer.contractor,
+            contractorName: customer.assignToContractor?.fullName || '',
             contractorStatus: customer.contractorStatus,
             salesPerson: customer.salesPerson,
         }));

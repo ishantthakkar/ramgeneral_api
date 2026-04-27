@@ -9,7 +9,7 @@ exports.listCustomers = async (req, res) => {
   try {
     const user_id = req.user.id;
     console.log(user_id);
-    const { status, salesPerson, contractor } = req.query;
+    const { status, salesPerson } = req.query;
     const filter = {};
 
     // Get user to check role
@@ -22,13 +22,9 @@ exports.listCustomers = async (req, res) => {
     // If contractor, show assigned customers; if project manager, show customers with assigned surveys
     if (user.userRole === 'contractor') {
       filter.assignedTo = user_id;
-      console.log(`User ${user.fullName} (${user.userRole}) filtering customers by assignedTo: ${user_id}`);
     } else if (user.userRole === 'project_manager') {
       const assignedCustomerIds = await Customer.distinct('_id', { assignedTo: user_id });
       filter._id = { $in: assignedCustomerIds };
-      console.log(`User ${user.fullName} (${user.userRole}) filtering customers by surveys assignedTo: ${user_id}`);
-    } else {
-      console.log(`User ${user.fullName} (${user.userRole}) seeing all customers`);
     }
 
     if (status) {
@@ -39,11 +35,10 @@ exports.listCustomers = async (req, res) => {
       filter.salesPerson = salesPerson;
     }
 
-    if (contractor) {
-      filter.contractor = contractor;
-    }
+    const customers = await Customer.find(filter)
+      .populate('assignToContractor', 'fullName email')
+      .sort({ createdAt: -1 });
 
-    const customers = await Customer.find(filter).sort({ createdAt: -1 });
     const customerSummaries = customers.map((customer) => ({
       id: customer._id,
       accountNumber: customer.accountNumber,
@@ -53,7 +48,7 @@ exports.listCustomers = async (req, res) => {
       createdDate: customer.createdAt,
       convertedDate: customer.convertedDate,
       salesPerson: customer.salesPerson,
-      contractor: customer.contractor,
+      contractor: customer.assignToContractor?.fullName || '',
       lastActivity: customer.lastActivity,
       status: customer.status,
       assignedTo: customer.assignedTo,
@@ -68,15 +63,11 @@ exports.listCustomers = async (req, res) => {
 
 exports.listConvertedCustomers = async (req, res) => {
   try {
-    const { salesPerson, contractor, status } = req.query;
+    const { salesPerson, status } = req.query;
     const filter = { leadId: { $ne: null } };
 
     if (salesPerson) {
       filter.salesPerson = salesPerson;
-    }
-
-    if (contractor) {
-      filter.contractor = contractor;
     }
 
     if (status) {
@@ -85,6 +76,7 @@ exports.listConvertedCustomers = async (req, res) => {
 
     const customers = await Customer.find(filter)
       .populate('leadId', 'name company email mobileNumber leadSource status convertedToCustomer')
+      .populate('assignToContractor', 'fullName email')
       .sort({ convertedDate: -1 });
 
     const customerSummaries = customers.map((customer) => ({
@@ -98,7 +90,7 @@ exports.listConvertedCustomers = async (req, res) => {
       createdDate: customer.createdAt,
       convertedDate: customer.convertedDate,
       salesPerson: customer.salesPerson,
-      contractor: customer.contractor,
+      contractor: customer.assignToContractor?.fullName || '',
       status: customer.status,
       lastActivity: customer.lastActivity,
       assignedTo: customer.assignedTo ?? null,
@@ -204,7 +196,6 @@ exports.updateCustomer = async (req, res) => {
       ...(email && { email }),
       ...(leadSource && { leadSource }),
       ...(salesPerson && { salesPerson }),
-      ...(contractor && { contractor }),
       ...(lastActivity && { lastActivity: new Date(lastActivity) }),
       ...(convertedDate && { convertedDate: new Date(convertedDate) }),
       ...(status && { status }),
@@ -320,7 +311,7 @@ exports.listAssignedCustomers = async (req, res) => {
       createdDate: customer.createdAt,
       convertedDate: customer.convertedDate,
       salesPerson: customer.salesPerson,
-      contractor: customer.contractor,
+      contractor: customer.assignToContractor?.fullName || '',
       lastActivity: customer.lastActivity,
       status: customer.status,
       assignedTo: customer.assignedTo,
@@ -468,8 +459,27 @@ exports.addCustomerMaterial = async (req, res) => {
 
 exports.assignToContractor = async (req, res) => {
   try {
+    const user_id = req.user.id;
+
+    // Check if user is Admin or Project Manager
+    const Admin = require('../models/Admin');
+    const isAdmin = await Admin.findById(user_id);
+    let isAuthorized = !!isAdmin;
+
+    if (!isAuthorized) {
+      const User = require('../models/User');
+      const user = await User.findById(user_id);
+      if (user && user.userRole === 'project_manager') {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ message: 'Only admins or project managers can assign contractors.' });
+    }
+
     const { id } = req.params;
-    const { contractorId, contractorName } = req.body;
+    const { contractorId } = req.body;
 
     if (!contractorId) {
       return res.status(400).json({ message: 'contractorId is required.' });
@@ -487,20 +497,12 @@ exports.assignToContractor = async (req, res) => {
       return res.status(400).json({ message: 'Assigned user must have the role of contractor.' });
     }
 
-    const updatedData = {
-      assignToContractor: contractorId,
-      contractorStatus: 'New',
-    };
-
-    if (contractorName) {
-      updatedData.contractor = contractorName;
-    } else {
-      updatedData.contractor = contractorUser.fullName;
-    }
-
     const customer = await Customer.findByIdAndUpdate(
       id,
-      updatedData,
+      {
+        assignToContractor: contractorId,
+        contractorStatus: 'New',
+      },
       { new: true, runValidators: true }
     ).populate('assignToContractor', 'fullName email userRole');
 

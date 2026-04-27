@@ -43,11 +43,6 @@ const customerSchema = new mongoose.Schema({
     required: true,
     trim: true,
   },
-  contractor: {
-    type: String,
-    trim: true,
-    default: '',
-  },
   assignedTo: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
