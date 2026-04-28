@@ -53,7 +53,7 @@ const customerSchema = new mongoose.Schema({
   },
   contractorStatus: {
     type: String,
-    enum: ['New', 'In Progress', 'Completed'],
+    enum: ['New', 'In Progress', 'Completed', 'completed', 'in progress', 'to-do'],
     default: 'New',
     trim: true,
   },
@@ -66,10 +66,23 @@ const customerSchema = new mongoose.Schema({
   commissions: [
     {
       commissionType: { type: String, enum: ['Survey', 'Installation', 'Other'], required: true },
-      date: { type: Date, default: Date.now },
-      name: { type: String, trim: true },
+      salesPerson: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      contractor: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      otherName: { type: String, trim: true },
       amount: { type: Number, default: 0 },
+      paidAmount: { type: Number, default: 0 },
+      paymentMethod: {
+        type: String,
+        enum: ['Cash', 'ACH Transfer', 'Wire Transfer', 'Check', 'Credit Card', 'Debit Card', 'PayPal', 'Stripe', 'Other'],
+        trim: true
+      },
       paymentDate: { type: Date },
+      paymentStatus: {
+        type: String,
+        enum: ['paid', 'payment pending'],
+        default: 'payment pending'
+      },
+      date: { type: Date, default: Date.now },
     },
   ],
   lastActivity: {

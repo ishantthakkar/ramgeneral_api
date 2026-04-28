@@ -760,7 +760,7 @@ exports.getCustomerActivities = async (req, res) => {
 exports.updateCustomerCommissions = async (req, res) => {
   try {
     const { id } = req.params;
-    const { commissions } = req.body; // Expecting an array of commission objects
+    const { commissions } = req.body;
 
     if (!Array.isArray(commissions)) {
       return res.status(400).json({ message: 'commissions must be an array.' });
@@ -771,12 +771,30 @@ exports.updateCustomerCommissions = async (req, res) => {
       return res.status(404).json({ message: 'Customer not found.' });
     }
 
-    // This replaces or appends? I'll overwrite with new set if they send the whole list,
-    // or just append. Usually "add" APIs append. I'll append for now.
-    customer.commissions = [...customer.commissions, ...commissions];
+    const newCommissions = commissions.map(comm => {
+      const formattedComm = {
+        commissionType: comm.commission_type || comm.commissionType,
+        amount: comm.amount || 0,
+        paidAmount: comm.paid_amount || comm.paidAmount || 0,
+        paymentMethod: comm.payment_method || comm.paymentMethod,
+        paymentDate: comm.payment_date || comm.paymentDate,
+        paymentStatus: comm.payment_status || comm.paymentStatus || 'payment pending',
+      };
+
+      if (formattedComm.commissionType === 'Survey') {
+        formattedComm.salesPerson = comm.sales_person || comm.salesPerson;
+      } else if (formattedComm.commissionType === 'Installation') {
+        formattedComm.contractor = comm.contractor_id || comm.contractor;
+      } else if (formattedComm.commissionType === 'Other') {
+        formattedComm.otherName = comm.other_name || comm.otherName;
+      }
+
+      return formattedComm;
+    });
+
+    customer.commissions = [...customer.commissions, ...newCommissions];
     await customer.save();
 
-    const { createLog } = require('../utils/logger');
     await createLog('Commissions Updated', req.user.id, customer.name, 'Customer', customer._id);
 
     return res.status(200).json({
