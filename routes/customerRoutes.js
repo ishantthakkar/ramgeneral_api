@@ -8,6 +8,7 @@ router.get('/customers', verifyToken, customerController.listCustomers);
 router.get('/customers-list', verifyToken, customerController.listConvertedCustomers);
 router.get('/customers/assigned', verifyToken, customerController.listAssignedCustomers);
 router.get('/customers/inspections', verifyToken, customerController.listInspections);
+router.get('/customers/commission-list', verifyToken, customerController.customerCommissionList);
 router.get('/:id', verifyToken, customerController.getCustomer);
 router.put('/customers/:id', verifyToken, customerController.updateCustomer);
 router.patch('/customers/:id/assign-contractor', verifyToken, customerController.assignContractor);

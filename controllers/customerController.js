@@ -807,3 +807,91 @@ exports.updateCustomerCommissions = async (req, res) => {
   }
 };
 
+exports.customerCommissionList = async (req, res) => {
+  try {
+    const customers = await Customer.find({ verifyStatus: 'verified' })
+      .populate('assignToContractor', 'fullName email')
+      .populate({
+        path: 'commissions.salesPerson',
+        model: 'User',
+        select: 'fullName email'
+      })
+      .populate({
+        path: 'commissions.contractor',
+        model: 'User',
+        select: 'fullName email'
+      })
+      .sort({ createdAt: -1 });
+
+    let totalCommission = 0;
+    let totalPaid = 0;
+    let totalPending = 0;
+
+    const customerList = customers.map(customer => {
+      let customerTotal = 0;
+      let customerPaid = 0;
+      let customerPending = 0;
+
+      const commissions = (customer.commissions || []).map(comm => {
+        const amount = comm.amount || 0;
+        const paid = comm.paidAmount || 0;
+        const pending = amount - paid;
+
+        customerTotal += amount;
+        customerPaid += paid;
+        customerPending += pending;
+
+        totalCommission += amount;
+        totalPaid += paid;
+        totalPending += pending;
+
+        // Get the name of the person this commission is for
+        let paidTo = '';
+        if (comm.commissionType === 'Survey' && comm.salesPerson) {
+          paidTo = comm.salesPerson.fullName || '';
+        } else if (comm.commissionType === 'Installation' && comm.contractor) {
+          paidTo = comm.contractor.fullName || '';
+        } else if (comm.commissionType === 'Other') {
+          paidTo = comm.otherName || '';
+        }
+
+        return {
+          ...comm.toObject(),
+          paidTo,
+          pending
+        };
+      });
+
+      return {
+        id: customer._id,
+        name: customer.name,
+        company: customer.company,
+        salesPerson: customer.salesPerson, // This is the string from Customer model
+        contractor: customer.assignToContractor?.fullName || '', // This is the populated contractor
+
+        total_overall_amount: customerTotal,
+        total_paid_amount: customerPaid,
+        total_pending_amount: customerPending,
+
+        commissions
+      };
+    });
+
+    return res.status(200).json({
+      message: 'Verified customer commission list retrieved successfully.',
+      total_customers: customerList.length,
+      customers: customerList,
+      overallSummary: {
+        totalCommission,
+        totalPaid,
+        totalPending
+      }
+    });
+
+  } catch (error) {
+    console.error('Customer commission list error:', error);
+    return res.status(500).json({
+      message: 'Server error retrieving customer commission list.'
+    });
+  }
+};
