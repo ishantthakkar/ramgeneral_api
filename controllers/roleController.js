@@ -2,22 +2,44 @@ const Role = require('../models/Role');
 
 exports.createRole = async (req, res) => {
   try {
-    const { roleName, permissions, notes } = req.body;
+    const { id, roleName, permissions, notes } = req.body;
 
     if (!roleName) {
       return res.status(400).json({ message: 'roleName is required.' });
     }
 
-    const role = await Role.findOneAndUpdate(
-      { roleName },
-      { roleName, permissions, notes },
-      { new: true, upsert: true, runValidators: true }
-    );
+    if (id) {
+      // Update logic
+      const existingRole = await Role.findOne({ roleName, _id: { $ne: id } });
+      if (existingRole) {
+        return res.status(400).json({ message: 'Role name already exists.' });
+      }
 
-    return res.status(200).json({
-      message: 'Role saved successfully.',
-      role
-    });
+      const role = await Role.findByIdAndUpdate(
+        id,
+        { roleName, permissions, notes },
+        { new: true, runValidators: true }
+      );
+
+      if (!role) {
+        return res.status(404).json({ message: 'Role not found.' });
+      }
+
+      return res.status(200).json({ message: 'Role updated successfully.', role });
+    } else {
+      // Create logic
+      const existingRole = await Role.findOne({ roleName });
+      if (existingRole) {
+        return res.status(400).json({ message: 'Role name already exists.' });
+      }
+
+      const role = await Role.create({ roleName, permissions, notes });
+
+      return res.status(201).json({
+        message: 'Role created successfully.',
+        role
+      });
+    }
   } catch (error) {
     console.error('Save role error:', error);
     return res.status(500).json({ message: 'Server error saving role.' });
@@ -45,28 +67,6 @@ exports.getRole = async (req, res) => {
   } catch (error) {
     console.error('Get role error:', error);
     return res.status(500).json({ message: 'Server error fetching role.' });
-  }
-};
-
-exports.updateRole = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { roleName, permissions, notes } = req.body;
-
-    const role = await Role.findByIdAndUpdate(
-      id,
-      { roleName, permissions, notes },
-      { new: true, runValidators: true }
-    );
-
-    if (!role) {
-      return res.status(404).json({ message: 'Role not found.' });
-    }
-
-    return res.status(200).json({ message: 'Role updated successfully.', role });
-  } catch (error) {
-    console.error('Update role error:', error);
-    return res.status(500).json({ message: 'Server error updating role.' });
   }
 };
 

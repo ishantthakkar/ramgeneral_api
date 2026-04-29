@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const bcrypt = require('bcryptjs');
 const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
 const { generateAccessToken, generateRefreshToken } = require('../utils/token');
@@ -58,7 +59,7 @@ exports.loginUser = async (req, res) => {
 
 exports.createUser = async (req, res) => {
     try {
-        const { id, fullName, company, email, mobileNumber, userRole, status } = req.body;
+        const { id, fullName, company, email, mobileNumber, userRole, status, password } = req.body;
 
         if (!fullName || !company || !email || !mobileNumber || !userRole || !status) {
             return res.status(400).json({ message: 'All user fields are required.' });
@@ -74,16 +75,24 @@ exports.createUser = async (req, res) => {
                 return res.status(400).json({ message: 'Another user with this email already exists.' });
             }
 
+            const updateData = {
+                fullName,
+                company,
+                email: email.toLowerCase(),
+                mobileNumber,
+                userRole,
+                status,
+            };
+
+            // Allow password for specific roles
+            if (['sales_manager', 'project_manager'].includes(userRole) && password) {
+                const salt = await bcrypt.genSalt(10);
+                updateData.password = await bcrypt.hash(password, salt);
+            }
+
             const updatedUser = await User.findByIdAndUpdate(
                 id,
-                {
-                    fullName,
-                    company,
-                    email: email.toLowerCase(),
-                    mobileNumber,
-                    userRole,
-                    status,
-                },
+                updateData,
                 { new: true, runValidators: true }
             );
 
@@ -99,14 +108,22 @@ exports.createUser = async (req, res) => {
             return res.status(200).json({ message: 'User with this email already exists.' });
         }
 
-        const newUser = await User.create({
+        const userData = {
             fullName,
             company,
             email: email.toLowerCase(),
             mobileNumber,
             userRole,
             status,
-        });
+        };
+
+        // Allow password for specific roles
+        if (['sales_manager', 'project_manager'].includes(userRole) && password) {
+            const salt = await bcrypt.genSalt(10);
+            userData.password = await bcrypt.hash(password, salt);
+        }
+
+        const newUser = await User.create(userData);
 
         return res.status(201).json({ user: newUser, message: 'User created successfully.' });
     } catch (error) {

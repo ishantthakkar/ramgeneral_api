@@ -8,7 +8,6 @@ const router = express.Router();
 router.post('/', verifyToken, roleController.createRole);
 router.get('/', verifyToken, roleController.listRoles);
 router.get('/:id', verifyToken, roleController.getRole);
-router.put('/:id', verifyToken, roleController.updateRole);
 router.delete('/:id', verifyToken, roleController.deleteRole);
 
 module.exports = router;
