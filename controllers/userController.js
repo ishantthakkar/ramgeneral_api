@@ -84,8 +84,8 @@ exports.createUser = async (req, res) => {
                 status,
             };
 
-            // Store password if provided
-            if (password) {
+            // Allow password for specific roles
+            if (['sales_manager', 'project_manager'].includes(userRole) && password) {
                 const salt = await bcrypt.genSalt(10);
                 updateData.password = await bcrypt.hash(password, salt);
             }
@@ -117,8 +117,8 @@ exports.createUser = async (req, res) => {
             status,
         };
 
-        // Store password if provided
-        if (password) {
+        // Allow password for specific roles
+        if (['sales_manager', 'project_manager'].includes(userRole) && password) {
             const salt = await bcrypt.genSalt(10);
             userData.password = await bcrypt.hash(password, salt);
         }
