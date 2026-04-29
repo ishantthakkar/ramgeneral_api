@@ -1,5 +1,6 @@
 const bcrypt = require('bcryptjs');
 const Admin = require('../models/Admin');
+const User = require('../models/User');
 const { generateAccessToken, generateRefreshToken } = require('../utils/token');
 
 exports.login = async (req, res) => {
@@ -10,31 +11,39 @@ exports.login = async (req, res) => {
       return res.status(400).json({ message: 'Email and password are required.' });
     }
 
-    const admin = await Admin.findOne({ email: email.toLowerCase() }).populate('roleId');
-    if (!admin) {
+    let user = await Admin.findOne({ email: email.toLowerCase() }).populate('roleId');
+    let isUserAdmin = true;
+
+    if (!user) {
+      user = await User.findOne({ email: email.toLowerCase() }).populate('roleId');
+      isUserAdmin = false;
+    }
+
+    if (!user || !user.password) {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
 
-    const passwordMatches = await bcrypt.compare(password, admin.password);
+    const passwordMatches = await bcrypt.compare(password, user.password);
     if (!passwordMatches) {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
 
-    const accessToken = generateAccessToken(admin);
-    const refreshToken = generateRefreshToken(admin);
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
 
-    admin.refreshTokens.push({ token: refreshToken });
-    await admin.save();
+    user.refreshTokens.push({ token: refreshToken });
+    await user.save();
 
-    const adminData = admin.toObject();
-    delete adminData.password;
-    delete adminData.refreshTokens;
+    const userData = user.toObject();
+    delete userData.password;
+    delete userData.refreshTokens;
+    delete userData.roleId;
 
     return res.json({
-      admin: adminData,
+      [isUserAdmin ? 'admin' : 'user']: userData,
       accessToken,
       refreshToken,
-      permissions: admin.roleId ? admin.roleId.permissions : {}
+      permissions: !isUserAdmin ? (user.roleId?.permissions || {}) : {}
     });
   } catch (error) {
     console.error('Login error:', error);

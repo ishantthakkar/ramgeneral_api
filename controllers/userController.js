@@ -1,4 +1,6 @@
 const User = require('../models/User');
+const Role = require('../models/Role');
+const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
@@ -89,9 +91,22 @@ exports.createUser = async (req, res) => {
                 company,
                 email: email.toLowerCase(),
                 mobileNumber,
-                userRole,
                 status,
             };
+
+            // Handle dynamic userRole (ID or Name)
+            if (mongoose.Types.ObjectId.isValid(userRole)) {
+                updateData.roleId = userRole;
+                const roleDoc = await Role.findById(userRole);
+                if (roleDoc) {
+                    updateData.userRole = roleDoc.roleName;
+                } else {
+                    updateData.userRole = userRole; // fallback
+                }
+            } else {
+                updateData.userRole = userRole;
+                updateData.roleId = null;
+            }
 
             // Store password if provided
             if (password) {
@@ -127,9 +142,22 @@ exports.createUser = async (req, res) => {
             company,
             email: email.toLowerCase(),
             mobileNumber,
-            userRole,
             status,
         };
+
+        // Handle dynamic userRole (ID or Name)
+        if (mongoose.Types.ObjectId.isValid(userRole)) {
+            userData.roleId = userRole;
+            const roleDoc = await Role.findById(userRole);
+            if (roleDoc) {
+                userData.userRole = roleDoc.roleName;
+            } else {
+                userData.userRole = userRole; // fallback
+            }
+        } else {
+            userData.userRole = userRole;
+            userData.roleId = null;
+        }
 
         // Store password if provided
         if (password) {
