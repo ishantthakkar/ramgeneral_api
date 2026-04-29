@@ -12,6 +12,10 @@ const adminSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  roleId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Role'
+  },
   refreshTokens: [
     {
       token: {

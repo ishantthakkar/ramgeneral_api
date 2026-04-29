@@ -29,6 +29,10 @@ const userSchema = new mongoose.Schema({
     required: true,
     trim: true,
   },
+  roleId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Role'
+  },
   status: {
     type: String,
     required: true,

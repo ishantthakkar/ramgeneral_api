@@ -18,7 +18,7 @@ exports.loginUser = async (req, res) => {
         if (mobileNumber) filter.mobileNumber = mobileNumber;
         if (email) filter.email = email.toLowerCase();
 
-        const user = await User.findOne(filter);
+        const user = await User.findOne(filter).populate('roleId');
         if (!user) {
             return res.status(401).json({ message: 'Invalid OTP or user details.' });
         }
@@ -36,18 +36,18 @@ exports.loginUser = async (req, res) => {
         user.refreshTokens.push({ token: refreshToken });
         await user.save();
 
+        const userData = user.toObject();
+        delete userData.refreshTokens;
+        delete userData.otpCode;
+        delete userData.otpExpiresAt;
+
         return res.json({
             accessToken,
             refreshToken,
             verifyToken: refreshToken,
             user: {
-                id: user._id,
-                fullName: user.fullName,
-                company: user.company,
-                mobileNumber: user.mobileNumber,
-                email: user.email,
-                userRole: user.userRole,
-                status: user.status,
+                ...userData,
+                permissions: user.roleId ? user.roleId.permissions : {}
             },
         });
     } catch (error) {
@@ -278,7 +278,7 @@ exports.verifyUserOtp = async (req, res) => {
         if (mobileNumber) filter.mobileNumber = mobileNumber;
         if (email) filter.email = email.toLowerCase();
 
-        const user = await User.findOne(filter);
+        const user = await User.findOne(filter).populate('roleId');
         if (!user) {
             return res.status(401).json({ message: 'Invalid OTP or user details.' });
         }
@@ -296,16 +296,17 @@ exports.verifyUserOtp = async (req, res) => {
         user.refreshTokens.push({ token: refreshToken });
         await user.save();
 
+        const userData = user.toObject();
+        delete userData.refreshTokens;
+        delete userData.otpCode;
+        delete userData.otpExpiresAt;
+
         return res.json({
             accessToken,
             refreshToken,
             user: {
-                id: user._id,
-                fullName: user.fullName,
-                company: user.company,
-                mobileNumber: user.mobileNumber,
-                email: user.email,
-                userRole: user.userRole,
+                ...userData,
+                permissions: user.roleId ? user.roleId.permissions : {}
             },
         });
     } catch (error) {

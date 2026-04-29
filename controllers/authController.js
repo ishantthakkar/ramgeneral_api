@@ -10,7 +10,7 @@ exports.login = async (req, res) => {
       return res.status(400).json({ message: 'Email and password are required.' });
     }
 
-    const admin = await Admin.findOne({ email: email.toLowerCase() });
+    const admin = await Admin.findOne({ email: email.toLowerCase() }).populate('roleId');
     if (!admin) {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
@@ -26,10 +26,15 @@ exports.login = async (req, res) => {
     admin.refreshTokens.push({ token: refreshToken });
     await admin.save();
 
+    const adminData = admin.toObject();
+    delete adminData.password;
+    delete adminData.refreshTokens;
+
     return res.json({
-      email: admin.email,
+      admin: adminData,
       accessToken,
       refreshToken,
+      permissions: admin.roleId ? admin.roleId.permissions : {}
     });
   } catch (error) {
     console.error('Login error:', error);
