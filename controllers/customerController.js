@@ -102,11 +102,11 @@ exports.listConvertedCustomers = async (req, res) => {
     // Check if user is Admin or Project Manager
     const Admin = require('../models/Admin');
     const User = require('../models/User');
-    
+
     const admin = await Admin.findById(user_id);
     if (!admin) {
       const user = await User.findById(user_id);
-      if (user && user.userRole === 'project_manager') {
+      if (user && user.userRole === 'Project Manager') {
         filter.assignedTo = user_id;
       }
     }
