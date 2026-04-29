@@ -75,6 +75,15 @@ exports.createUser = async (req, res) => {
                 return res.status(400).json({ message: 'Another user with this email already exists.' });
             }
 
+            const existingUserWithMobile = await User.findOne({
+                mobileNumber,
+                _id: { $ne: id },
+            });
+
+            if (existingUserWithMobile) {
+                return res.status(400).json({ message: 'Another user with this mobile number already exists.' });
+            }
+
             const updateData = {
                 fullName,
                 company,
@@ -105,7 +114,12 @@ exports.createUser = async (req, res) => {
 
         const existingUser = await User.findOne({ email: email.toLowerCase() });
         if (existingUser) {
-            return res.status(200).json({ message: 'User with this email already exists.' });
+            return res.status(400).json({ message: 'User with this email already exists.' });
+        }
+
+        const existingUserMobile = await User.findOne({ mobileNumber });
+        if (existingUserMobile) {
+            return res.status(400).json({ message: 'User with this mobile number already exists.' });
         }
 
         const userData = {
@@ -117,8 +131,8 @@ exports.createUser = async (req, res) => {
             status,
         };
 
-        // Allow password for specific roles
-        if (['sales_manager', 'project_manager'].includes(userRole) && password) {
+        // Store password if provided
+        if (password) {
             const salt = await bcrypt.genSalt(10);
             userData.password = await bcrypt.hash(password, salt);
         }
