@@ -150,7 +150,7 @@ exports.listAssignedSurveys = async (req, res) => {
         }
 
         // Only allow contractors and project managers to access this endpoint
-        if (user.userRole !== 'contractor' && user.userRole !== 'project_manager') {
+        if (user.userRole !== 'contractor' && user.userRole !== 'Project Manager') {
             return res.status(403).json({ message: 'Access denied. Only contractors and project managers can view assigned surveys.' });
         }
 
@@ -259,7 +259,7 @@ exports.assignSurvey = async (req, res) => {
             return res.status(404).json({ message: 'Assigned user not found.' });
         }
 
-        if (assignedUser.userRole !== 'project_manager') {
+        if (assignedUser.userRole !== 'Project Manager') {
             return res.status(400).json({ message: 'Assigned user must be a project manager.' });
         }
 
@@ -293,7 +293,7 @@ exports.assignContractor = async (req, res) => {
         if (!isAuthorized) {
             // Check if user is Project Manager
             const user = await User.findById(user_id);
-            if (user && user.userRole === 'project_manager') {
+            if (user && user.userRole === 'Project Manager') {
                 isAuthorized = true;
             }
         }

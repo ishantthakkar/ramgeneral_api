@@ -201,7 +201,7 @@ exports.getUser = async (req, res) => {
             };
         }
 
-        if (user.userRole === 'project_manager') {
+        if (user.userRole === 'Project Manager') {
             roleMetrics = {
                 pendingInspections: 0,
                 completedInspections: 0
@@ -259,7 +259,7 @@ exports.listUsers = async (req, res) => {
                 };
             }
 
-            if (user.userRole === 'project_manager') {
+            if (user.userRole === 'Project Manager') {
                 const Survey = require('../models/Survey');
                 roleMetrics = {
                     pendingInspections: await Survey.countDocuments({ assignedTo: user._id, status: { $ne: 'completed' } }),
@@ -275,9 +275,9 @@ exports.listUsers = async (req, res) => {
 
         const counts = {
             total_users: await User.countDocuments(),
-            total_sales_persons: await User.countDocuments({ userRole: 'sales_person' }),
-            total_contractors: await User.countDocuments({ userRole: 'contractor' }),
-            total_project_managers: await User.countDocuments({ userRole: 'project_manager' }),
+            total_sales_persons: await User.countDocuments({ userRole: 'Sales Person' }),
+            total_contractors: await User.countDocuments({ userRole: 'Contractor' }),
+            total_project_managers: await User.countDocuments({ userRole: 'Project Manager' }),
         };
 
         return res.status(200).json({ users: usersWithMetrics, counts });
