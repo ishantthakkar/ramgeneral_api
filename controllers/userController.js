@@ -68,13 +68,15 @@ exports.createUser = async (req, res) => {
         }
 
         if (id) {
-            const existingUserWithEmail = await User.findOne({
-                email: email.toLowerCase(),
-                _id: { $ne: id },
-            });
+            if (email) {
+                const existingUserWithEmail = await User.findOne({
+                    email: email.toLowerCase(),
+                    _id: { $ne: id },
+                });
 
-            if (existingUserWithEmail) {
-                return res.status(400).json({ message: 'Another user with this email already exists.' });
+                if (existingUserWithEmail) {
+                    return res.status(400).json({ message: 'Another user with this email already exists.' });
+                }
             }
 
             const existingUserWithMobile = await User.findOne({
@@ -89,7 +91,7 @@ exports.createUser = async (req, res) => {
             const updateData = {
                 fullName,
                 company,
-                email: email.toLowerCase(),
+                ...(email && { email: email.toLowerCase() }),
                 mobileNumber,
                 status,
             };
@@ -127,9 +129,11 @@ exports.createUser = async (req, res) => {
             return res.status(200).json({ user: updatedUser, message: 'User updated successfully.' });
         }
 
-        const existingUser = await User.findOne({ email: email.toLowerCase() });
-        if (existingUser) {
-            return res.status(400).json({ message: 'User with this email already exists.' });
+        if (email) {
+            const existingUser = await User.findOne({ email: email.toLowerCase() });
+            if (existingUser) {
+                return res.status(400).json({ message: 'User with this email already exists.' });
+            }
         }
 
         const existingUserMobile = await User.findOne({ mobileNumber });
@@ -140,7 +144,7 @@ exports.createUser = async (req, res) => {
         const userData = {
             fullName,
             company,
-            email: email.toLowerCase(),
+            ...(email && { email: email.toLowerCase() }),
             mobileNumber,
             status,
         };
