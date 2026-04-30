@@ -6,7 +6,7 @@ const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
 const { generateAccessToken, generateRefreshToken } = require('../utils/token');
 
-const ALLOWED_ROLES = ['project_manager', 'contractor', 'sales_person'];
+const ALLOWED_ROLES = ['project_manager', 'contractor', 'Contractor', 'sales_person', 'Sales Person', 'Project Manager'];
 const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 exports.loginUser = async (req, res) => {
