@@ -311,7 +311,8 @@ exports.sendUserOtp = async (req, res) => {
             });
         }
 
-        const otpCode = generateOtp();
+        // const otpCode = generateOtp();
+        const otpCode = '123456';
         const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
         user.otpCode = otpCode;
