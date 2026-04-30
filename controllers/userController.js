@@ -63,7 +63,7 @@ exports.createUser = async (req, res) => {
     try {
         const { id, fullName, company, email, mobileNumber, userRole, status, password } = req.body;
 
-        if (!fullName || !company || !email || !mobileNumber || !userRole || !status) {
+        if (!fullName || !company || !mobileNumber || !userRole || !status) {
             return res.status(400).json({ message: 'All user fields are required.' });
         }
 
