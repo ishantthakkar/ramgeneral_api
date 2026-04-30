@@ -314,10 +314,6 @@ exports.assignContractor = async (req, res) => {
             return res.status(404).json({ message: 'Contractor user not found.' });
         }
 
-        if (contractorUser.userRole !== 'contractor') {
-            return res.status(400).json({ message: 'Assigned user must be a contractor.' });
-        }
-
         const customer = await Customer.findByIdAndUpdate(
             id,
             {
