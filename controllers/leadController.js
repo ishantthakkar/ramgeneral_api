@@ -266,27 +266,7 @@ exports.getLeadsByUser = async (req, res) => {
 
     const leads = await Lead.find({ user_id: userId, status: 'New' }).sort({ createdAt: -1 });
 
-    const leadSummaries = leads.map((lead) => ({
-      id: lead._id,
-      name: lead.name,
-      company: lead.company,
-      mobileNumber: lead.mobileNumber,
-      email: lead.email,
-      leadSource: lead.leadSource,
-      street: lead.street,
-      city: lead.city,
-      state: lead.state,
-      zip: lead.zip,
-      notes: lead.notes,
-      createdDate: lead.createdAt,
-      salesPerson: lead.salesPerson,
-      lastActivity: lead.lastActivity,
-      status: lead.status,
-      user_id: lead.user_id,
-      createdByName: lead.createdByName,
-    }));
-
-    return res.status(200).json({ leads: leadSummaries });
+    return res.status(200).json({ leads });
   } catch (error) {
     console.error('Get leads by user error:', error);
     return res.status(500).json({ message: 'Server error fetching leads by user.' });
