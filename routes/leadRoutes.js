@@ -9,5 +9,6 @@ router.get('/leads/:id', verifyToken, leadController.getLead);
 router.post('/leads-create', verifyToken, leadController.createLead);
 router.post('/leads/:id/convert', verifyToken, leadController.convertToCustomer);
 router.post('/leads/:id/status', verifyToken, leadController.updateLeadStatus);
+router.get('/leads-user', verifyToken, leadController.getLeadsByUser);
 
 module.exports = router;

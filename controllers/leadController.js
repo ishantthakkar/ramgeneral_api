@@ -256,3 +256,39 @@ exports.updateLeadStatus = async (req, res) => {
     return res.status(500).json({ message: 'Server error updating lead status.' });
   }
 };
+
+exports.getLeadsByUser = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    if (!userId) {
+      return res.status(401).json({ message: 'User not authenticated.' });
+    }
+
+    const leads = await Lead.find({ user_id: userId, status: 'New' }).sort({ createdAt: -1 });
+
+    const leadSummaries = leads.map((lead) => ({
+      id: lead._id,
+      name: lead.name,
+      company: lead.company,
+      mobileNumber: lead.mobileNumber,
+      email: lead.email,
+      leadSource: lead.leadSource,
+      street: lead.street,
+      city: lead.city,
+      state: lead.state,
+      zip: lead.zip,
+      notes: lead.notes,
+      createdDate: lead.createdAt,
+      salesPerson: lead.salesPerson,
+      lastActivity: lead.lastActivity,
+      status: lead.status,
+      user_id: lead.user_id,
+      createdByName: lead.createdByName,
+    }));
+
+    return res.status(200).json({ leads: leadSummaries });
+  } catch (error) {
+    console.error('Get leads by user error:', error);
+    return res.status(500).json({ message: 'Server error fetching leads by user.' });
+  }
+};

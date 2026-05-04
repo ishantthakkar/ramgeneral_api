@@ -524,6 +524,38 @@ exports.updateCustomerSurveyStatus = async (req, res) => {
   }
 };
 
+exports.getCustomersByUser = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    if (!userId) {
+      return res.status(401).json({ message: 'User not authenticated.' });
+    }
+
+    const customers = await Customer.find({ user_id: userId }).sort({ createdAt: -1 });
+
+    const customerSummaries = customers.map((customer) => ({
+      id: customer._id,
+      accountNumber: customer.accountNumber,
+      name: customer.name,
+      company: customer.company,
+      mobileNumber: customer.mobileNumber,
+      email: customer.email,
+      leadSource: customer.leadSource,
+      createdDate: customer.createdAt,
+      convertedDate: customer.convertedDate,
+      salesPerson: customer.salesPerson,
+      lastActivity: customer.lastActivity,
+      status: customer.status,
+      assignedTo: customer.assignedTo,
+    }));
+
+    return res.status(200).json({ customers: customerSummaries });
+  } catch (error) {
+    console.error('Get customers by user error:', error);
+    return res.status(500).json({ message: 'Server error fetching customers by user.' });
+  }
+};
+
 exports.addCustomerMaterial = async (req, res) => {
   try {
     const { id } = req.params;
