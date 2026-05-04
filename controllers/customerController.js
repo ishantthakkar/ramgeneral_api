@@ -533,23 +533,7 @@ exports.getCustomersByUser = async (req, res) => {
 
     const customers = await Customer.find({ user_id: userId }).sort({ createdAt: -1 });
 
-    const customerSummaries = customers.map((customer) => ({
-      id: customer._id,
-      accountNumber: customer.accountNumber,
-      name: customer.name,
-      company: customer.company,
-      mobileNumber: customer.mobileNumber,
-      email: customer.email,
-      leadSource: customer.leadSource,
-      createdDate: customer.createdAt,
-      convertedDate: customer.convertedDate,
-      salesPerson: customer.salesPerson,
-      lastActivity: customer.lastActivity,
-      status: customer.status,
-      assignedTo: customer.assignedTo,
-    }));
-
-    return res.status(200).json({ customers: customerSummaries });
+    return res.status(200).json({ customers });
   } catch (error) {
     console.error('Get customers by user error:', error);
     return res.status(500).json({ message: 'Server error fetching customers by user.' });
