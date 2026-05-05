@@ -360,7 +360,6 @@ exports.installation = async (req, res) => {
             assignedTo: customer.assignedTo,
             contractorName: customer.assignToContractor?.fullName || '',
             contractorStatus: customer.contractorStatus,
-            salesPerson: customer.salesPerson,
         }));
 
         return res.status(200).json({

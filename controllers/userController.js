@@ -257,9 +257,9 @@ exports.listUsers = async (req, res) => {
 
             if (user.userRole === 'sales_person') {
                 roleMetrics = {
-                    activeLeads: await Lead.countDocuments({ salesPerson: user.fullName, status: { $in: ['New', 'In Progress'] } }),
-                    customers: await Customer.countDocuments({ salesPerson: user.fullName }),
-                    closedLeads: await Lead.countDocuments({ salesPerson: user.fullName, status: 'Lost Leads' })
+                    activeLeads: await Lead.countDocuments({ user_id: user._id, status: { $in: ['New', 'In Progress'] } }),
+                    customers: await Customer.countDocuments({ user_id: user._id }),
+                    closedLeads: await Lead.countDocuments({ user_id: user._id, status: 'Lost Leads' })
                 };
             }
 

@@ -7,21 +7,25 @@ const ALLOWED_STATUSES = ['New', 'In Progress', 'Lost Leads', 'Converted To Cust
 
 exports.createLead = async (req, res) => {
   try {
-    const { 
-      id, // Added this to check for update
-      name, 
-      company, 
-      mobileNumber, 
-      email, 
-      leadSource, 
-      status, 
-      street, 
-      city, 
-      state, 
-      zip, 
-      notes, 
-      salesPerson: salesPersonBody, 
-      lastActivity 
+    const {
+      id,
+      name,
+      company,
+      mobileNumber,
+      email,
+      leadSource,
+      status,
+      street,
+      city,
+      state,
+      zip,
+      notes,
+      lastActivity,
+      activityLog,
+      activityType,
+      activityDate,
+      outcome,
+      nextFollowUpDate
     } = req.body;
 
     const Admin = require('../models/Admin');
@@ -37,45 +41,113 @@ exports.createLead = async (req, res) => {
       return res.status(401).json({ message: 'Invalid token or user not found.' });
     }
 
-    const salesPerson = salesPersonBody || (!is_admin && currentUser.userRole === 'sales_person' ? currentUser.fullName : undefined);
-
-    if (!name || !company || !mobileNumber || !salesPerson || !status) {
-      return res.status(400).json({ message: 'name, company, mobileNumber, salesPerson and status are required.' });
+    if (!name || !company || !mobileNumber) {
+      return res.status(400).json({ message: 'name, company, mobileNumber are required.' });
     }
 
-    if (!ALLOWED_STATUSES.includes(status)) {
+    if (status && !ALLOWED_STATUSES.includes(status)) {
       return res.status(400).json({
         message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
       });
     }
 
+    // Process notes
+    let processedNotes = [];
+    if (notes) {
+      if (Array.isArray(notes)) {
+        processedNotes = notes.map(n => {
+          const noteText = typeof n === 'string' ? n : (n.note || '');
+          return { note: noteText, createdAt: new Date() };
+        });
+      } else {
+        processedNotes = [{ note: notes, createdAt: new Date() }];
+      }
+    }
+
+    // Process activity log
+    let processedActivityLog = [];
+    if (activityLog && Array.isArray(activityLog)) {
+      processedActivityLog = activityLog.map(a => ({
+        activityType: a.activityType,
+        date: a.date ? new Date(a.date) : new Date(),
+        outcome: a.outcome || '',
+        nextFollowUpDate: a.nextFollowUpDate ? new Date(a.nextFollowUpDate) : undefined,
+        createdAt: new Date()
+      }));
+    } else if (activityType) {
+      processedActivityLog = [{
+        activityType,
+        date: activityDate ? new Date(activityDate) : new Date(),
+        outcome: outcome || '',
+        nextFollowUpDate: nextFollowUpDate ? new Date(nextFollowUpDate) : undefined,
+        createdAt: new Date()
+      }];
+    }
+
     if (id) {
       // UPDATE RECORD
-      const updateData = {
-        name,
-        company,
-        mobileNumber,
-        email: email ? email.toLowerCase() : '',
-        leadSource: leadSource || '',
-        street: street || '',
-        city: city || '',
-        state: state || '',
-        zip: zip || '',
-        notes: notes || '',
-        salesPerson,
-        lastActivity: lastActivity ? new Date(lastActivity) : Date.now(),
-        status,
-        convertedToCustomer: status === 'Converted To Customer',
-      };
-
-      const updatedLead = await Lead.findByIdAndUpdate(id, updateData, {
-        new: true,
-        runValidators: true,
-      });
-
-      if (!updatedLead) {
+      const lead = await Lead.findById(id);
+      if (!lead) {
         return res.status(404).json({ message: 'Lead not found.' });
       }
+
+      // Update basic fields
+      lead.name = name;
+      lead.company = company;
+      lead.mobileNumber = mobileNumber;
+      lead.email = email ? email.toLowerCase() : '';
+      lead.leadSource = leadSource || '';
+      lead.street = street || '';
+      lead.city = city || '';
+      lead.state = state || '';
+      lead.zip = zip || '';
+      lead.lastActivity = lastActivity ? new Date(lastActivity) : Date.now();
+      if (status) {
+        lead.status = status;
+        lead.convertedToCustomer = status === 'Converted To Customer';
+      }
+
+      // Handle notes safely (force $set by reassigning the whole array)
+      let currentNotes = Array.isArray(lead.notes) ? lead.notes : [];
+      if (!Array.isArray(lead.notes) && typeof lead.notes === 'string' && lead.notes) {
+        currentNotes = [{ note: lead.notes, createdAt: lead.updatedAt || new Date() }];
+      }
+
+      // Repair logic: Fix cases where a string was accidentally stored as an object with numeric keys
+      currentNotes = currentNotes.map(n => {
+        if (n && typeof n === 'object' && !n.note && n[0] !== undefined) {
+          let reconstructedNote = '';
+          for (let i = 0; n[i] !== undefined; i++) {
+            reconstructedNote += n[i];
+          }
+          return { note: reconstructedNote, createdAt: n.createdAt || new Date() };
+        }
+        return n;
+      });
+
+      if (processedNotes.length > 0) {
+        lead.notes = [...currentNotes, ...processedNotes];
+        lead.markModified('notes');
+      } else {
+        lead.notes = currentNotes;
+      }
+
+      // Handle activity log safely (force $set by reassigning the whole array)
+      let currentActivityLog = Array.isArray(lead.activityLog) ? lead.activityLog : [];
+
+      if (processedActivityLog.length > 0) {
+        lead.activityLog = [...currentActivityLog, ...processedActivityLog];
+      } else {
+        lead.activityLog = [...currentActivityLog, {
+          activityType: 'Update',
+          date: new Date(),
+          outcome: 'Lead details updated',
+          createdAt: new Date()
+        }];
+      }
+      lead.markModified('activityLog');
+
+      const updatedLead = await lead.save();
 
       await createLog(`Lead Updated`, req.user.id, name, 'Lead', updatedLead._id);
 
@@ -92,14 +164,19 @@ exports.createLead = async (req, res) => {
         city: city || '',
         state: state || '',
         zip: zip || '',
-        notes: notes || '',
+        notes: processedNotes,
+        activityLog: processedActivityLog.length > 0 ? processedActivityLog : [{
+          activityType: 'Creation',
+          date: new Date(),
+          outcome: 'Lead Created',
+          createdAt: new Date()
+        }],
         user_id: currentUser._id,
         createdByName: is_admin ? currentUser.email : currentUser.fullName,
         createdByEmail: currentUser.email,
         createdByRole: is_admin ? 'admin' : currentUser.userRole,
-        salesPerson,
         lastActivity: lastActivity ? new Date(lastActivity) : Date.now(),
-        status,
+        status: status || 'New',
         convertedToCustomer: status === 'Converted To Customer',
       });
 
@@ -115,7 +192,7 @@ exports.createLead = async (req, res) => {
 
 exports.listLeads = async (req, res) => {
   try {
-    const { status, salesPerson, includeConverted } = req.query;
+    const { status, salesPerson } = req.query;
     const filter = {};
 
     if (status) {
@@ -125,6 +202,10 @@ exports.listLeads = async (req, res) => {
         });
       }
       filter.status = status;
+    }
+
+    if (salesPerson) {
+      filter.user_id = salesPerson;
     }
 
     const leads = await Lead.find(filter).sort({ createdAt: -1 });
@@ -141,7 +222,6 @@ exports.listLeads = async (req, res) => {
       zip: lead.zip,
       notes: lead.notes,
       createdDate: lead.createdAt,
-      salesPerson: lead.salesPerson,
       lastActivity: lead.lastActivity,
       status: lead.status,
       user_id: lead.user_id,
@@ -190,7 +270,6 @@ exports.convertToCustomer = async (req, res) => {
         mobileNumber: lead.mobileNumber,
         email: lead.email,
         leadSource: lead.leadSource,
-        salesPerson: lead.salesPerson,
         convertedDate: new Date(),
         lastActivity: lead.lastActivity,
         status: 'New',
@@ -200,12 +279,13 @@ exports.convertToCustomer = async (req, res) => {
           state: lead.state,
           zip: lead.zip,
         },
-        notes: lead.notes ? [{ note: lead.notes, createdAt: new Date() }] : [],
+        notes: lead.notes || [],
       });
     }
 
     lead.status = 'Converted To Customer';
     lead.convertedToCustomer = true;
+    lead.activityLog.push({ log: 'Lead Converted to Customer', createdAt: new Date() });
     await lead.save();
 
     await createLog('Lead Converted to Customer', req.user.id, lead.name, 'Customer', customer._id);
@@ -235,8 +315,13 @@ exports.updateLeadStatus = async (req, res) => {
     const lead = await Lead.findByIdAndUpdate(
       id,
       {
-        status,
-        convertedToCustomer: status === 'Converted To Customer'
+        $set: {
+          status,
+          convertedToCustomer: status === 'Converted To Customer'
+        },
+        $push: {
+          activityLog: { log: `Lead Status Updated to ${status}`, createdAt: new Date() }
+        }
       },
       { new: true, runValidators: true }
     );

@@ -58,7 +58,7 @@ exports.listCustomers = async (req, res) => {
     }
 
     if (salesPerson) {
-      filter.salesPerson = salesPerson;
+      filter.user_id = salesPerson;
     }
 
     const customers = await Customer.find(filter)
@@ -75,7 +75,6 @@ exports.listCustomers = async (req, res) => {
       mobileNumber: customer.mobileNumber,
       createdDate: customer.createdAt,
       convertedDate: customer.convertedDate,
-      salesPerson: customer.salesPerson,
       contractor: customer.assignToContractor?.fullName || '',
       lastActivity: customer.lastActivity,
       status: customer.status,
@@ -112,7 +111,7 @@ exports.listConvertedCustomers = async (req, res) => {
     }
 
     if (salesPerson) {
-      filter.salesPerson = salesPerson;
+      filter.user_id = salesPerson;
     }
 
     if (status) {
@@ -136,7 +135,6 @@ exports.listConvertedCustomers = async (req, res) => {
       leadSource: customer.leadSource,
       createdDate: customer.createdAt,
       convertedDate: customer.convertedDate,
-      salesPerson: customer.salesPerson,
       contractor: customer.assignToContractor?.fullName || '',
       status: customer.status,
       lastActivity: customer.lastActivity,
@@ -270,7 +268,6 @@ exports.updateCustomer = async (req, res) => {
       mobileNumber,
       email,
       leadSource,
-      salesPerson,
       lastActivity,
       convertedDate,
       status,
@@ -293,7 +290,6 @@ exports.updateCustomer = async (req, res) => {
       ...(mobileNumber && { mobileNumber }),
       ...(email && { email }),
       ...(leadSource && { leadSource }),
-      ...(salesPerson && { salesPerson }),
       ...(lastActivity && { lastActivity: new Date(lastActivity) }),
       ...(convertedDate && { convertedDate: new Date(convertedDate) }),
       ...(status && { status }),
@@ -400,7 +396,7 @@ exports.listAssignedCustomers = async (req, res) => {
     }
 
     if (salesPerson) {
-      filter.salesPerson = salesPerson;
+      filter.user_id = salesPerson;
     }
 
     const customers = await Customer.find(filter)
@@ -420,7 +416,6 @@ exports.listAssignedCustomers = async (req, res) => {
       leadSource: customer.leadSource,
       createdDate: customer.createdAt,
       convertedDate: customer.convertedDate,
-      salesPerson: customer.salesPerson,
       contractor: customer.assignToContractor?.fullName || '',
       lastActivity: customer.lastActivity,
       status: customer.status,

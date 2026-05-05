@@ -45,11 +45,17 @@ const leadSchema = new mongoose.Schema({
     trim: true,
     default: '',
   },
-  notes: {
-    type: String,
-    trim: true,
-    default: '',
-  },
+  notes: [{
+    note: { type: String, trim: true },
+    createdAt: { type: Date, default: Date.now }
+  }],
+  activityLog: [{
+    activityType: { type: String, trim: true },
+    date: { type: Date },
+    outcome: { type: String, trim: true },
+    nextFollowUpDate: { type: Date },
+    createdAt: { type: Date, default: Date.now }
+  }],
   user_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -65,11 +71,6 @@ const leadSchema = new mongoose.Schema({
   },
   createdByRole: {
     type: String,
-    trim: true,
-  },
-  salesPerson: {
-    type: String,
-    required: true,
     trim: true,
   },
   lastActivity: {
