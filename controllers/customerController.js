@@ -119,9 +119,9 @@ exports.listConvertedCustomers = async (req, res) => {
     }
 
     const customers = await Customer.find(filter)
-      .populate('leadId', 'name company email mobileNumber leadSource status convertedToCustomer')
+      .populate('leadId', 'name company email mobileNumber leadSource status convertedToCustomer user_id')
       .populate('assignToContractor', 'fullName email')
-      .populate('user_id', 'fullName name email')
+      .populate('user_id', 'fullName')
       .sort({ convertedDate: -1 });
 
     const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
@@ -204,7 +204,8 @@ exports.getCustomer = async (req, res) => {
     // ✅ Get customer
     const customer = await Customer.findById(id)
       .populate('assignToContractor', 'fullName email mobileNumber')
-      .populate('assignedTo', 'fullName email mobileNumber');
+      .populate('assignedTo', 'fullName email mobileNumber')
+      .populate('user_id', 'fullName name email');
 
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
