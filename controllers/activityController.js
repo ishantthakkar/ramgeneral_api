@@ -4,8 +4,7 @@ const ActivityLog = require('../models/ActivityLog');
 exports.getActivityLogs = async (req, res) => {
   try {
     const logs = await ActivityLog.find()
-      .sort({ createdAt: -1 })
-      .limit(10);
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
