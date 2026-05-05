@@ -230,6 +230,9 @@ exports.updateSurvey = async (req, res) => {
 
         const surveyResponse = updatedSurvey.toObject();
         surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
+
+        await createLog('Survey Updated', req.user.id, (await Customer.findById(updatedSurvey.customer_id))?.name || 'Unknown', 'Survey', updatedSurvey._id);
+
         return res.status(200).json({ survey: surveyResponse, message: 'Survey updated successfully.' });
     } catch (error) {
         console.error('Update survey error:', error);
@@ -273,6 +276,8 @@ exports.assignSurvey = async (req, res) => {
         if (!customer) {
             return res.status(404).json({ message: 'Customer not found.' });
         }
+
+        await createLog('Survey Assigned to PM', user_id, customer.name, 'Assignment', customer._id);
 
         return res.status(200).json({ message: 'Survey assigned successfully.' });
 

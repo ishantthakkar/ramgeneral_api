@@ -335,6 +335,8 @@ exports.updateCustomer = async (req, res) => {
       return surveyObj;
     });
 
+    await createLog('Customer Updated', req.user.id, customer.name, 'Customer', customer._id);
+
     return res.status(200).json({
       customer,
       surveys: surveysWithFullUrls,
@@ -364,6 +366,8 @@ exports.assignContractor = async (req, res) => {
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
     }
+
+    await createLog('Contractor Value Assigned', req.user.id, customer.name, 'Customer', customer._id);
 
     return res.status(200).json({ customer, message: 'Contractor assigned successfully.' });
   } catch (error) {
@@ -475,6 +479,8 @@ exports.assignCustomer = async (req, res) => {
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
     }
+
+    await createLog('Customer Assigned to PM/Contractor', user_id, customer.name, 'Assignment', customer._id);
 
     return res.status(200).json({ customer, message: 'Customer assigned successfully.' });
   } catch (error) {
@@ -607,6 +613,8 @@ exports.addCustomerMaterial = async (req, res) => {
       }));
     }
 
+    await createLog('Customer Materials Updated', user_id, customer.name, 'Customer', customer._id);
+
     return res.status(200).json({
       message: 'Materials updated successfully.',
       customer: updatedCustomer,
@@ -669,6 +677,8 @@ exports.assignToContractor = async (req, res) => {
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
     }
+
+    await createLog('Contractor Assigned to Customer', user_id, customer.name, 'Assignment', customer._id);
 
     return res.status(200).json({
       message: 'Customer assigned to contractor successfully.',

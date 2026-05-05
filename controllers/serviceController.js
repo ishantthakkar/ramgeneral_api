@@ -1,12 +1,17 @@
 const Service = require('../models/Service');
 const Customer = require('../models/Customer');
 const Survey = require('../models/Survey');
+const { createLog } = require('../utils/logger');
 
 // Create a service ticket
 exports.createService = async (req, res) => {
   try {
     const service = new Service(req.body);
     await service.save();
+
+    const customer = await Customer.findById(service.customerId);
+    await createLog('Service Ticket Created', req.user.id, customer?.name || 'Unknown', 'Service', service._id);
+
     res.status(201).json({ success: true, data: service, message: 'Service ticket created successfully' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
