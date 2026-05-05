@@ -25,7 +25,8 @@ exports.createLead = async (req, res) => {
       activityType,
       activityDate,
       outcome,
-      nextFollowUpDate
+      nextFollowUpDate,
+      followUpDate
     } = req.body;
 
     const Admin = require('../models/Admin');
@@ -71,6 +72,8 @@ exports.createLead = async (req, res) => {
         activityType: a.activityType,
         date: a.date ? new Date(a.date) : new Date(),
         outcome: a.outcome || '',
+        notes: a.notes || '',
+        followUpDate: a.followUpDate ? new Date(a.followUpDate) : undefined,
         nextFollowUpDate: a.nextFollowUpDate ? new Date(a.nextFollowUpDate) : undefined,
         createdAt: new Date()
       }));
@@ -79,6 +82,8 @@ exports.createLead = async (req, res) => {
         activityType,
         date: activityDate ? new Date(activityDate) : new Date(),
         outcome: outcome || '',
+        notes: typeof notes === 'string' ? notes : '',
+        followUpDate: followUpDate ? new Date(followUpDate) : undefined,
         nextFollowUpDate: nextFollowUpDate ? new Date(nextFollowUpDate) : undefined,
         createdAt: new Date()
       }];

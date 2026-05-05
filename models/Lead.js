@@ -53,6 +53,8 @@ const leadSchema = new mongoose.Schema({
     activityType: { type: String, trim: true },
     date: { type: Date },
     outcome: { type: String, trim: true },
+    notes: { type: String, trim: true },
+    followUpDate: { type: Date },
     nextFollowUpDate: { type: Date },
     createdAt: { type: Date, default: Date.now }
   }],

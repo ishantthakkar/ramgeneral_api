@@ -121,6 +121,7 @@ exports.listConvertedCustomers = async (req, res) => {
     const customers = await Customer.find(filter)
       .populate('leadId', 'name company email mobileNumber leadSource status convertedToCustomer')
       .populate('assignToContractor', 'fullName email')
+      .populate('user_id', 'fullName name email')
       .sort({ convertedDate: -1 });
 
     const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
@@ -140,21 +141,11 @@ exports.listConvertedCustomers = async (req, res) => {
       lastActivity: customer.lastActivity,
       assignedTo: customer.assignedTo ?? null,
       verifyStatus: customer.verifyStatus,
+      salesPersonName: customer.user_id?.fullName || customer.user_id?.name || '',
       material: (customer.material || []).map(m => ({
         ...m.toObject(),
         image: m.image ? `${materialBaseUrl}${m.image}` : ''
-      })),
-      lead: customer.leadId
-        ? {
-          id: customer.leadId._id,
-          name: customer.leadId.name,
-          company: customer.leadId.company,
-          email: customer.leadId.email,
-          mobileNumber: customer.leadId.mobileNumber,
-          leadSource: customer.leadId.leadSource,
-          status: customer.leadId.status,
-        }
-        : null,
+      }))
     }));
 
     return res.status(200).json({
