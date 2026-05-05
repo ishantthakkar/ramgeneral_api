@@ -243,7 +243,7 @@ exports.listLeads = async (req, res) => {
 exports.getLead = async (req, res) => {
   try {
     const { id } = req.params;
-    const lead = await Lead.findById(id).populate("user_id", "username");
+    const lead = await Lead.findById(id).populate("user_id", "fullName");
 
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
