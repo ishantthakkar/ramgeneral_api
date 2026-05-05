@@ -265,7 +265,7 @@ exports.updateCustomer = async (req, res) => {
       status,
       notes,
       address,
-      activities,
+      activityLog,
       surveys, // Array of survey objects to update
     } = req.body;
 
@@ -286,7 +286,7 @@ exports.updateCustomer = async (req, res) => {
       ...(convertedDate && { convertedDate: new Date(convertedDate) }),
       ...(status && { status }),
       ...(address && { address }),
-      ...(activities && { activities }),
+      ...(activityLog && { activityLog }),
       ...(notes && { notes }),
     };
 
@@ -332,7 +332,7 @@ exports.updateCustomer = async (req, res) => {
     return res.status(200).json({
       customer,
       surveys: surveysWithFullUrls,
-      message: 'Customer and surveys updated successfully.'
+      message: 'Customer updated successfully.'
     });
   } catch (error) {
     console.error('Update customer error:', error);
