@@ -269,7 +269,7 @@ exports.convertToCustomer = async (req, res) => {
     if (!customer) {
       customer = await Customer.create({
         leadId: lead._id,
-        user_id: req.user.id,
+        user_id: lead.user_id || req.user.id,
         name: lead.name,
         company: lead.company,
         mobileNumber: lead.mobileNumber,
@@ -285,12 +285,17 @@ exports.convertToCustomer = async (req, res) => {
           zip: lead.zip,
         },
         notes: lead.notes || [],
+        activityLog: lead.activityLog,
       });
     }
 
     lead.status = 'Converted To Customer';
     lead.convertedToCustomer = true;
-    lead.activityLog.push({ log: 'Lead Converted to Customer', createdAt: new Date() });
+    lead.activityLog.push({
+      activityType: 'Conversion',
+      outcome: 'Lead Converted to Customer',
+      createdAt: new Date()
+    });
     await lead.save();
 
     await createLog('Lead Converted to Customer', req.user.id, lead.name, 'Customer', customer._id);
@@ -325,7 +330,11 @@ exports.updateLeadStatus = async (req, res) => {
           convertedToCustomer: status === 'Converted To Customer'
         },
         $push: {
-          activityLog: { log: `Lead Status Updated to ${status}`, createdAt: new Date() }
+          activityLog: {
+            activityType: 'Status Update',
+            outcome: `Lead Status Updated to ${status}`,
+            createdAt: new Date()
+          }
         }
       },
       { new: true, runValidators: true }

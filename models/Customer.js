@@ -101,12 +101,15 @@ const customerSchema = new mongoose.Schema({
     state: { type: String, trim: true, default: '' },
     zip: { type: String, trim: true, default: '' },
   },
-  activities: [
+  activityLog: [
     {
       activityType: { type: String, trim: true, required: true },
       date: { type: Date, default: Date.now },
       nextFollowUpDate: { type: Date },
       outcome: { type: String, trim: true, default: '' },
+      notes: { type: String, trim: true },
+      followUpDate: { type: Date },
+      createdAt: { type: Date, default: Date.now }
     },
   ],
   notes: [
