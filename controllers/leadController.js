@@ -371,3 +371,51 @@ exports.getLeadsByUser = async (req, res) => {
     return res.status(500).json({ message: 'Server error fetching leads by user.' });
   }
 };
+
+exports.updateLeadStatusById = async (req, res) => {
+  try {
+    const { leadId, status } = req.body;
+
+    if (!leadId || !status) {
+      return res.status(400).json({ message: 'leadId and status are required.' });
+    }
+
+    if (!ALLOWED_STATUSES.includes(status)) {
+      return res.status(400).json({
+        message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
+      });
+    }
+
+    const lead = await Lead.findByIdAndUpdate(
+      leadId,
+      {
+        $set: {
+          status,
+          convertedToCustomer: status === 'Converted To Customer'
+        },
+        $push: {
+          activityLog: {
+            activityType: 'Status Update',
+            outcome: `Lead Status Updated to ${status}`,
+            createdAt: new Date()
+          }
+        }
+      },
+      { new: true, runValidators: true }
+    );
+
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    await createLog(`Lead Status Updated to ${status}`, req.user.id, lead.name, 'Lead', lead._id);
+
+    return res.status(200).json({
+      message: `Lead status updated to ${status} successfully.`,
+      lead,
+    });
+  } catch (error) {
+    console.error('Update lead status by ID error:', error);
+    return res.status(500).json({ message: 'Server error updating lead status.' });
+  }
+};
