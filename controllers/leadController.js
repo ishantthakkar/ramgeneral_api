@@ -363,7 +363,7 @@ exports.getLeadsByUser = async (req, res) => {
       return res.status(401).json({ message: 'User not authenticated.' });
     }
 
-    const leads = await Lead.find({ user_id: userId, status: 'New' }).sort({ createdAt: -1 });
+    const leads = await Lead.find({ user_id: userId }).sort({ createdAt: -1 });
 
     return res.status(200).json({ leads });
   } catch (error) {
