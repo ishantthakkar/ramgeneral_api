@@ -9,6 +9,7 @@ const customerRoutes = require('./routes/customerRoutes');
 const surveyRoutes = require('./routes/surveyRoutes');
 const roleRoutes = require('./routes/roleRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
+const serviceRoutes = require('./routes/serviceRoutes');
 const cors = require('cors');
 
 const app = express();
@@ -45,6 +46,7 @@ app.use('/api/customer', customerRoutes);
 app.use('/api', surveyRoutes);
 app.use('/api/roles', roleRoutes);
 app.use('/api/admin/dashboard', dashboardRoutes);
+app.use('/api/services', serviceRoutes);
 
 // Health check
 app.get('/', (req, res) => {
