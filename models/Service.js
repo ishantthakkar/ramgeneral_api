@@ -41,11 +41,27 @@ const serviceSchema = new mongoose.Schema({
   timestamps: true
 });
 
-serviceSchema.pre('save', async function(next) {
+serviceSchema.pre('save', async function (next) {
   if (!this.ticketId) {
-    const count = await mongoose.model('Service').countDocuments();
-    const year = new Date().getFullYear();
-    this.ticketId = `SRV-${year}-${(count + 1).toString().padStart(3, '0')}`;
+    try {
+      // Find the latest service ticket globally
+      const lastService = await mongoose.model('Service').findOne({
+        ticketId: { $regex: /^\d+$/ }
+      }).sort({ createdAt: -1 });
+
+      let nextNumber = 1;
+      if (lastService && lastService.ticketId) {
+        const lastNumber = parseInt(lastService.ticketId);
+        if (!isNaN(lastNumber)) {
+          nextNumber = lastNumber + 1;
+        }
+      }
+
+      this.ticketId = nextNumber.toString();
+    } catch (error) {
+      console.error('Error generating ticketId:', error);
+      next(error);
+    }
   }
   next();
 });
