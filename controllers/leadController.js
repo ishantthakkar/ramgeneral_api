@@ -25,7 +25,8 @@ exports.createLead = async (req, res) => {
       activityType,
       activityDate,
       outcome,
-      nextFollowUpDate
+      nextFollowUpDate,
+      followUpDate
     } = req.body;
 
     const Admin = require('../models/Admin');
@@ -71,6 +72,8 @@ exports.createLead = async (req, res) => {
         activityType: a.activityType,
         date: a.date ? new Date(a.date) : new Date(),
         outcome: a.outcome || '',
+        notes: a.notes || '',
+        followUpDate: a.followUpDate ? new Date(a.followUpDate) : undefined,
         nextFollowUpDate: a.nextFollowUpDate ? new Date(a.nextFollowUpDate) : undefined,
         createdAt: new Date()
       }));
@@ -79,6 +82,8 @@ exports.createLead = async (req, res) => {
         activityType,
         date: activityDate ? new Date(activityDate) : new Date(),
         outcome: outcome || '',
+        notes: typeof notes === 'string' ? notes : '',
+        followUpDate: followUpDate ? new Date(followUpDate) : undefined,
         nextFollowUpDate: nextFollowUpDate ? new Date(nextFollowUpDate) : undefined,
         createdAt: new Date()
       }];
@@ -238,7 +243,7 @@ exports.listLeads = async (req, res) => {
 exports.getLead = async (req, res) => {
   try {
     const { id } = req.params;
-    const lead = await Lead.findById(id);
+    const lead = await Lead.findById(id).populate("user_id", "fullName");
 
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
@@ -264,7 +269,7 @@ exports.convertToCustomer = async (req, res) => {
     if (!customer) {
       customer = await Customer.create({
         leadId: lead._id,
-        user_id: req.user.id,
+        user_id: lead.user_id || req.user.id,
         name: lead.name,
         company: lead.company,
         mobileNumber: lead.mobileNumber,
@@ -280,12 +285,17 @@ exports.convertToCustomer = async (req, res) => {
           zip: lead.zip,
         },
         notes: lead.notes || [],
+        activityLog: lead.activityLog,
       });
     }
 
     lead.status = 'Converted To Customer';
     lead.convertedToCustomer = true;
-    lead.activityLog.push({ log: 'Lead Converted to Customer', createdAt: new Date() });
+    lead.activityLog.push({
+      activityType: 'Conversion',
+      outcome: 'Lead Converted to Customer',
+      createdAt: new Date()
+    });
     await lead.save();
 
     await createLog('Lead Converted to Customer', req.user.id, lead.name, 'Customer', customer._id);
@@ -320,7 +330,11 @@ exports.updateLeadStatus = async (req, res) => {
           convertedToCustomer: status === 'Converted To Customer'
         },
         $push: {
-          activityLog: { log: `Lead Status Updated to ${status}`, createdAt: new Date() }
+          activityLog: {
+            activityType: 'Status Update',
+            outcome: `Lead Status Updated to ${status}`,
+            createdAt: new Date()
+          }
         }
       },
       { new: true, runValidators: true }
@@ -349,11 +363,59 @@ exports.getLeadsByUser = async (req, res) => {
       return res.status(401).json({ message: 'User not authenticated.' });
     }
 
-    const leads = await Lead.find({ user_id: userId, status: 'New' }).sort({ createdAt: -1 });
+    const leads = await Lead.find({ user_id: userId }).sort({ createdAt: -1 });
 
     return res.status(200).json({ leads });
   } catch (error) {
     console.error('Get leads by user error:', error);
     return res.status(500).json({ message: 'Server error fetching leads by user.' });
+  }
+};
+
+exports.updateLeadStatusById = async (req, res) => {
+  try {
+    const { leadId, status } = req.body;
+
+    if (!leadId || !status) {
+      return res.status(400).json({ message: 'leadId and status are required.' });
+    }
+
+    if (!ALLOWED_STATUSES.includes(status)) {
+      return res.status(400).json({
+        message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
+      });
+    }
+
+    const lead = await Lead.findByIdAndUpdate(
+      leadId,
+      {
+        $set: {
+          status,
+          convertedToCustomer: status === 'Converted To Customer'
+        },
+        $push: {
+          activityLog: {
+            activityType: 'Status Update',
+            outcome: `Lead Status Updated to ${status}`,
+            createdAt: new Date()
+          }
+        }
+      },
+      { new: true, runValidators: true }
+    );
+
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    await createLog(`Lead Status Updated to ${status}`, req.user.id, lead.name, 'Lead', lead._id);
+
+    return res.status(200).json({
+      message: `Lead status updated to ${status} successfully.`,
+      lead,
+    });
+  } catch (error) {
+    console.error('Update lead status by ID error:', error);
+    return res.status(500).json({ message: 'Server error updating lead status.' });
   }
 };

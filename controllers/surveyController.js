@@ -351,6 +351,7 @@ exports.installation = async (req, res) => {
         const customers = await Customer.find(filter)
             .sort({ updatedAt: -1 })
             .populate('assignToContractor', 'fullName email userRole mobileNumber')
+            .populate('user_id', 'fullName email')
             .populate('assignedTo', 'fullName email userRole');
 
         const customerSummaries = customers.map((customer) => ({
@@ -363,6 +364,7 @@ exports.installation = async (req, res) => {
             lastActivity: customer.lastActivity,
             assignToContractor: customer.assignToContractor,
             assignedTo: customer.assignedTo,
+            salesPersonName: customer.user_id?.fullName || customer.user_id?.name || '',
             contractorName: customer.assignToContractor?.fullName || '',
             contractorStatus: customer.contractorStatus,
         }));

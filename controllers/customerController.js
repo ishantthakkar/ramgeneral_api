@@ -119,8 +119,9 @@ exports.listConvertedCustomers = async (req, res) => {
     }
 
     const customers = await Customer.find(filter)
-      .populate('leadId', 'name company email mobileNumber leadSource status convertedToCustomer')
+      .populate('leadId', 'name company email mobileNumber leadSource status convertedToCustomer user_id')
       .populate('assignToContractor', 'fullName email')
+      .populate('user_id', 'fullName')
       .sort({ convertedDate: -1 });
 
     const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
@@ -140,21 +141,11 @@ exports.listConvertedCustomers = async (req, res) => {
       lastActivity: customer.lastActivity,
       assignedTo: customer.assignedTo ?? null,
       verifyStatus: customer.verifyStatus,
+      salesPersonName: customer.user_id?.fullName || customer.user_id?.name || '',
       material: (customer.material || []).map(m => ({
         ...m.toObject(),
         image: m.image ? `${materialBaseUrl}${m.image}` : ''
-      })),
-      lead: customer.leadId
-        ? {
-          id: customer.leadId._id,
-          name: customer.leadId.name,
-          company: customer.leadId.company,
-          email: customer.leadId.email,
-          mobileNumber: customer.leadId.mobileNumber,
-          leadSource: customer.leadId.leadSource,
-          status: customer.leadId.status,
-        }
-        : null,
+      }))
     }));
 
     return res.status(200).json({
@@ -213,7 +204,8 @@ exports.getCustomer = async (req, res) => {
     // ✅ Get customer
     const customer = await Customer.findById(id)
       .populate('assignToContractor', 'fullName email mobileNumber')
-      .populate('assignedTo', 'fullName email mobileNumber');
+      .populate('assignedTo', 'fullName email mobileNumber')
+      .populate('user_id', 'fullName name email');
 
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
@@ -273,7 +265,7 @@ exports.updateCustomer = async (req, res) => {
       status,
       notes,
       address,
-      activities,
+      activityLog,
       surveys, // Array of survey objects to update
     } = req.body;
 
@@ -294,7 +286,7 @@ exports.updateCustomer = async (req, res) => {
       ...(convertedDate && { convertedDate: new Date(convertedDate) }),
       ...(status && { status }),
       ...(address && { address }),
-      ...(activities && { activities }),
+      ...(activityLog && { activityLog }),
       ...(notes && { notes }),
     };
 
@@ -340,7 +332,7 @@ exports.updateCustomer = async (req, res) => {
     return res.status(200).json({
       customer,
       surveys: surveysWithFullUrls,
-      message: 'Customer and surveys updated successfully.'
+      message: 'Customer updated successfully.'
     });
   } catch (error) {
     console.error('Update customer error:', error);
