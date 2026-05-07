@@ -292,6 +292,66 @@ exports.listUsers = async (req, res) => {
     }
 };
 
+exports.getProfile = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: 'Invalid user ID.' });
+        }
+
+        const user = await User.findById(id).populate('roleId').lean();
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+
+        // Strip sensitive fields
+        delete user.password;
+        delete user.otpCode;
+        delete user.otpExpiresAt;
+        delete user.otpVerified;
+        delete user.refreshTokens;
+
+        let roleMetrics = {};
+
+        if (user.userRole === 'contractor' || user.userRole === 'Contractor') {
+            roleMetrics = {
+                assignedProjects: await Customer.countDocuments({ assignToContractor: user._id }),
+                completedInstallations: await Customer.countDocuments({ assignToContractor: user._id, contractorStatus: 'completed' }),
+                pendingInstallations: await Customer.countDocuments({ assignToContractor: user._id, contractorStatus: { $ne: 'completed' } }),
+            };
+        }
+
+        if (user.userRole === 'sales_person' || user.userRole === 'Sales Person') {
+            roleMetrics = {
+                activeLeads: await Lead.countDocuments({ user_id: user._id, status: { $in: ['New', 'In Progress'] } }),
+                customers: await Customer.countDocuments({ user_id: user._id }),
+                closedLeads: await Lead.countDocuments({ user_id: user._id, status: 'Lost Leads' }),
+            };
+        }
+
+        if (user.userRole === 'Project Manager' || user.userRole === 'project_manager') {
+            const Survey = require('../models/Survey');
+            roleMetrics = {
+                pendingInspections: await Survey.countDocuments({ assignedTo: user._id, status: { $ne: 'completed' } }),
+                completedInspections: await Survey.countDocuments({ assignedTo: user._id, status: 'completed' }),
+            };
+        }
+
+        return res.status(200).json({
+            user: {
+                ...user,
+                permissions: user.roleId ? user.roleId.permissions : {},
+                ...roleMetrics,
+            },
+        });
+    } catch (error) {
+        console.error('Get profile error:', error);
+        return res.status(500).json({ message: 'Server error fetching profile.' });
+    }
+};
+
 exports.sendUserOtp = async (req, res) => {
     try {
         const { mobileNumber } = req.body;
