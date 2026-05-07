@@ -337,7 +337,7 @@ exports.updateCustomer = async (req, res) => {
     });
   } catch (error) {
     console.error('Update customer error:', error);
-    return res.status(500).json({ message: 'Server error updating customer.' });
+    return res.status(500).json({ message: 'Server error updating customer.', error : error });
   }
 };
 
