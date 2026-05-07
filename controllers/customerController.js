@@ -5,7 +5,7 @@ const { createLog } = require('../utils/logger');
 const path = require('path');
 const fs = require('fs');
 
-const ALLOWED_STATUSES = ['New', 'In Progress', 'Closed'];
+const ALLOWED_STATUSES = ['New', 'In Progress', 'Closed', 'draft', 'in_progress', 'completed'];
 
 // Helper function to save base64 image
 const saveBase64Image = (base64String, uploadDir) => {
