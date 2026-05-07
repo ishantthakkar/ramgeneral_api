@@ -167,6 +167,7 @@ exports.listInspections = async (req, res) => {
     })
       .populate('assignToContractor', 'fullName email')
       .populate('assignedTo', 'fullName email')
+      .populate('user_id', 'fullName')
       .sort({ updatedAt: -1 });
 
     const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
