@@ -22,7 +22,7 @@ const surveySchema = new mongoose.Schema({
   status: {
     type: String,
     trim: true,
-    enum: ['Draft', 'In Progress', 'Completed'],
+    enum: ['Draft', 'In Progress', 'Completed', 'draft', 'in_progress', 'completed'],
     default: 'Draft',
   },
   area: { type: String, trim: true, required: true },
