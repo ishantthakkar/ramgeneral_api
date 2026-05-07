@@ -270,12 +270,6 @@ exports.updateCustomer = async (req, res) => {
       surveys, // Array of survey objects to update
     } = req.body;
 
-    if (status && !ALLOWED_STATUSES.includes(status)) {
-      return res.status(400).json({
-        message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
-      });
-    }
-
 
     const updatedData = {
       ...(name && { name }),
