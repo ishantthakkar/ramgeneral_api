@@ -837,6 +837,7 @@ exports.customerCommissionList = async (req, res) => {
   try {
     const customers = await Customer.find({ verifyStatus: 'verified' })
       .populate('assignToContractor', 'fullName email')
+      .populate('user_id', 'id fullName')
       .populate({
         path: 'commissions.salesPerson',
         model: 'User',
@@ -892,8 +893,8 @@ exports.customerCommissionList = async (req, res) => {
         id: customer._id,
         name: customer.name,
         company: customer.company,
-        salesPerson: customer.salesPerson, // This is the string from Customer model
-        contractor: customer.assignToContractor?.fullName || '', // This is the populated contractor
+        salesPerson: customer.user_id?.fullName || '',
+        contractor: customer.assignToContractor?.fullName || '',
 
         total_overall_amount: customerTotal,
         total_paid_amount: customerPaid,
