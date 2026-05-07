@@ -91,7 +91,6 @@ const customerSchema = new mongoose.Schema({
   status: {
     type: String,
     required: true,
-    // enum: ['New', 'in_progress', 'draft', 'completed'],
     default: 'New',
     trim: true,
   },
