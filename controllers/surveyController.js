@@ -52,50 +52,97 @@ const processUploadedImages = async (files) => {
 exports.createSurvey = async (req, res) => {
     try {
         const user_id = req.user.id;
-        const { customer_id, notes, status, surveyDate, area, heightInInches, existingFixtureType, otherFixtureType, existingBulbs, existingQuantity, proposedFixture, proposedQuantity, pricePerUnit, totalPrice, note } = req.body;
-        if (!customer_id) {
-            return res.status(400).json({ message: 'customer_id is required.' });
-        }
-
-        const customer = await Customer.findById(customer_id);
-        if (!customer) {
-            return res.status(404).json({ message: 'Customer not found.' });
-        }
+        const { id, customer_id, notes, status, surveyDate, area, heightInInches, existingFixtureType, otherFixtureType, existingBulbs, existingQuantity, proposedFixture, proposedQuantity, pricePerUnit, totalPrice, note } = req.body;
 
         const user = await User.findById(user_id);
         if (!user) {
             return res.status(401).json({ message: 'Invalid authenticated user.' });
         }
 
-        const survey = await Survey.create({
-            customer_id,
-            user_id,
-            area, // ✅ must come directly
-            heightInInches,
-            existingFixtureType,
-            otherFixtureType,
-            existingBulbs,
-            existingQuantity,
-            proposedFixture,
-            proposedQuantity,
-            pricePerUnit,
-            totalPrice,
-            note,
-            images: await processUploadedImages(req.files),
-            status: status || 'Draft',
-            notes: notes || '',
-        });
+        const newImages = await processUploadedImages(req.files);
 
-        await createLog('Survey Created', user_id, customer.name, 'Survey', survey._id);
+        if (id) {
+            // Update existing record
+            let survey = await Survey.findById(id);
+            if (!survey) {
+                return res.status(404).json({ message: 'Survey not found.' });
+            }
 
-        // Add full image URLs to response
-        const surveyResponse = survey.toObject();
-        surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
+            const updateData = {
+                area: area !== undefined ? area : survey.area,
+                heightInInches: heightInInches !== undefined ? heightInInches : survey.heightInInches,
+                existingFixtureType: existingFixtureType !== undefined ? existingFixtureType : survey.existingFixtureType,
+                otherFixtureType: otherFixtureType !== undefined ? otherFixtureType : survey.otherFixtureType,
+                existingBulbs: existingBulbs !== undefined ? existingBulbs : survey.existingBulbs,
+                existingQuantity: existingQuantity !== undefined ? existingQuantity : survey.existingQuantity,
+                proposedFixture: proposedFixture !== undefined ? proposedFixture : survey.proposedFixture,
+                proposedQuantity: proposedQuantity !== undefined ? proposedQuantity : survey.proposedQuantity,
+                pricePerUnit: pricePerUnit !== undefined ? pricePerUnit : survey.pricePerUnit,
+                totalPrice: totalPrice !== undefined ? totalPrice : survey.totalPrice,
+                note: note !== undefined ? note : survey.note,
+                status: status || survey.status,
+                notes: notes || survey.notes,
+                surveyDate: surveyDate ? new Date(surveyDate) : survey.surveyDate,
+            };
 
-        return res.status(201).json({ survey: surveyResponse, message: 'Survey stored successfully.' });
+            if (customer_id) updateData.customer_id = customer_id;
+            
+            // Append new images to existing ones if any were uploaded
+            if (newImages.length > 0) {
+                updateData.images = [...survey.images, ...newImages];
+            }
+
+            survey = await Survey.findByIdAndUpdate(id, updateData, { new: true });
+
+            const customer = await Customer.findById(survey.customer_id);
+            await createLog('Survey Updated', user_id, customer?.name || 'Unknown', 'Survey', survey._id);
+
+            const surveyResponse = survey.toObject();
+            surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
+
+            return res.status(200).json({ survey: surveyResponse, message: 'Survey updated successfully.' });
+        } else {
+            // Create new record
+            if (!customer_id) {
+                return res.status(400).json({ message: 'customer_id is required.' });
+            }
+
+            const customer = await Customer.findById(customer_id);
+            if (!customer) {
+                return res.status(404).json({ message: 'Customer not found.' });
+            }
+
+            const survey = await Survey.create({
+                customer_id,
+                user_id,
+                area,
+                heightInInches,
+                existingFixtureType,
+                otherFixtureType,
+                existingBulbs,
+                existingQuantity,
+                proposedFixture,
+                proposedQuantity,
+                pricePerUnit,
+                totalPrice,
+                note,
+                images: newImages,
+                status: status || 'Draft',
+                notes: notes || '',
+                surveyDate: surveyDate ? new Date(surveyDate) : undefined,
+            });
+
+            await createLog('Survey Created', user_id, customer.name, 'Survey', survey._id);
+
+            // Add full image URLs to response
+            const surveyResponse = survey.toObject();
+            surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
+
+            return res.status(201).json({ survey: surveyResponse, message: 'Survey stored successfully.' });
+        }
     } catch (error) {
-        console.error('Create survey error:', error);
-        return res.status(500).json({ message: 'Server error storing survey.' });
+        console.error('Process survey error:', error);
+        return res.status(500).json({ message: 'Server error processing survey.' });
     }
 };
 
