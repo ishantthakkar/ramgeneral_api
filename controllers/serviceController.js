@@ -328,7 +328,7 @@ exports.getEligibleCustomers = async (req, res) => {
 exports.getCustomerDetailsForService = async (req, res) => {
   try {
     const { id } = req.params;
-    const customer = await Customer.findById(id);
+    const customer = await Customer.findById(id).populate('user_id', 'fullName');
     if (!customer) {
       return res.status(404).json({ success: false, message: 'Customer not found' });
     }
