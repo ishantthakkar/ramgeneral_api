@@ -29,10 +29,15 @@ const saveBase64Image = (base64String, uploadDir) => {
   }
 };
 
-// Create a service ticket
+// Create or Update a service ticket (Upsert)
 exports.createService = async (req, res) => {
   try {
-    const { material, ...rest } = req.body;
+    const { material, customerId, ...rest } = req.body;
+
+    if (!customerId) {
+      return res.status(400).json({ success: false, message: 'Customer ID is required' });
+    }
+
     const uploadDir = path.join(__dirname, '../uploads/materials');
     
     let processedMaterials = [];
@@ -42,6 +47,7 @@ exports.createService = async (req, res) => {
         if (item.image && item.image.startsWith('data:')) {
           savedFilename = saveBase64Image(item.image, uploadDir) || '';
         } else if (item.image) {
+          // If it's already a URL or path, keep the filename
           savedFilename = item.image.split('/').pop();
         }
 
@@ -53,17 +59,52 @@ exports.createService = async (req, res) => {
       }
     }
 
-    const service = new Service({
-      ...rest,
-      material: processedMaterials
-    });
-    
-    await service.save();
+    // Find existing service for this customer
+    let service = await Service.findOne({ customerId });
 
-    const customer = await Customer.findById(service.customerId);
-    await createLog('Service Ticket Created', req.user.id, customer?.name || 'Unknown', 'Service', service._id);
+    if (service) {
+      // Update existing service
+      Object.assign(service, rest);
+      service.material = processedMaterials;
+      
+      // If contractor is assigned, update status if needed
+      if (rest.assignedTo) {
+        service.status = 'Assigned';
+      }
 
-    res.status(201).json({ success: true, data: service, message: 'Service ticket created successfully' });
+      await service.save();
+
+      const customer = await Customer.findById(service.customerId);
+      await createLog('Service Ticket Updated', req.user.id, customer?.name || 'Unknown', 'Service', service._id);
+
+      res.status(200).json({ 
+        success: true, 
+        data: service, 
+        message: 'Service ticket updated successfully' 
+      });
+    } else {
+      // Create new service ticket
+      service = new Service({
+        ...rest,
+        customerId,
+        material: processedMaterials
+      });
+
+      if (rest.assignedTo) {
+        service.status = 'Assigned';
+      }
+      
+      await service.save();
+
+      const customer = await Customer.findById(service.customerId);
+      await createLog('Service Ticket Created', req.user.id, customer?.name || 'Unknown', 'Service', service._id);
+
+      res.status(201).json({ 
+        success: true, 
+        data: service, 
+        message: 'Service ticket created successfully' 
+      });
+    }
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -199,7 +240,25 @@ exports.getCustomerDetailsForService = async (req, res) => {
     }
     const surveys = await Survey.find({ customer_id: id });
     
-    res.status(200).json({ success: true, data: { customer, surveys } });
+    // Also find existing service if any
+    const service = await Service.findOne({ customerId: id });
+    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
+
+    let processedService = null;
+    if (service) {
+      processedService = service.toObject();
+      if (processedService.material) {
+        processedService.material = processedService.material.map(m => ({
+          ...m,
+          image: m.image ? `${materialBaseUrl}${m.image}` : ''
+        }));
+      }
+    }
+    
+    res.status(200).json({ 
+      success: true, 
+      data: { customer, surveys, service: processedService } 
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
