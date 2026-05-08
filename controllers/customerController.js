@@ -331,7 +331,7 @@ exports.updateCustomer = async (req, res) => {
     });
   } catch (error) {
     console.error('Update customer error:', error);
-    return res.status(500).json({ message: 'Server error updating customer.', error : error });
+    return res.status(500).json({ message: 'Server error updating customer.', error: error });
   }
 };
 
@@ -515,16 +515,48 @@ exports.updateCustomerSurveyStatus = async (req, res) => {
 exports.getCustomersByUser = async (req, res) => {
   try {
     const userId = req.user.id;
+
     if (!userId) {
-      return res.status(401).json({ message: 'User not authenticated.' });
+      return res.status(401).json({
+        message: 'User not authenticated.',
+      });
     }
 
-    const customers = await Customer.find({ user_id: userId }).sort({ createdAt: -1 });
+    // Fetch customers
+    const customers = await Customer.find({
+      user_id: userId,
+    }).sort({ createdAt: -1 });
 
-    return res.status(200).json({ customers });
+    // Fetch all surveys for these customers
+    const customerIds = customers.map(customer => customer._id);
+
+    const surveys = await Survey.find({
+      customer_id: { $in: customerIds },
+    });
+
+    // Attach surveys to customers
+    const customersWithSurveys = customers.map(customer => {
+      const customerObj = customer.toObject();
+
+      customerObj.surveys = surveys.filter(
+        survey =>
+          survey.customer_id.toString() === customer._id.toString()
+      );
+
+      return customerObj;
+    });
+
+    return res.status(200).json({
+      customers: customersWithSurveys,
+    });
+
   } catch (error) {
     console.error('Get customers by user error:', error);
-    return res.status(500).json({ message: 'Server error fetching customers by user.' });
+
+    return res.status(500).json({
+      message: 'Server error fetching customers by user.',
+      error: error.message,
+    });
   }
 };
 
