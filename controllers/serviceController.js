@@ -116,6 +116,7 @@ exports.getAllServices = async (req, res) => {
   try {
     const services = await Service.find()
       .populate('customerId', 'name company email mobileNumber')
+      .populate('user_id', 'fullName')
       .populate('assignedTo', 'fullName')
       .sort({ createdAt: -1 });
 
