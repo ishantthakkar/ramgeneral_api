@@ -33,6 +33,7 @@ const saveBase64Image = (base64String, uploadDir) => {
 exports.createService = async (req, res) => {
   try {
     const { material, customerId, ...rest } = req.body;
+    const currentUserId = req.user.id; // Get ID of user making the request
 
     if (!customerId) {
       return res.status(400).json({ success: false, message: 'Customer ID is required' });
@@ -47,7 +48,6 @@ exports.createService = async (req, res) => {
         if (item.image && item.image.startsWith('data:')) {
           savedFilename = saveBase64Image(item.image, uploadDir) || '';
         } else if (item.image) {
-          // If it's already a URL or path, keep the filename
           savedFilename = item.image.split('/').pop();
         }
 
@@ -59,15 +59,15 @@ exports.createService = async (req, res) => {
       }
     }
 
-    // Find existing service for this customer
+    // Step 1: Check if a service ticket already exists for this customer
     let service = await Service.findOne({ customerId });
 
     if (service) {
-      // Update existing service
+      // Step 2: If it exists, Update the service instead of creating a second one
       Object.assign(service, rest);
       service.material = processedMaterials;
+      service.userId = currentUserId; // Update with the ID of the user who performed the edit
       
-      // If contractor is assigned, update status if needed
       if (rest.assignedTo) {
         service.status = 'Assigned';
       }
@@ -75,7 +75,7 @@ exports.createService = async (req, res) => {
       await service.save();
 
       const customer = await Customer.findById(service.customerId);
-      await createLog('Service Ticket Updated', req.user.id, customer?.name || 'Unknown', 'Service', service._id);
+      await createLog('Service Ticket Updated', currentUserId, customer?.name || 'Unknown', 'Service', service._id);
 
       res.status(200).json({ 
         success: true, 
@@ -83,10 +83,11 @@ exports.createService = async (req, res) => {
         message: 'Service ticket updated successfully' 
       });
     } else {
-      // Create new service ticket
+      // Step 3: If no service exists, Create a new one with the current user ID
       service = new Service({
         ...rest,
         customerId,
+        userId: currentUserId, // Assign the creator's ID
         material: processedMaterials
       });
 
@@ -97,7 +98,7 @@ exports.createService = async (req, res) => {
       await service.save();
 
       const customer = await Customer.findById(service.customerId);
-      await createLog('Service Ticket Created', req.user.id, customer?.name || 'Unknown', 'Service', service._id);
+      await createLog('Service Ticket Created', currentUserId, customer?.name || 'Unknown', 'Service', service._id);
 
       res.status(201).json({ 
         success: true, 

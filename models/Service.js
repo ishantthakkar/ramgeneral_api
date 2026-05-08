@@ -10,6 +10,11 @@ const serviceSchema = new mongoose.Schema({
     ref: 'Customer',
     required: true
   },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
   toFixItems: [
     {
       surveyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Survey' },
