@@ -10,6 +10,11 @@ const serviceSchema = new mongoose.Schema({
     ref: 'Customer',
     required: true
   },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
   toFixItems: [
     {
       surveyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Survey' },
@@ -28,6 +33,19 @@ const serviceSchema = new mongoose.Schema({
   assignedTo: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  material: [
+    {
+      item_name: { type: String },
+      issued_qty: { type: Number },
+      issued_date: { type: Date },
+      image: { type: String }
+    }
+  ],
+  materialStatus: {
+    type: String,
+    enum: ['Pending', 'Delivered', 'Partial'],
+    default: 'Pending'
   },
   notes: {
     type: String

@@ -29,10 +29,16 @@ const saveBase64Image = (base64String, uploadDir) => {
   }
 };
 
-// Create a service ticket
+// Create or Update a service ticket (Upsert)
 exports.createService = async (req, res) => {
   try {
-    const { material, ...rest } = req.body;
+    const { material, customerId, ...rest } = req.body;
+    const currentUserId = req.user.id; // Get ID of user making the request
+
+    if (!customerId) {
+      return res.status(400).json({ success: false, message: 'Customer ID is required' });
+    }
+
     const uploadDir = path.join(__dirname, '../uploads/materials');
     
     let processedMaterials = [];
@@ -53,17 +59,53 @@ exports.createService = async (req, res) => {
       }
     }
 
-    const service = new Service({
-      ...rest,
-      material: processedMaterials
-    });
-    
-    await service.save();
+    // Step 1: Check if a service ticket already exists for this customer
+    let service = await Service.findOne({ customerId });
 
-    const customer = await Customer.findById(service.customerId);
-    await createLog('Service Ticket Created', req.user.id, customer?.name || 'Unknown', 'Service', service._id);
+    if (service) {
+      // Step 2: If it exists, Update the service instead of creating a second one
+      Object.assign(service, rest);
+      service.material = processedMaterials;
+      service.userId = currentUserId; // Update with the ID of the user who performed the edit
+      
+      if (rest.assignedTo) {
+        service.status = 'Assigned';
+      }
 
-    res.status(201).json({ success: true, data: service, message: 'Service ticket created successfully' });
+      await service.save();
+
+      const customer = await Customer.findById(service.customerId);
+      await createLog('Service Ticket Updated', currentUserId, customer?.name || 'Unknown', 'Service', service._id);
+
+      res.status(200).json({ 
+        success: true, 
+        data: service, 
+        message: 'Service ticket updated successfully' 
+      });
+    } else {
+      // Step 3: If no service exists, Create a new one with the current user ID
+      service = new Service({
+        ...rest,
+        customerId,
+        userId: currentUserId, // Assign the creator's ID
+        material: processedMaterials
+      });
+
+      if (rest.assignedTo) {
+        service.status = 'Assigned';
+      }
+      
+      await service.save();
+
+      const customer = await Customer.findById(service.customerId);
+      await createLog('Service Ticket Created', currentUserId, customer?.name || 'Unknown', 'Service', service._id);
+
+      res.status(201).json({ 
+        success: true, 
+        data: service, 
+        message: 'Service ticket created successfully' 
+      });
+    }
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -77,7 +119,7 @@ exports.getAllServices = async (req, res) => {
       .populate('assignedTo', 'fullName')
       .sort({ createdAt: -1 });
 
-    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
+    const materialBaseUrl = `${req.protocol}://${req.get('host')}/uploads/materials/`;
 
     const updatedServices = services.map(service => {
       const serviceObj = service.toObject();
@@ -91,6 +133,87 @@ exports.getAllServices = async (req, res) => {
     });
 
     res.status(200).json({ success: true, data: updatedServices });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+// Get specific service ticket by ID
+exports.getServiceById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const service = await Service.findById(id)
+      .populate('customerId', 'name company email mobileNumber')
+      .populate('assignedTo', 'fullName');
+
+    if (!service) {
+      return res.status(404).json({ success: false, message: 'Service ticket not found' });
+    }
+
+    const materialBaseUrl = `${req.protocol}://${req.get('host')}/uploads/materials/`;
+    const serviceObj = service.toObject();
+    
+    if (serviceObj.material) {
+      serviceObj.material = serviceObj.material.map(m => ({
+        ...m,
+        image: m.image ? `${materialBaseUrl}${m.image}` : ''
+      }));
+    }
+
+    res.status(200).json({ success: true, data: serviceObj });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// Update a specific service ticket by ID
+exports.updateService = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { material, ...rest } = req.body;
+    const currentUserId = req.user.id;
+
+    const uploadDir = path.join(__dirname, '../uploads/materials');
+    
+    let processedMaterials = [];
+    if (material && Array.isArray(material)) {
+      for (const item of material) {
+        let savedFilename = '';
+        if (item.image && item.image.startsWith('data:')) {
+          savedFilename = saveBase64Image(item.image, uploadDir) || '';
+        } else if (item.image) {
+          savedFilename = item.image.split('/').pop();
+        }
+
+        processedMaterials.push({
+          ...item,
+          image: savedFilename,
+          issued_date: item.issued_date ? new Date(item.issued_date) : new Date()
+        });
+      }
+    }
+
+    const service = await Service.findById(id);
+    if (!service) {
+      return res.status(404).json({ success: false, message: 'Service ticket not found' });
+    }
+
+    // Update fields
+    Object.assign(service, rest);
+    if (material) {
+      service.material = processedMaterials;
+    }
+    service.userId = currentUserId;
+
+    if (rest.assignedTo) {
+      service.status = 'Assigned';
+    }
+
+    await service.save();
+
+    const customer = await Customer.findById(service.customerId);
+    await createLog('Service Ticket Updated', currentUserId, customer?.name || 'Unknown', 'Service', service._id);
+
+    res.status(200).json({ success: true, data: service, message: 'Service ticket updated successfully' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -178,12 +301,23 @@ exports.assignContractorToService = async (req, res) => {
   }
 };
 
-// Get eligible customers for service (Status: completed)
+// Get eligible customers for service (Status: completed AND no existing service ticket)
 exports.getEligibleCustomers = async (req, res) => {
   try {
-    const customers = await Customer.find({ status: 'completed' })
+    // 1. Find all customers with status 'completed'
+    const completedCustomers = await Customer.find({ status: 'completed' })
       .select('name company email mobileNumber');
-    res.status(200).json({ success: true, data: customers });
+
+    // 2. Get IDs of all customers who already have a service ticket
+    const existingServiceCustomerIds = await Service.find().distinct('customerId');
+    const existingIdsString = existingServiceCustomerIds.map(id => id.toString());
+
+    // 3. Filter out customers who already have a ticket
+    const eligibleCustomers = completedCustomers.filter(
+      customer => !existingIdsString.includes(customer._id.toString())
+    );
+
+    res.status(200).json({ success: true, data: eligibleCustomers });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -199,7 +333,25 @@ exports.getCustomerDetailsForService = async (req, res) => {
     }
     const surveys = await Survey.find({ customer_id: id });
     
-    res.status(200).json({ success: true, data: { customer, surveys } });
+    // Also find existing service if any
+    const service = await Service.findOne({ customerId: id });
+    const materialBaseUrl = `${req.protocol}://${req.get('host')}/uploads/materials/`;
+
+    let processedService = null;
+    if (service) {
+      processedService = service.toObject();
+      if (processedService.material) {
+        processedService.material = processedService.material.map(m => ({
+          ...m,
+          image: m.image ? `${materialBaseUrl}${m.image}` : ''
+        }));
+      }
+    }
+    
+    res.status(200).json({ 
+      success: true, 
+      data: { customer, surveys, service: processedService } 
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
