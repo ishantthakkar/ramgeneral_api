@@ -116,6 +116,7 @@ exports.getAllServices = async (req, res) => {
   try {
     const services = await Service.find()
       .populate('customerId', 'name company email mobileNumber')
+      .populate('userId', 'fullName')
       .populate('assignedTo', 'fullName')
       .sort({ createdAt: -1 });
 
@@ -143,6 +144,7 @@ exports.getServiceById = async (req, res) => {
     const { id } = req.params;
     const service = await Service.findById(id)
       .populate('customerId', 'name company email mobileNumber')
+      .populate('userId', 'fullName')
       .populate('assignedTo', 'fullName');
 
     if (!service) {
@@ -327,7 +329,7 @@ exports.getEligibleCustomers = async (req, res) => {
 exports.getCustomerDetailsForService = async (req, res) => {
   try {
     const { id } = req.params;
-    const customer = await Customer.findById(id);
+    const customer = await Customer.findById(id).populate('user_id', 'fullName');
     if (!customer) {
       return res.status(404).json({ success: false, message: 'Customer not found' });
     }
