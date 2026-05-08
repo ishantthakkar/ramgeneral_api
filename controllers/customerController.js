@@ -560,6 +560,54 @@ exports.getCustomersByUser = async (req, res) => {
   }
 };
 
+exports.getCustomersByContractor = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    if (!userId) {
+      return res.status(401).json({
+        message: 'User not authenticated.',
+      });
+    }
+
+    // Fetch customers assigned to this contractor
+    const customers = await Customer.find({
+      assignToContractor: userId,
+    }).sort({ createdAt: -1 });
+
+    // Fetch all surveys for these customers
+    const customerIds = customers.map(customer => customer._id);
+
+    const surveys = await Survey.find({
+      customer_id: { $in: customerIds },
+    });
+
+    // Attach surveys to customers
+    const customersWithSurveys = customers.map(customer => {
+      const customerObj = customer.toObject();
+
+      customerObj.surveys = surveys.filter(
+        survey =>
+          survey.customer_id.toString() === customer._id.toString()
+      );
+
+      return customerObj;
+    });
+
+    return res.status(200).json({
+      customers: customersWithSurveys,
+    });
+
+  } catch (error) {
+    console.error('Get customers by contractor error:', error);
+
+    return res.status(500).json({
+      message: 'Server error fetching customers by contractor.',
+      error: error.message,
+    });
+  }
+};
+
 exports.addCustomerMaterial = async (req, res) => {
   try {
     const { id } = req.params;

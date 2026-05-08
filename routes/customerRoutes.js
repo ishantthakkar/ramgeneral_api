@@ -7,6 +7,7 @@ const router = express.Router();
 router.get('/customers', verifyToken, customerController.listCustomers);
 router.get('/customers-list', verifyToken, customerController.listConvertedCustomers);
 router.get('/customers-user', verifyToken, customerController.getCustomersByUser);
+router.get('/customers-contractor', verifyToken, customerController.getCustomersByContractor);
 router.get('/customers/assigned', verifyToken, customerController.listAssignedCustomers);
 router.get('/customers/inspections', verifyToken, customerController.listInspections);
 router.get('/customers/commission-list', verifyToken, customerController.customerCommissionList);
