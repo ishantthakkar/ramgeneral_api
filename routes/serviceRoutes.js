@@ -12,5 +12,7 @@ router.get('/customers/:id/details', verifyToken, serviceController.getCustomerD
 // Service ticket routes
 router.post('/', verifyToken, serviceController.createService);
 router.get('/', verifyToken, serviceController.getAllServices);
+router.get('/:id', verifyToken, serviceController.getServiceById);
+router.put('/:id', verifyToken, serviceController.updateService);
 
 module.exports = router;
