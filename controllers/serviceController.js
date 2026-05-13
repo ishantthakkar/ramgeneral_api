@@ -143,7 +143,7 @@ exports.createService = async (req, res) => {
 exports.getAllServices = async (req, res) => {
   try {
     const services = await Service.find()
-      .populate('customerId', 'name company email mobileNumber')
+      .populate('customerId', 'name company email mobileNumber address')
       .populate('userId', 'fullName')
       .populate('assignedTo', 'fullName')
       .sort({ createdAt: -1 });
@@ -171,7 +171,7 @@ exports.getServiceById = async (req, res) => {
   try {
     const { id } = req.params;
     const service = await Service.findById(id)
-      .populate('customerId', 'name company email mobileNumber')
+      .populate('customerId', 'name company email mobileNumber address')
       .populate('userId', 'fullName')
       .populate('assignedTo', 'fullName');
 
