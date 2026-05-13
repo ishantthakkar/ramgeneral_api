@@ -7,30 +7,6 @@ const fs = require('fs');
 
 const ALLOWED_STATUSES = ['New', 'In Progress', 'Closed', 'draft', 'in_progress', 'completed'];
 
-// Helper function to save base64 image
-const saveBase64Image = (base64String, uploadDir) => {
-  try {
-    const matches = base64String.match(/^data:([A-Za-z-+\/]+);base64,([\s\S]+)$/);
-    if (!matches || matches.length !== 3) return null;
-
-    const type = matches[1];
-    const buffer = Buffer.from(matches[2], 'base64');
-    const extension = type.split('/')[1].split('+')[0] || 'jpg';
-    const fileName = `${Date.now()}-${Math.floor(Math.random() * 10000)}.${extension}`;
-    const filePath = path.join(uploadDir, fileName);
-
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-
-    fs.writeFileSync(filePath, buffer);
-    return fileName;
-  } catch (error) {
-    console.error('Error saving base64 image:', error);
-    return null;
-  }
-};
-
 exports.listCustomers = async (req, res) => {
   try {
     const user_id = req.user.id;
@@ -79,10 +55,11 @@ exports.listCustomers = async (req, res) => {
       lastActivity: customer.lastActivity,
       status: customer.status,
       assignedTo: customer.assignedTo,
-      material: (customer.material || []).map(m => ({
-        ...m.toObject(),
-        image: m.image ? `${materialBaseUrl}${m.image}` : ''
-      }))
+      material: (customer.material || []).map(m => {
+        const materialObj = m.toObject();
+        materialObj.images = (materialObj.images || []).map(img => `${materialBaseUrl}${img}`);
+        return materialObj;
+      })
     }));
 
     return res.status(200).json({ customers: customerSummaries });
@@ -142,10 +119,11 @@ exports.listConvertedCustomers = async (req, res) => {
       assignedTo: customer.assignedTo ?? null,
       verifyStatus: customer.verifyStatus,
       salesPersonName: customer.user_id?.fullName || customer.user_id?.name || '',
-      material: (customer.material || []).map(m => ({
-        ...m.toObject(),
-        image: m.image ? `${materialBaseUrl}${m.image}` : ''
-      }))
+      material: (customer.material || []).map(m => {
+        const materialObj = m.toObject();
+        materialObj.images = (materialObj.images || []).map(img => `${materialBaseUrl}${img}`);
+        return materialObj;
+      })
     }));
 
     return res.status(200).json({
@@ -175,10 +153,10 @@ exports.listInspections = async (req, res) => {
     const customerList = customers.map(customer => {
       const customerObj = customer.toObject();
       if (customerObj.material) {
-        customerObj.material = customerObj.material.map(item => ({
-          ...item,
-          image: item.image ? `${materialBaseUrl}${item.image}` : ''
-        }));
+        customerObj.material = customerObj.material.map(item => {
+          item.images = (item.images || []).map(img => `${materialBaseUrl}${img}`);
+          return item;
+        });
       }
       return {
         ...customerObj,
@@ -233,10 +211,10 @@ exports.getCustomer = async (req, res) => {
     // ✅ Convert material image to full URLs
     const updatedCustomer = customer.toObject();
     if (updatedCustomer.material && Array.isArray(updatedCustomer.material)) {
-      updatedCustomer.material = updatedCustomer.material.map(item => ({
-        ...item,
-        image: item.image ? `${materialBaseUrl}${item.image}` : ''
-      }));
+      updatedCustomer.material = updatedCustomer.material.map(item => {
+      item.images = (item.images || []).map(img => `${materialBaseUrl}${img}`);
+      return item;
+    });
     }
 
     return res.status(200).json({
@@ -412,10 +390,11 @@ exports.listAssignedCustomers = async (req, res) => {
       status: customer.status,
       assignedTo: customer.assignedTo,
       createdBy: customer.user_id,
-      material: (customer.material || []).map(m => ({
-        ...m.toObject(),
-        image: m.image ? `${materialBaseUrl}${m.image}` : ''
-      }))
+      material: (customer.material || []).map(m => {
+        const materialObj = m.toObject();
+        materialObj.images = (materialObj.images || []).map(img => `${materialBaseUrl}${img}`);
+        return materialObj;
+      })
     }));
 
     return res.status(200).json({
@@ -608,10 +587,77 @@ exports.getCustomersByContractor = async (req, res) => {
   }
 };
 
+exports.getCustomersByPM = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    if (!userId) {
+      return res.status(401).json({
+        message: 'User not authenticated.',
+      });
+    }
+
+    // Fetch customers assigned to this project manager
+    const customers = await Customer.find({
+      assignedTo: userId,
+    })
+    .populate('assignToContractor', 'fullName email mobileNumber')
+    .populate('assignedTo', 'fullName email mobileNumber')
+    .populate('user_id', 'fullName name email')
+    .sort({ createdAt: -1 });
+
+    // Fetch all surveys for these customers
+    const customerIds = customers.map(customer => customer._id);
+
+    const surveys = await Survey.find({
+      customer_id: { $in: customerIds },
+    }).sort({ createdAt: -1 });
+
+    const surveyBaseUrl = "https://ramgeneral-api.onrender.com/uploads/surveys/";
+    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
+
+    // Attach surveys and fix image URLs
+    const customersWithDetails = customers.map(customer => {
+      const customerObj = customer.toObject();
+
+      // Filter surveys for this customer
+      customerObj.surveys = surveys
+        .filter(s => s.customer_id.toString() === customer._id.toString())
+        .map(survey => {
+          const sObj = survey.toObject();
+          sObj.images = (sObj.images || []).map(img => `${surveyBaseUrl}${img}`);
+          return sObj;
+        });
+
+      if (customerObj.material && Array.isArray(customerObj.material)) {
+        customerObj.material = customerObj.material.map(item => {
+          item.images = (item.images || []).map(img => `${materialBaseUrl}${img}`);
+          return item;
+        });
+      }
+
+      return customerObj;
+    });
+
+    return res.status(200).json({
+      message: 'Customers retrieved successfully for Project Manager.',
+      total: customersWithDetails.length,
+      customers: customersWithDetails,
+    });
+
+  } catch (error) {
+    console.error('Get customers by PM error:', error);
+    return res.status(500).json({
+      message: 'Server error fetching customers for Project Manager.',
+      error: error.message,
+    });
+  }
+};
+
 exports.addCustomerMaterial = async (req, res) => {
   try {
     const { id } = req.params;
-    const { materials, materialStatus } = req.body;
+    const { item_name, issued_qty, issued_date, materialStatus } = req.body;
 
     const user_id = req.user.id;
 
@@ -637,32 +683,22 @@ exports.addCustomerMaterial = async (req, res) => {
       return res.status(404).json({ message: 'Customer not found.' });
     }
 
-    const uploadDir = path.join(__dirname, '../uploads/materials');
-
-    // Handle materials array if provided
-    if (materials && Array.isArray(materials)) {
-      for (const item of materials) {
-        if (!item.item_name || item.issued_qty === undefined) {
-          return res.status(400).json({ message: 'Each material must have item_name and issued_qty.' });
-        }
-
-        let savedFilename = '';
-        if (item.image) {
-          if (item.image.startsWith('data:')) {
-            savedFilename = saveBase64Image(item.image, uploadDir) || '';
-          } else {
-            savedFilename = item.image.split('/').pop();
-          }
-        }
-
-        customer.material.push({
-          item_name: item.item_name,
-          issued_qty: item.issued_qty,
-          issued_date: item.issued_date ? new Date(item.issued_date) : new Date(),
-          image: savedFilename
-        });
-      }
+    // Handle single material entry from formData
+    if (!item_name || issued_qty === undefined) {
+      return res.status(400).json({ message: 'item_name and issued_qty are required.' });
     }
+
+    let savedFilenames = [];
+    if (req.files && Array.isArray(req.files)) {
+      savedFilenames = req.files.map(file => file.filename);
+    }
+
+    customer.material.push({
+      item_name: item_name,
+      issued_qty: Number(issued_qty),
+      issued_date: issued_date ? new Date(issued_date) : new Date(),
+      images: savedFilenames
+    });
 
     if (materialStatus) {
       customer.materialStatus = materialStatus;
@@ -674,16 +710,16 @@ exports.addCustomerMaterial = async (req, res) => {
     const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
     const updatedCustomer = customer.toObject();
     if (updatedCustomer.material) {
-      updatedCustomer.material = updatedCustomer.material.map(item => ({
-        ...item,
-        image: item.image ? `${materialBaseUrl}${item.image}` : ''
-      }));
+      updatedCustomer.material = updatedCustomer.material.map(item => {
+        item.images = (item.images || []).map(img => `${materialBaseUrl}${img}`);
+        return item;
+      });
     }
 
     await createLog('Customer Materials Updated', user_id, customer.name, 'Customer', customer._id);
 
     return res.status(200).json({
-      message: 'Materials updated successfully.',
+      message: 'Material added successfully.',
       customer: updatedCustomer,
     });
   } catch (error) {

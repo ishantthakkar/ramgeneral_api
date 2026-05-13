@@ -123,7 +123,7 @@ const customerSchema = new mongoose.Schema({
       item_name: { type: String, trim: true },
       issued_qty: { type: Number, default: 0 },
       issued_date: { type: Date, default: Date.now },
-      image: { type: String },
+      images: [{ type: String }],
     },
   ],
   materialStatus: {
