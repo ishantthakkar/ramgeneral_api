@@ -42,8 +42,10 @@ exports.createService = async (req, res) => {
     const uploadDir = path.join(__dirname, '../uploads/materials');
     
     let processedMaterials = [];
-    if (material && Array.isArray(material)) {
-      for (const item of material) {
+    const itemsToProcess = material || rest.materials;
+    
+    if (itemsToProcess && Array.isArray(itemsToProcess)) {
+      for (const item of itemsToProcess) {
         let savedFilename = '';
         if (item.image && item.image.startsWith('data:')) {
           savedFilename = saveBase64Image(item.image, uploadDir) || '';
@@ -52,7 +54,8 @@ exports.createService = async (req, res) => {
         }
 
         processedMaterials.push({
-          ...item,
+          item_name: item.item_name || item.name || '',
+          issued_qty: item.issued_qty || item.quantity || 0,
           image: savedFilename,
           issued_date: item.issued_date ? new Date(item.issued_date) : new Date()
         });
@@ -67,7 +70,7 @@ exports.createService = async (req, res) => {
       Object.assign(service, rest);
       
       // Only update material if provided in request
-      if (material && Array.isArray(material)) {
+      if (itemsToProcess && Array.isArray(itemsToProcess)) {
         service.material = processedMaterials;
       }
       
@@ -202,8 +205,10 @@ exports.updateService = async (req, res) => {
     const uploadDir = path.join(__dirname, '../uploads/materials');
     
     let processedMaterials = [];
-    if (material && Array.isArray(material)) {
-      for (const item of material) {
+    const itemsToProcess = material || rest.materials;
+
+    if (itemsToProcess && Array.isArray(itemsToProcess)) {
+      for (const item of itemsToProcess) {
         let savedFilename = '';
         if (item.image && item.image.startsWith('data:')) {
           savedFilename = saveBase64Image(item.image, uploadDir) || '';
@@ -212,7 +217,8 @@ exports.updateService = async (req, res) => {
         }
 
         processedMaterials.push({
-          ...item,
+          item_name: item.item_name || item.name || '',
+          issued_qty: item.issued_qty || item.quantity || 0,
           image: savedFilename,
           issued_date: item.issued_date ? new Date(item.issued_date) : new Date()
         });
@@ -226,7 +232,7 @@ exports.updateService = async (req, res) => {
 
     // Update fields
     Object.assign(service, rest);
-    if (material && Array.isArray(material)) {
+    if (itemsToProcess && Array.isArray(itemsToProcess)) {
       service.material = processedMaterials;
     }
     service.userId = currentUserId;
@@ -273,7 +279,10 @@ exports.addServiceMaterial = async (req, res) => {
 
     if (itemsToAdd && Array.isArray(itemsToAdd)) {
       for (const item of itemsToAdd) {
-        if (!item.item_name || item.issued_qty === undefined) {
+        const itemName = item.item_name || item.name;
+        const issuedQty = item.issued_qty !== undefined ? item.issued_qty : item.quantity;
+
+        if (!itemName || issuedQty === undefined) {
           continue;
         }
 
@@ -287,8 +296,8 @@ exports.addServiceMaterial = async (req, res) => {
         }
 
         service.material.push({
-          item_name: item.item_name,
-          issued_qty: item.issued_qty,
+          item_name: itemName,
+          issued_qty: issuedQty,
           issued_date: item.issued_date ? new Date(item.issued_date) : new Date(),
           image: savedFilename
         });
