@@ -14,5 +14,7 @@ router.post('/', verifyToken, serviceController.createService);
 router.get('/', verifyToken, serviceController.getAllServices);
 router.get('/:id', verifyToken, serviceController.getServiceById);
 router.put('/:id', verifyToken, serviceController.updateService);
+router.put('/:id/material', verifyToken, serviceController.addServiceMaterial);
+router.put('/:id/assign', verifyToken, serviceController.assignContractorToService);
 
 module.exports = router;
