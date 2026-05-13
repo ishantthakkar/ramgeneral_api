@@ -184,7 +184,10 @@ exports.getServiceById = async (req, res) => {
     
     if (serviceObj.material) {
       serviceObj.material = serviceObj.material.map(m => ({
-        ...m,
+        _id: m._id,
+        item_name: m.item_name,
+        issued_qty: m.issued_qty,
+        issued_date: m.issued_date,
         image: m.image ? `${materialBaseUrl}${m.image}` : ''
       }));
     }
@@ -399,7 +402,10 @@ exports.getCustomerDetailsForService = async (req, res) => {
       processedService = service.toObject();
       if (processedService.material) {
         processedService.material = processedService.material.map(m => ({
-          ...m,
+          _id: m._id,
+          item_name: m.item_name,
+          issued_qty: m.issued_qty,
+          issued_date: m.issued_date,
           image: m.image ? `${materialBaseUrl}${m.image}` : ''
         }));
       }
