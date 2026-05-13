@@ -42,8 +42,10 @@ exports.createService = async (req, res) => {
     const uploadDir = path.join(__dirname, '../uploads/materials');
     
     let processedMaterials = [];
-    if (material && Array.isArray(material)) {
-      for (const item of material) {
+    const itemsToProcess = material || rest.materials;
+    
+    if (itemsToProcess && Array.isArray(itemsToProcess)) {
+      for (const item of itemsToProcess) {
         let savedFilename = '';
         if (item.image && item.image.startsWith('data:')) {
           savedFilename = saveBase64Image(item.image, uploadDir) || '';
@@ -52,7 +54,8 @@ exports.createService = async (req, res) => {
         }
 
         processedMaterials.push({
-          ...item,
+          item_name: item.item_name || item.name || '',
+          issued_qty: item.issued_qty || item.quantity || 0,
           image: savedFilename,
           issued_date: item.issued_date ? new Date(item.issued_date) : new Date()
         });
@@ -65,7 +68,12 @@ exports.createService = async (req, res) => {
     if (service) {
       // Step 2: If it exists, Update the service instead of creating a second one
       Object.assign(service, rest);
-      service.material = processedMaterials;
+      
+      // Only update material if provided in request
+      if (itemsToProcess && Array.isArray(itemsToProcess)) {
+        service.material = processedMaterials;
+      }
+      
       service.userId = currentUserId; // Update with the ID of the user who performed the edit
       
       if (rest.assignedTo) {
@@ -77,9 +85,19 @@ exports.createService = async (req, res) => {
       const customer = await Customer.findById(service.customerId);
       await createLog('Service Ticket Updated', currentUserId, customer?.name || 'Unknown', 'Service', service._id);
 
+      // Return service with full image URLs
+      const materialBaseUrl = `${req.protocol}://${req.get('host')}/uploads/materials/`;
+      const serviceObj = service.toObject();
+      if (serviceObj.material) {
+        serviceObj.material = serviceObj.material.map(m => ({
+          ...m,
+          image: m.image ? `${materialBaseUrl}${m.image}` : ''
+        }));
+      }
+
       res.status(200).json({ 
         success: true, 
-        data: service, 
+        data: serviceObj, 
         message: 'Service ticket updated successfully' 
       });
     } else {
@@ -100,9 +118,19 @@ exports.createService = async (req, res) => {
       const customer = await Customer.findById(service.customerId);
       await createLog('Service Ticket Created', currentUserId, customer?.name || 'Unknown', 'Service', service._id);
 
+      // Return service with full image URLs
+      const materialBaseUrl = `${req.protocol}://${req.get('host')}/uploads/materials/`;
+      const serviceObj = service.toObject();
+      if (serviceObj.material) {
+        serviceObj.material = serviceObj.material.map(m => ({
+          ...m,
+          image: m.image ? `${materialBaseUrl}${m.image}` : ''
+        }));
+      }
+
       res.status(201).json({ 
         success: true, 
-        data: service, 
+        data: serviceObj, 
         message: 'Service ticket created successfully' 
       });
     }
@@ -115,7 +143,7 @@ exports.createService = async (req, res) => {
 exports.getAllServices = async (req, res) => {
   try {
     const services = await Service.find()
-      .populate('customerId', 'name company email mobileNumber')
+      .populate('customerId', 'name company email mobileNumber address')
       .populate('userId', 'fullName')
       .populate('assignedTo', 'fullName')
       .sort({ createdAt: -1 });
@@ -143,7 +171,7 @@ exports.getServiceById = async (req, res) => {
   try {
     const { id } = req.params;
     const service = await Service.findById(id)
-      .populate('customerId', 'name company email mobileNumber')
+      .populate('customerId', 'name company email mobileNumber address')
       .populate('userId', 'fullName')
       .populate('assignedTo', 'fullName');
 
@@ -156,7 +184,10 @@ exports.getServiceById = async (req, res) => {
     
     if (serviceObj.material) {
       serviceObj.material = serviceObj.material.map(m => ({
-        ...m,
+        _id: m._id,
+        item_name: m.item_name,
+        issued_qty: m.issued_qty,
+        issued_date: m.issued_date,
         image: m.image ? `${materialBaseUrl}${m.image}` : ''
       }));
     }
@@ -177,8 +208,10 @@ exports.updateService = async (req, res) => {
     const uploadDir = path.join(__dirname, '../uploads/materials');
     
     let processedMaterials = [];
-    if (material && Array.isArray(material)) {
-      for (const item of material) {
+    const itemsToProcess = material || rest.materials;
+
+    if (itemsToProcess && Array.isArray(itemsToProcess)) {
+      for (const item of itemsToProcess) {
         let savedFilename = '';
         if (item.image && item.image.startsWith('data:')) {
           savedFilename = saveBase64Image(item.image, uploadDir) || '';
@@ -187,7 +220,8 @@ exports.updateService = async (req, res) => {
         }
 
         processedMaterials.push({
-          ...item,
+          item_name: item.item_name || item.name || '',
+          issued_qty: item.issued_qty || item.quantity || 0,
           image: savedFilename,
           issued_date: item.issued_date ? new Date(item.issued_date) : new Date()
         });
@@ -201,7 +235,7 @@ exports.updateService = async (req, res) => {
 
     // Update fields
     Object.assign(service, rest);
-    if (material) {
+    if (itemsToProcess && Array.isArray(itemsToProcess)) {
       service.material = processedMaterials;
     }
     service.userId = currentUserId;
@@ -215,7 +249,17 @@ exports.updateService = async (req, res) => {
     const customer = await Customer.findById(service.customerId);
     await createLog('Service Ticket Updated', currentUserId, customer?.name || 'Unknown', 'Service', service._id);
 
-    res.status(200).json({ success: true, data: service, message: 'Service ticket updated successfully' });
+    // Return service with full image URLs
+    const materialBaseUrl = `${req.protocol}://${req.get('host')}/uploads/materials/`;
+    const serviceObj = service.toObject();
+    if (serviceObj.material) {
+      serviceObj.material = serviceObj.material.map(m => ({
+        ...m,
+        image: m.image ? `${materialBaseUrl}${m.image}` : ''
+      }));
+    }
+
+    res.status(200).json({ success: true, data: serviceObj, message: 'Service ticket updated successfully' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -225,7 +269,7 @@ exports.updateService = async (req, res) => {
 exports.addServiceMaterial = async (req, res) => {
   try {
     const { id } = req.params;
-    const { materials, materialStatus } = req.body;
+    const { materials, material, materialStatus } = req.body;
     const user_id = req.user.id;
 
     const service = await Service.findById(id);
@@ -234,10 +278,14 @@ exports.addServiceMaterial = async (req, res) => {
     }
 
     const uploadDir = path.join(__dirname, '../uploads/materials');
+    const itemsToAdd = materials || material;
 
-    if (materials && Array.isArray(materials)) {
-      for (const item of materials) {
-        if (!item.item_name || item.issued_qty === undefined) {
+    if (itemsToAdd && Array.isArray(itemsToAdd)) {
+      for (const item of itemsToAdd) {
+        const itemName = item.item_name || item.name;
+        const issuedQty = item.issued_qty !== undefined ? item.issued_qty : item.quantity;
+
+        if (!itemName || issuedQty === undefined) {
           continue;
         }
 
@@ -251,8 +299,8 @@ exports.addServiceMaterial = async (req, res) => {
         }
 
         service.material.push({
-          item_name: item.item_name,
-          issued_qty: item.issued_qty,
+          item_name: itemName,
+          issued_qty: issuedQty,
           issued_date: item.issued_date ? new Date(item.issued_date) : new Date(),
           image: savedFilename
         });
@@ -268,7 +316,17 @@ exports.addServiceMaterial = async (req, res) => {
     const customer = await Customer.findById(service.customerId);
     await createLog('Service Materials Updated', user_id, customer?.name || 'Unknown', 'Service', service._id);
 
-    res.status(200).json({ success: true, data: service, message: 'Materials updated successfully' });
+    // Return service with full image URLs
+    const materialBaseUrl = `${req.protocol}://${req.get('host')}/uploads/materials/`;
+    const serviceObj = service.toObject();
+    if (serviceObj.material) {
+      serviceObj.material = serviceObj.material.map(m => ({
+        ...m,
+        image: m.image ? `${materialBaseUrl}${m.image}` : ''
+      }));
+    }
+
+    res.status(200).json({ success: true, data: serviceObj, message: 'Materials updated successfully' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -344,7 +402,10 @@ exports.getCustomerDetailsForService = async (req, res) => {
       processedService = service.toObject();
       if (processedService.material) {
         processedService.material = processedService.material.map(m => ({
-          ...m,
+          _id: m._id,
+          item_name: m.item_name,
+          issued_qty: m.issued_qty,
+          issued_date: m.issued_date,
           image: m.image ? `${materialBaseUrl}${m.image}` : ''
         }));
       }
