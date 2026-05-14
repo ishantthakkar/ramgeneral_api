@@ -294,7 +294,7 @@ exports.listUsers = async (req, res) => {
 
 exports.listContractors = async (req, res) => {
     try {
-        const users = await User.find({ userRole: 'contractor' }).sort({ createdAt: -1 }).lean();
+        const users = await User.find({ userRole: 'Contractor' }).sort({ createdAt: -1 }).lean();
 
         // Add contractor-specific metrics to each user
         const usersWithMetrics = await Promise.all(users.map(async user => {
