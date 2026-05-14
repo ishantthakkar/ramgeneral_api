@@ -292,6 +292,33 @@ exports.listUsers = async (req, res) => {
     }
 };
 
+exports.listContractors = async (req, res) => {
+    try {
+        const users = await User.find({ userRole: 'contractor' }).sort({ createdAt: -1 }).lean();
+
+        // Add contractor-specific metrics to each user
+        const usersWithMetrics = await Promise.all(users.map(async user => {
+            const Customer = require('../models/Customer');
+            const roleMetrics = {
+                assignedProjects: await Customer.countDocuments({ assignToContractor: user._id }),
+                completedInstallations: await Customer.countDocuments({ assignToContractor: user._id, contractorStatus: 'completed' }),
+                pendingInstallations: await Customer.countDocuments({ assignToContractor: user._id, contractorStatus: { $ne: 'completed' } })
+            };
+
+            return {
+                ...user,
+                ...roleMetrics
+            };
+        }));
+
+        return res.status(200).json({ users: usersWithMetrics });
+
+    } catch (error) {
+        console.error('List contractors error:', error);
+        return res.status(500).json({ message: 'Server error listing contractors.' });
+    }
+};
+
 exports.getProfile = async (req, res) => {
     try {
         const { id } = req.params;
