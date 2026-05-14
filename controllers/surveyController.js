@@ -86,7 +86,7 @@ exports.createSurvey = async (req, res) => {
             };
 
             if (customer_id) updateData.customer_id = customer_id;
-            
+
             // Append new images to existing ones if any were uploaded
             if (newImages.length > 0) {
                 updateData.images = [...survey.images, ...newImages];
@@ -315,10 +315,12 @@ exports.assignSurvey = async (req, res) => {
 
         const customer = await Customer.findByIdAndUpdate(
             id,
-            { assignedTo: assignedTo },
-            { new: true },
-            { contractorStatus: 'to-do' }
-        );
+            {
+                assignedTo: assignedTo,
+                projectManagerStatus: 'to-do'
+            },
+            { new: true }
+        ).populate('assignedTo', 'fullName email mobileNumber');
 
         if (!customer) {
             return res.status(404).json({ message: 'Customer not found.' });

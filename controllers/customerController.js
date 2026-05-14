@@ -212,9 +212,9 @@ exports.getCustomer = async (req, res) => {
     const updatedCustomer = customer.toObject();
     if (updatedCustomer.material && Array.isArray(updatedCustomer.material)) {
       updatedCustomer.material = updatedCustomer.material.map(item => {
-      item.images = (item.images || []).map(img => `${materialBaseUrl}${img}`);
-      return item;
-    });
+        item.images = (item.images || []).map(img => `${materialBaseUrl}${img}`);
+        return item;
+      });
     }
 
     return res.status(200).json({
@@ -324,9 +324,12 @@ exports.assignContractor = async (req, res) => {
 
     const customer = await Customer.findByIdAndUpdate(
       id,
-      { contractor },
-      { new: true, runValidators: true }
-    );
+      {
+        assignToContractor: contractor,
+        contractorStatus: 'New'
+      },
+      { new: true }
+    ).populate('assignToContractor', 'fullName email userRole mobileNumber');
 
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
@@ -601,10 +604,10 @@ exports.getCustomersByPM = async (req, res) => {
     const customers = await Customer.find({
       assignedTo: userId,
     })
-    .populate('assignToContractor', 'fullName email mobileNumber')
-    .populate('assignedTo', 'fullName email mobileNumber')
-    .populate('user_id', 'fullName name email')
-    .sort({ createdAt: -1 });
+      .populate('assignToContractor', 'fullName email mobileNumber')
+      .populate('assignedTo', 'fullName email mobileNumber')
+      .populate('user_id', 'fullName name email')
+      .sort({ createdAt: -1 });
 
     // Fetch all surveys for these customers
     const customerIds = customers.map(customer => customer._id);

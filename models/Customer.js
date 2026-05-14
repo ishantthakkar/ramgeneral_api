@@ -52,6 +52,12 @@ const customerSchema = new mongoose.Schema({
     default: 'New',
     trim: true,
   },
+  projectManagerStatus: {
+    type: String,
+    enum: ['to-do', 'in_progress', 'completed'],
+    default: 'to-do',
+    trim: true,
+  },
   verifyStatus: {
     type: String,
     enum: ['pending', 'verified'],
