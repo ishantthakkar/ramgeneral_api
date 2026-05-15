@@ -44,22 +44,37 @@ exports.createService = async (req, res) => {
     let processedMaterials = [];
     const itemsToProcess = material || rest.materials;
     
+    // Handle files from multer if any
+    let savedFilenames = [];
+    if (req.files && Array.isArray(req.files)) {
+      savedFilenames = req.files.map(file => file.filename);
+    }
+
     if (itemsToProcess && Array.isArray(itemsToProcess)) {
       for (const item of itemsToProcess) {
-        let savedFilename = '';
+        let currentItemImages = [];
         if (item.image && item.image.startsWith('data:')) {
-          savedFilename = saveBase64Image(item.image, uploadDir) || '';
+          const saved = saveBase64Image(item.image, uploadDir);
+          if (saved) currentItemImages.push(saved);
         } else if (item.image) {
-          savedFilename = item.image.split('/').pop();
+          currentItemImages.push(item.image.split('/').pop());
         }
 
         processedMaterials.push({
           item_name: item.item_name || item.name || '',
           issued_qty: item.issued_qty || item.quantity || 0,
-          image: savedFilename,
+          images: currentItemImages,
           issued_date: item.issued_date ? new Date(item.issued_date) : new Date()
         });
       }
+    } else if (req.body.item_name) {
+      // Handle single material item sent via multipart/form-data
+      processedMaterials.push({
+        item_name: req.body.item_name,
+        issued_qty: Number(req.body.issued_qty) || 0,
+        issued_date: req.body.issued_date ? new Date(req.body.issued_date) : new Date(),
+        images: savedFilenames
+      });
     }
 
     // Step 1: Check if a service ticket already exists for this customer
@@ -91,7 +106,7 @@ exports.createService = async (req, res) => {
       if (serviceObj.material) {
         serviceObj.material = serviceObj.material.map(m => ({
           ...m,
-          image: m.image ? `${materialBaseUrl}${m.image}` : ''
+          images: (m.images || []).map(img => img ? `${materialBaseUrl}${img}` : '')
         }));
       }
 
@@ -124,7 +139,7 @@ exports.createService = async (req, res) => {
       if (serviceObj.material) {
         serviceObj.material = serviceObj.material.map(m => ({
           ...m,
-          image: m.image ? `${materialBaseUrl}${m.image}` : ''
+          images: (m.images || []).map(img => img ? `${materialBaseUrl}${img}` : '')
         }));
       }
 
@@ -155,7 +170,7 @@ exports.getAllServices = async (req, res) => {
       if (serviceObj.material) {
         serviceObj.material = serviceObj.material.map(m => ({
           ...m,
-          image: m.image ? `${materialBaseUrl}${m.image}` : ''
+          images: (m.images || []).map(img => img ? `${materialBaseUrl}${img}` : '')
         }));
       }
       return serviceObj;
@@ -188,7 +203,7 @@ exports.getServiceById = async (req, res) => {
         item_name: m.item_name,
         issued_qty: m.issued_qty,
         issued_date: m.issued_date,
-        image: m.image ? `${materialBaseUrl}${m.image}` : ''
+        images: (m.images || []).map(img => img ? `${materialBaseUrl}${img}` : '')
       }));
     }
 
@@ -210,22 +225,36 @@ exports.updateService = async (req, res) => {
     let processedMaterials = [];
     const itemsToProcess = material || rest.materials;
 
+    // Handle files from multer if any
+    let savedFilenames = [];
+    if (req.files && Array.isArray(req.files)) {
+      savedFilenames = req.files.map(file => file.filename);
+    }
+
     if (itemsToProcess && Array.isArray(itemsToProcess)) {
       for (const item of itemsToProcess) {
-        let savedFilename = '';
+        let currentItemImages = [];
         if (item.image && item.image.startsWith('data:')) {
-          savedFilename = saveBase64Image(item.image, uploadDir) || '';
+          const saved = saveBase64Image(item.image, uploadDir);
+          if (saved) currentItemImages.push(saved);
         } else if (item.image) {
-          savedFilename = item.image.split('/').pop();
+          currentItemImages.push(item.image.split('/').pop());
         }
 
         processedMaterials.push({
           item_name: item.item_name || item.name || '',
           issued_qty: item.issued_qty || item.quantity || 0,
-          image: savedFilename,
+          images: currentItemImages,
           issued_date: item.issued_date ? new Date(item.issued_date) : new Date()
         });
       }
+    } else if (req.body.item_name) {
+      processedMaterials.push({
+        item_name: req.body.item_name,
+        issued_qty: Number(req.body.issued_qty) || 0,
+        issued_date: req.body.issued_date ? new Date(req.body.issued_date) : new Date(),
+        images: savedFilenames
+      });
     }
 
     const service = await Service.findById(id);
@@ -255,7 +284,7 @@ exports.updateService = async (req, res) => {
     if (serviceObj.material) {
       serviceObj.material = serviceObj.material.map(m => ({
         ...m,
-        image: m.image ? `${materialBaseUrl}${m.image}` : ''
+        images: (m.images || []).map(img => img ? `${materialBaseUrl}${img}` : '')
       }));
     }
 
@@ -278,23 +307,28 @@ exports.addServiceMaterial = async (req, res) => {
     }
 
     const uploadDir = path.join(__dirname, '../uploads/materials');
+    let savedFilenames = [];
+    if (req.files && Array.isArray(req.files)) {
+      savedFilenames = req.files.map(file => file.filename);
+    }
+
     const itemsToAdd = materials || material;
 
     if (itemsToAdd && Array.isArray(itemsToAdd)) {
+      // Handle array of materials (could still have base64 or other data)
       for (const item of itemsToAdd) {
         const itemName = item.item_name || item.name;
         const issuedQty = item.issued_qty !== undefined ? item.issued_qty : item.quantity;
 
-        if (!itemName || issuedQty === undefined) {
-          continue;
-        }
+        if (!itemName || issuedQty === undefined) continue;
 
-        let savedFilename = '';
+        let currentItemImages = [];
         if (item.image) {
           if (item.image.startsWith('data:')) {
-            savedFilename = saveBase64Image(item.image, uploadDir) || '';
+            const saved = saveBase64Image(item.image, uploadDir);
+            if (saved) currentItemImages.push(saved);
           } else {
-            savedFilename = item.image.split('/').pop();
+            currentItemImages.push(item.image.split('/').pop());
           }
         }
 
@@ -302,9 +336,17 @@ exports.addServiceMaterial = async (req, res) => {
           item_name: itemName,
           issued_qty: issuedQty,
           issued_date: item.issued_date ? new Date(item.issued_date) : new Date(),
-          image: savedFilename
+          images: currentItemImages
         });
       }
+    } else if (req.body.item_name) {
+      // Handle single material item from multipart/form-data
+      service.material.push({
+        item_name: req.body.item_name,
+        issued_qty: Number(req.body.issued_qty) || 0,
+        issued_date: req.body.issued_date ? new Date(req.body.issued_date) : new Date(),
+        images: savedFilenames
+      });
     }
 
     if (materialStatus) {
@@ -322,7 +364,7 @@ exports.addServiceMaterial = async (req, res) => {
     if (serviceObj.material) {
       serviceObj.material = serviceObj.material.map(m => ({
         ...m,
-        image: m.image ? `${materialBaseUrl}${m.image}` : ''
+        images: (m.images || []).map(img => img ? `${materialBaseUrl}${img}` : '')
       }));
     }
 
@@ -406,7 +448,7 @@ exports.getCustomerDetailsForService = async (req, res) => {
           item_name: m.item_name,
           issued_qty: m.issued_qty,
           issued_date: m.issued_date,
-          image: m.image ? `${materialBaseUrl}${m.image}` : ''
+          images: (m.images || []).map(img => img ? `${materialBaseUrl}${img}` : '')
         }));
       }
     }
