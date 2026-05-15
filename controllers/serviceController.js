@@ -42,8 +42,16 @@ exports.createService = async (req, res) => {
     const uploadDir = path.join(__dirname, '../uploads/materials');
     
     let processedMaterials = [];
-    const itemsToProcess = material || rest.materials;
+    let itemsToProcess = material || rest.materials;
     
+    // Parse JSON strings if they come from multipart/form-data
+    if (typeof itemsToProcess === 'string') {
+      try { itemsToProcess = JSON.parse(itemsToProcess); } catch (e) { console.error("Failed to parse material JSON", e); }
+    }
+    
+    if (typeof rest.toFixItems === 'string') {
+      try { rest.toFixItems = JSON.parse(rest.toFixItems); } catch (e) { console.error("Failed to parse toFixItems JSON", e); }
+    }
     // Handle files from multer if any
     let savedFilenames = [];
     if (req.files && Array.isArray(req.files)) {
@@ -223,7 +231,16 @@ exports.updateService = async (req, res) => {
     const uploadDir = path.join(__dirname, '../uploads/materials');
     
     let processedMaterials = [];
-    const itemsToProcess = material || rest.materials;
+    let itemsToProcess = material || rest.materials;
+
+    // Parse JSON strings if they come from multipart/form-data
+    if (typeof itemsToProcess === 'string') {
+      try { itemsToProcess = JSON.parse(itemsToProcess); } catch (e) { console.error("Failed to parse material JSON", e); }
+    }
+    
+    if (typeof rest.toFixItems === 'string') {
+      try { rest.toFixItems = JSON.parse(rest.toFixItems); } catch (e) { console.error("Failed to parse toFixItems JSON", e); }
+    }
 
     // Handle files from multer if any
     let savedFilenames = [];
@@ -312,7 +329,11 @@ exports.addServiceMaterial = async (req, res) => {
       savedFilenames = req.files.map(file => file.filename);
     }
 
-    const itemsToAdd = materials || material;
+    let itemsToAdd = materials || material;
+
+    if (typeof itemsToAdd === 'string') {
+      try { itemsToAdd = JSON.parse(itemsToAdd); } catch (e) { console.error("Failed to parse materials JSON", e); }
+    }
 
     if (itemsToAdd && Array.isArray(itemsToAdd)) {
       // Handle array of materials (could still have base64 or other data)
