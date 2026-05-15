@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
+const CustomerActivity = require('../models/CustomerActivity');
 const { generateAccessToken, generateRefreshToken } = require('../utils/token');
 
 const ALLOWED_ROLES = ['project_manager', 'contractor', 'Contractor', 'sales_person', 'Sales Person', 'Project Manager'];
@@ -366,12 +367,19 @@ exports.getProfile = async (req, res) => {
             };
         }
 
+        const recentActivities = await CustomerActivity.find({ user_id: user._id })
+            .populate('customer_id', 'fullName email mobileNumber')
+            .sort({ date: -1 })
+            .limit(10)
+            .lean();
+
         return res.status(200).json({
             user: {
                 ...user,
                 permissions: user.roleId ? user.roleId.permissions : {},
                 ...roleMetrics,
             },
+            recentActivities,
         });
     } catch (error) {
         console.error('Get profile error:', error);
