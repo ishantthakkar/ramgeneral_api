@@ -39,7 +39,7 @@ const serviceSchema = new mongoose.Schema({
       item_name: { type: String },
       issued_qty: { type: Number },
       issued_date: { type: Date },
-      image: { type: String }
+      images: [{ type: String }]
     }
   ],
   materialStatus: {
