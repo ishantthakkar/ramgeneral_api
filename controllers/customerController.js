@@ -1036,3 +1036,82 @@ exports.customerCommissionList = async (req, res) => {
     });
   }
 };
+
+exports.editCustomerStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const customer = await Customer.findByIdAndUpdate(
+      id,
+      { status: 'pending_edit_approval', adminApproval: 'Pending' },
+      { new: true, runValidators: true }
+    );
+
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const { createLog } = require('../utils/logger');
+    await createLog(`Customer Status Reopened`, req.user.id, customer.name, 'Customer', customer._id);
+
+    return res.status(200).json({
+      message: 'Customer status updated to reopen successfully.',
+      customer,
+    });
+  } catch (error) {
+    console.error('Edit customer status error:', error);
+    return res.status(500).json({ message: 'Server error updating customer status.' });
+  }
+};
+
+exports.adminApprovalStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body; // 'Approved' or 'Rejected'
+
+    if (!['Approved', 'Rejected'].includes(status)) {
+      return res.status(400).json({ message: "Invalid status. Use 'Approved' or 'Rejected'." });
+    }
+
+    const user_id = req.user.id;
+
+    // Check if user is Admin
+    const Admin = require('../models/Admin');
+    const isAdmin = await Admin.findById(user_id);
+
+    if (!isAdmin) {
+      // Check if user is Project Manager
+      const User = require('../models/User');
+      const user = await User.findById(user_id);
+      if (!user || user.userRole !== 'Project Manager') {
+        return res.status(403).json({ message: 'Only Admins or Project Managers can approve or reject.' });
+      }
+    }
+
+    const updatePayload = { adminApproval: status };
+    if (status === 'Approved') {
+      updatePayload.status = 'reopen';
+    }
+
+    const customer = await Customer.findByIdAndUpdate(
+      id,
+      updatePayload,
+      { new: true, runValidators: true }
+    );
+
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const { createLog } = require('../utils/logger');
+    await createLog(`Customer Admin Approval ${status}`, user_id, customer.name, 'Customer', customer._id);
+
+    return res.status(200).json({
+      message: `Customer admin approval ${status} successfully.`,
+      customer,
+    });
+  } catch (error) {
+    console.error('Admin approval error:', error);
+    return res.status(500).json({ message: 'Server error updating admin approval.' });
+  }
+};

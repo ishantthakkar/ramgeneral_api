@@ -97,8 +97,14 @@ const customerSchema = new mongoose.Schema({
   status: {
     type: String,
     required: true,
-    enum: ['New', 'in_progress', 'draft', 'completed'],
+    enum: ['New', 'in_progress', 'draft', 'completed', 'reopen', 'pending_edit_approval'],
     default: 'New',
+    trim: true,
+  },
+  adminApproval: {
+    type: String,
+    enum: ['Pending', 'Approved', 'Rejected'],
+    default: 'Pending',
     trim: true,
   },
   address: {
