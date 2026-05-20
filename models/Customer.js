@@ -154,6 +154,12 @@ const customerSchema = new mongoose.Schema({
       timestamp: { type: Date, default: Date.now },
     },
   ],
+  inspectionNotes: [
+    {
+      note: { type: String, trim: true, required: true },
+      timestamp: { type: Date, default: Date.now },
+    },
+  ],
 }, {
   timestamps: true,
 });
