@@ -1162,6 +1162,43 @@ exports.installationListByUser = async (req, res) => {
   }
 };
 
+exports.inspectionListByUser = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const customers = await Customer.find({
+      assignedTo: userId,
+      installationStatus: 'completed',
+    })
+      .populate('assignToContractor', 'fullName email mobileNumber')
+      .populate('assignedTo', 'fullName email mobileNumber')
+      .populate('user_id', 'fullName name email')
+      .sort({ updatedAt: -1 });
+
+    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
+
+    const customerList = customers.map(customer => {
+      const obj = customer.toObject();
+      if (obj.material) {
+        obj.material = obj.material.map(item => {
+          item.images = (item.images || []).map(img => `${materialBaseUrl}${img}`);
+          return item;
+        });
+      }
+      return obj;
+    });
+
+    return res.status(200).json({
+      message: 'Inspection list retrieved successfully.',
+      total: customerList.length,
+      customers: customerList,
+    });
+  } catch (error) {
+    console.error('Inspection list by user error:', error);
+    return res.status(500).json({ message: 'Server error fetching inspection list.' });
+  }
+};
+
 exports.addInstallationNote = async (req, res) => {
   try {
     const { id } = req.params;
