@@ -143,6 +143,11 @@ const customerSchema = new mongoose.Schema({
     enum: ['pending', 'verified'],
     default: 'pending',
   },
+  installationStatus: {
+    type: String,
+    enum: ['start', 'in_progress', 'continue', 'completed'],
+    default: 'start',
+  },
 }, {
   timestamps: true,
 });

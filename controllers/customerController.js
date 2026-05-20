@@ -1162,6 +1162,38 @@ exports.installationListByUser = async (req, res) => {
   }
 };
 
+exports.updateInstallationStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    const allowedStatuses = ['start', 'in_progress', 'continue', 'completed'];
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ message: `Invalid status. Allowed: ${allowedStatuses.join(', ')}` });
+    }
+
+    const customer = await Customer.findByIdAndUpdate(
+      id,
+      { installationStatus: status },
+      { new: true, runValidators: true }
+    );
+
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    await createLog(`Installation Status Updated to ${status}`, req.user.id, customer.name, 'Customer', customer._id);
+
+    return res.status(200).json({
+      message: `Installation status updated to '${status}' successfully.`,
+      customer,
+    });
+  } catch (error) {
+    console.error('Update installation status error:', error);
+    return res.status(500).json({ message: 'Server error updating installation status.' });
+  }
+};
+
 exports.confirmMaterialStatus = async (req, res) => {
   try {
     const { id } = req.params;
