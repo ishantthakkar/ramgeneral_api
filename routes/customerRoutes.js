@@ -55,4 +55,5 @@ router.post('/customers/:id/commissions', verifyToken, customerController.update
 router.get('/customers/:id/activities', verifyToken, customerController.getCustomerActivities);
 router.post('/:id/edit-status', verifyToken, customerController.editCustomerStatus);
 router.post('/:id/admin-approval', verifyToken, customerController.adminApprovalStatus);
+router.post('/:id/material-status', verifyToken, customerController.confirmMaterialStatus);
 module.exports = router;

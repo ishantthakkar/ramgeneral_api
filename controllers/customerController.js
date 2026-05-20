@@ -1115,3 +1115,46 @@ exports.adminApprovalStatus = async (req, res) => {
     return res.status(500).json({ message: 'Server error updating admin approval.' });
   }
 };
+
+exports.confirmMaterialStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const status = 'verified'; // Automatically update to verified
+
+    const user_id = req.user.id;
+
+    // Check if user is Admin
+    const Admin = require('../models/Admin');
+    const isAdmin = await Admin.findById(user_id);
+
+    if (!isAdmin) {
+      // Check if user is Project Manager
+      const User = require('../models/User');
+      const user = await User.findById(user_id);
+      if (!user || user.userRole !== 'Project Manager') {
+        return res.status(403).json({ message: 'Only Admins or Project Managers can confirm material status.' });
+      }
+    }
+
+    const customer = await Customer.findByIdAndUpdate(
+      id,
+      { materialStatus: status },
+      { new: true, runValidators: true }
+    );
+
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const { createLog } = require('../utils/logger');
+    await createLog(`Customer Material Status ${status}`, user_id, customer.name, 'Customer', customer._id);
+
+    return res.status(200).json({
+      message: `Customer material status updated to ${status} successfully.`,
+      customer,
+    });
+  } catch (error) {
+    console.error('Confirm material status error:', error);
+    return res.status(500).json({ message: 'Server error confirming material status.' });
+  }
+};
