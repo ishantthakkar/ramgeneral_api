@@ -1116,6 +1116,52 @@ exports.adminApprovalStatus = async (req, res) => {
   }
 };
 
+exports.installationListByUser = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
+
+    const mapCustomer = (customer) => {
+      const obj = customer.toObject();
+      if (obj.material) {
+        obj.material = obj.material.map(item => {
+          item.images = (item.images || []).map(img => `${materialBaseUrl}${img}`);
+          return item;
+        });
+      }
+      return obj;
+    };
+
+    const [assigned, notMapped] = await Promise.all([
+      Customer.find({ assignToContractor: userId })
+        .populate('assignToContractor', 'fullName email mobileNumber')
+        .populate('assignedTo', 'fullName email mobileNumber')
+        .populate('user_id', 'fullName name email')
+        .sort({ createdAt: -1 }),
+      Customer.find({ assignToContractor: null })
+        .populate('assignedTo', 'fullName email mobileNumber')
+        .populate('user_id', 'fullName name email')
+        .sort({ createdAt: -1 }),
+    ]);
+
+    return res.status(200).json({
+      message: 'Installation list retrieved successfully.',
+      assigned: {
+        total: assigned.length,
+        customers: assigned.map(mapCustomer),
+      },
+      notMapped: {
+        total: notMapped.length,
+        customers: notMapped.map(mapCustomer),
+      },
+    });
+  } catch (error) {
+    console.error('Installation list by user error:', error);
+    return res.status(500).json({ message: 'Server error fetching installation list.' });
+  }
+};
+
 exports.confirmMaterialStatus = async (req, res) => {
   try {
     const { id } = req.params;
