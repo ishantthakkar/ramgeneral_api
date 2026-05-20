@@ -148,6 +148,12 @@ const customerSchema = new mongoose.Schema({
     enum: ['to-do', 'start', 'in_progress', 'continue', 'completed'],
     default: 'to-do',
   },
+  installationNotes: [
+    {
+      note: { type: String, trim: true, required: true },
+      timestamp: { type: Date, default: Date.now },
+    },
+  ],
 }, {
   timestamps: true,
 });

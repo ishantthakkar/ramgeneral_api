@@ -58,4 +58,5 @@ router.post('/:id/edit-status', verifyToken, customerController.editCustomerStat
 router.post('/:id/admin-approval', verifyToken, customerController.adminApprovalStatus);
 router.post('/:id/material-status', verifyToken, customerController.confirmMaterialStatus);
 router.post('/:id/installation-status', verifyToken, customerController.updateInstallationStatus);
+router.post('/:id/installation-notes', verifyToken, customerController.addInstallationNote);
 module.exports = router;

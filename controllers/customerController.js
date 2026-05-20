@@ -1162,6 +1162,36 @@ exports.installationListByUser = async (req, res) => {
   }
 };
 
+exports.addInstallationNote = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { note, timestamp } = req.body;
+
+    if (!note) {
+      return res.status(400).json({ message: 'note is required.' });
+    }
+
+    const customer = await Customer.findById(id);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const newNote = { note, timestamp: timestamp ? new Date(timestamp) : new Date() };
+    customer.installationNotes.push(newNote);
+    await customer.save();
+
+    await createLog('Installation Note Added', req.user.id, customer.name, 'Customer', customer._id);
+
+    return res.status(201).json({
+      message: 'Installation note added successfully.',
+      installationNotes: customer.installationNotes,
+    });
+  } catch (error) {
+    console.error('Add installation note error:', error);
+    return res.status(500).json({ message: 'Server error adding installation note.' });
+  }
+};
+
 exports.updateInstallationStatus = async (req, res) => {
   try {
     const { id } = req.params;
