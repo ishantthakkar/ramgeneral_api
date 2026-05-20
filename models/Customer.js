@@ -145,8 +145,8 @@ const customerSchema = new mongoose.Schema({
   },
   installationStatus: {
     type: String,
-    enum: ['start', 'in_progress', 'continue', 'completed'],
-    default: 'start',
+    enum: ['to-do', 'start', 'in_progress', 'continue', 'completed'],
+    default: 'to-do',
   },
 }, {
   timestamps: true,
