@@ -1166,6 +1166,7 @@ exports.inspectionListByUser = async (req, res) => {
   try {
     const userId = req.user.id;
 
+    // Fetch customers
     const customers = await Customer.find({
       assignedTo: userId,
       installationStatus: 'completed',
@@ -1175,27 +1176,66 @@ exports.inspectionListByUser = async (req, res) => {
       .populate('user_id', 'fullName name email')
       .sort({ updatedAt: -1 });
 
-    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
+    const materialBaseUrl =
+      'https://ramgeneral-api.onrender.com/uploads/materials/';
 
-    const customerList = customers.map(customer => {
-      const obj = customer.toObject();
-      if (obj.material) {
-        obj.material = obj.material.map(item => {
-          item.images = (item.images || []).map(img => `${materialBaseUrl}${img}`);
-          return item;
+    const surveyImageBaseUrl =
+      'https://ramgeneral-api.onrender.com/uploads/surveys/';
+
+    // Attach surveys manually
+    const customerList = await Promise.all(
+      customers.map(async (customer) => {
+        const obj = customer.toObject();
+
+        // Material images
+        if (obj.material) {
+          obj.material = obj.material.map((item) => {
+            item.images = (item.images || []).map(
+              (img) => `${materialBaseUrl}${img}`
+            );
+            return item;
+          });
+        }
+
+        // Fetch surveys for this customer
+        const surveys = await Survey.find({
+          customer_id: customer._id,
+        })
+          .populate('user_id', 'fullName email mobileNumber')
+          .populate('assignedTo', 'fullName email mobileNumber')
+          .sort({ createdAt: -1 });
+
+        // Survey images
+        const formattedSurveys = surveys.map((survey) => {
+          const surveyObj = survey.toObject();
+
+          surveyObj.images = (surveyObj.images || []).map(
+            (img) => `${surveyImageBaseUrl}${img}`
+          );
+
+          return surveyObj;
         });
-      }
-      return obj;
-    });
+
+        // Add surveys into customer object
+        obj.surveys = formattedSurveys;
+
+        return obj;
+      })
+    );
 
     return res.status(200).json({
       message: 'Inspection list retrieved successfully.',
       total: customerList.length,
       customers: customerList,
     });
+
   } catch (error) {
     console.error('Inspection list by user error:', error);
-    return res.status(500).json({ message: 'Server error fetching inspection list.' });
+
+    return res.status(500).json({
+      message: 'Server error fetching inspection list.',
+      error: error.message,
+    });
   }
 };
 
