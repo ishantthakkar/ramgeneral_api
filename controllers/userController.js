@@ -322,7 +322,7 @@ exports.listContractors = async (req, res) => {
 
 exports.getProfile = async (req, res) => {
     try {
-        const { id } = req.params;
+        const id = req.user.id;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(400).json({ message: 'Invalid user ID.' });
