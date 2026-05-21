@@ -139,6 +139,7 @@ exports.listConvertedCustomers = async (req, res) => {
 
 exports.listInspections = async (req, res) => {
   try {
+    // Fetch customers
     const customers = await Customer.find({
       material: { $exists: true, $not: { $size: 0 } },
       installationStatus: 'completed'
@@ -148,20 +149,55 @@ exports.listInspections = async (req, res) => {
       .populate('user_id', 'fullName')
       .sort({ updatedAt: -1 });
 
-    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
+    // Get all customer IDs
+    const customerIds = customers.map(customer => customer._id);
+
+    // Fetch customer activities
+    const activities = await CustomerActivity.find({
+      customer_id: { $in: customerIds }
+    })
+      .populate('user_id', 'fullName email')
+      .sort({ createdAt: -1 });
+
+    // Group activities by customer_id
+    const activityMap = {};
+
+    activities.forEach(activity => {
+      const customerId = activity.customer_id.toString();
+
+      if (!activityMap[customerId]) {
+        activityMap[customerId] = [];
+      }
+
+      activityMap[customerId].push(activity);
+    });
+
+    const materialBaseUrl =
+      'https://ramgeneral-api.onrender.com/uploads/materials/';
 
     const customerList = customers.map(customer => {
       const customerObj = customer.toObject();
+
+      // Add full image URL
       if (customerObj.material) {
         customerObj.material = customerObj.material.map(item => {
-          item.images = (item.images || []).map(img => `${materialBaseUrl}${img}`);
+          item.images = (item.images || []).map(
+            img => `${materialBaseUrl}${img}`
+          );
+
           return item;
         });
       }
+
       return {
         ...customerObj,
         id: customerObj._id,
-        contractorName: customer.assignToContractor?.fullName || ''
+        contractorName:
+          customer.assignToContractor?.fullName || '',
+
+        // Add activities
+        customerActivity:
+          activityMap[customerObj._id.toString()] || []
       };
     });
 
@@ -170,9 +206,13 @@ exports.listInspections = async (req, res) => {
       total: customerList.length,
       customers: customerList
     });
+
   } catch (error) {
     console.error('List inspections error:', error);
-    return res.status(500).json({ message: 'Server error retrieving inspection list.' });
+
+    return res.status(500).json({
+      message: 'Server error retrieving inspection list.'
+    });
   }
 };
 
