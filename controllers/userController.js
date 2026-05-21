@@ -367,11 +367,28 @@ exports.getProfile = async (req, res) => {
             };
         }
 
-        const recentActivities = await CustomerActivity.find({ user_id: user._id })
+        const recentActivitiesList = await CustomerActivity.find({ user_id: user._id })
             .populate('customer_id', 'fullName email mobileNumber')
             .sort({ date: -1 })
             .limit(10)
             .lean();
+
+        const recentActivities = {};
+        recentActivitiesList.forEach(activity => {
+            const dateVal = activity.date || activity.createdAt;
+            if (!dateVal) return;
+
+            const d = new Date(dateVal);
+            const day = d.getDate();
+            const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+            const month = months[d.getMonth()];
+            const dateKey = `${day} ${month}`;
+
+            if (!recentActivities[dateKey]) {
+                recentActivities[dateKey] = [];
+            }
+            recentActivities[dateKey].push(activity);
+        });
 
         return res.status(200).json({
             user: {

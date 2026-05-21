@@ -61,4 +61,5 @@ router.post('/:id/material-status', verifyToken, customerController.confirmMater
 router.post('/:id/installation-status', verifyToken, customerController.updateInstallationStatus);
 router.post('/:id/installation-notes', verifyToken, customerController.addInstallationNote);
 router.post('/:id/inspection-notes', verifyToken, customerController.addInspectionNote);
+router.post('/:id/inspection-status', verifyToken, customerController.updateInspectionStatus);
 module.exports = router;

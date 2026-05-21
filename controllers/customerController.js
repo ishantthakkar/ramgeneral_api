@@ -1363,3 +1363,36 @@ exports.confirmMaterialStatus = async (req, res) => {
     return res.status(500).json({ message: 'Server error confirming material status.' });
   }
 };
+
+exports.updateInspectionStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    const allowedStatuses = ['reopen', 'in_progress', 'confirm'];
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ message: `Invalid status. Allowed: ${allowedStatuses.join(', ')}` });
+    }
+
+    const customer = await Customer.findByIdAndUpdate(
+      id,
+      { inspectionStatus: status },
+      { new: true, runValidators: true }
+    );
+
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    await createLog(`Inspection Status Updated to ${status}`, req.user.id, customer.name, 'Customer', customer._id);
+
+    return res.status(200).json({
+      message: `Inspection status updated to '${status}' successfully.`,
+      customer,
+    });
+  } catch (error) {
+    console.error('Update inspection status error:', error);
+    return res.status(500).json({ message: 'Server error updating inspection status.' });
+  }
+};
+
