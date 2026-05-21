@@ -150,8 +150,8 @@ const customerSchema = new mongoose.Schema({
   },
   inspectionStatus: {
     type: String,
-    enum: ['reopen', 'in_progress', 'confirm'],
-    default: 'reopen',
+    enum: ['to-do','reopen', 'in_progress', 'confirm'],
+    default: 'to-do',
   },
   installationNotes: [
     {
