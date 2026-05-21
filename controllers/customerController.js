@@ -141,7 +141,7 @@ exports.listInspections = async (req, res) => {
   try {
     const customers = await Customer.find({
       material: { $exists: true, $not: { $size: 0 } },
-      contractorStatus: 'completed'
+      installationStatus: 'completed'
     })
       .populate('assignToContractor', 'fullName email')
       .populate('assignedTo', 'fullName email')
