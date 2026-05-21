@@ -836,6 +836,47 @@ exports.assignToContractor = async (req, res) => {
   }
 };
 
+exports.reassignSalesPerson = async (req, res) => {
+  try {
+    const userId = req.user.id; // actor
+    const { sales_person_user_id, customerId } = req.body;
+
+    if (!sales_person_user_id) {
+      return res.status(400).json({ message: 'sales_person_user_id is required.' });
+    }
+
+    if (!customerId) {
+      return res.status(400).json({ message: 'customerId is required.' });
+    }
+
+    const User = require('../models/User');
+    const newSalesUser = await User.findById(sales_person_user_id);
+    if (!newSalesUser) {
+      return res.status(404).json({ message: 'Sales person user not found.' });
+    }
+
+    // Find the single customer
+    const customer = await Customer.findById(customerId);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    // Update fields
+    customer.user_id = sales_person_user_id;
+    customer.status = 'New';
+    customer.lastActivity = new Date();
+
+    await customer.save();
+
+    await createLog('Salesperson Reassigned', userId, `Reassigned to ${newSalesUser.fullName}`, 'Customer Reassign', customer._id);
+
+    return res.status(200).json({ message: 'Customer reassigned successfully.', customer });
+  } catch (error) {
+    console.error('Reassign sales person error:', error);
+    return res.status(500).json({ message: 'Server error reassigning sales person.' });
+  }
+};
+
 exports.verifyCustomer = async (req, res) => {
   try {
     const { id } = req.params;

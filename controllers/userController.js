@@ -320,6 +320,25 @@ exports.listContractors = async (req, res) => {
     }
 };
 
+exports.listSalesPersons = async (req, res) => {
+    try {
+        // Prefer roleId linkage but also match userRole string
+        const role = await Role.findOne({ roleName: 'Sales Person' });
+
+        const orClauses = [{ userRole: 'Sales Person' }];
+        if (role) orClauses.push({ roleId: role._id });
+
+        const users = await User.find({ $or: orClauses }).select('fullName').sort({ createdAt: -1 }).lean();
+
+        // Map to only id and fullName
+        const mapped = users.map(u => ({ id: u._id, fullName: u.fullName }));
+        return res.status(200).json({ users: mapped, count: mapped.length });
+    } catch (error) {
+        console.error('List sales persons error:', error);
+        return res.status(500).json({ message: 'Server error listing sales persons.' });
+    }
+};
+
 exports.getProfile = async (req, res) => {
     try {
         const id = req.user.id;

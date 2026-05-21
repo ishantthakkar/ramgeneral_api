@@ -45,6 +45,7 @@ router.get('/customers/commission-list', verifyToken, customerController.custome
 router.get('/installation-list', verifyToken, customerController.installationListByUser);
 router.get('/inspection-list-user', verifyToken, customerController.inspectionListByUser);
 router.get('/:id', verifyToken, customerController.getCustomer);
+router.post('/customers/reassign-salesperson', verifyToken, customerController.reassignSalesPerson);
 router.post('/customers/:id', verifyToken, customerController.updateCustomer);
 router.post('/customers/:id/assign-contractor', verifyToken, customerController.assignContractor);
 router.post('/customers/:id/assign', verifyToken, customerController.assignCustomer);
