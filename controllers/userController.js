@@ -380,7 +380,7 @@ exports.getProfile = async (req, res) => {
 
             const d = new Date(dateVal);
             const day = d.getDate();
-            const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+            const months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
             const month = months[d.getMonth()];
             const dateKey = `${day} ${month}`;
 
