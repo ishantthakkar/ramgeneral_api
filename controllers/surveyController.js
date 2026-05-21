@@ -415,7 +415,7 @@ exports.installation = async (req, res) => {
             assignedTo: customer.assignedTo,
             salesPersonName: customer.user_id?.fullName || customer.user_id?.name || '',
             contractorName: customer.assignToContractor?.fullName || '',
-            contractorStatus: customer.contractorStatus,
+            installationStatus: customer.installationStatus,
         }));
 
         return res.status(200).json({
