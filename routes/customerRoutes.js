@@ -52,7 +52,7 @@ router.post('/:customerId/:status/update-status', verifyToken, customerControlle
 router.post('/customers/:id/materials', verifyToken, upload.array('images', 10), customerController.addCustomerMaterial);
 router.post('/customers/:id/assign-to-contractor', verifyToken, customerController.assignToContractor);
 router.post('/customers/:id/verify', verifyToken, customerController.verifyCustomer);
-router.post('/customers/:id/activities', verifyToken, customerController.addCustomerActivity);
+router.post('/:id/activities', verifyToken, customerController.addCustomerActivity);
 router.post('/customers/:id/commissions', verifyToken, customerController.updateCustomerCommissions);
 router.get('/customers/:id/activities', verifyToken, customerController.getCustomerActivities);
 router.post('/:id/edit-status', verifyToken, customerController.editCustomerStatus);
