@@ -1200,8 +1200,29 @@ exports.adminApprovalStatus = async (req, res) => {
 exports.installationListByUser = async (req, res) => {
   try {
     const userId = req.user.id;
-
     const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
+    const surveyBaseUrl = "https://ramgeneral-api.onrender.com/uploads/surveys/";
+
+    // Fetch assigned customers only
+    const assigned = await Customer.find({ assignToContractor: userId })
+      .populate('assignToContractor', 'fullName email mobileNumber')
+      .populate('assignedTo', 'fullName email mobileNumber')
+      .populate('user_id', 'fullName name email')
+      .sort({ createdAt: -1 });
+
+    // Fetch surveys for assigned customers and group by customer_id
+    const customerIds = assigned.map(c => c._id);
+    const surveys = await Survey.find({ customer_id: { $in: customerIds } }).sort({ createdAt: -1 });
+
+    const surveyMap = {};
+    surveys.forEach(s => {
+      const cid = s.customer_id?.toString();
+      if (!cid) return;
+      if (!surveyMap[cid]) surveyMap[cid] = [];
+      const sObj = s.toObject();
+      sObj.images = (sObj.images || []).map(img => `${surveyBaseUrl}${img}`);
+      surveyMap[cid].push(sObj);
+    });
 
     const mapCustomer = (customer) => {
       const obj = customer.toObject();
@@ -1211,30 +1232,15 @@ exports.installationListByUser = async (req, res) => {
           return item;
         });
       }
+      obj.surveys = surveyMap[customer._id.toString()] || [];
       return obj;
     };
-
-    const [assigned, notMapped] = await Promise.all([
-      Customer.find({ assignToContractor: userId })
-        .populate('assignToContractor', 'fullName email mobileNumber')
-        .populate('assignedTo', 'fullName email mobileNumber')
-        .populate('user_id', 'fullName name email')
-        .sort({ createdAt: -1 }),
-      Customer.find({ assignToContractor: null })
-        .populate('assignedTo', 'fullName email mobileNumber')
-        .populate('user_id', 'fullName name email')
-        .sort({ createdAt: -1 }),
-    ]);
 
     return res.status(200).json({
       message: 'Installation list retrieved successfully.',
       assigned: {
         total: assigned.length,
         customers: assigned.map(mapCustomer),
-      },
-      notMapped: {
-        total: notMapped.length,
-        customers: notMapped.map(mapCustomer),
       },
     });
   } catch (error) {
