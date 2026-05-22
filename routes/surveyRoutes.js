@@ -40,6 +40,7 @@ router.get('/surveys/:id', verifyToken, surveyController.getSurvey);
 router.put('/surveys/:id', verifyToken, surveyController.updateSurvey);
 router.post('/surveys/:id/assign', verifyToken, surveyController.assignSurvey);
 router.post('/surveys/:id/assign-contractor', verifyToken, surveyController.assignContractor);
+router.post('/surveys/mark-completed', verifyToken, surveyController.markSurveyCompleted);
 router.get('/installation', verifyToken, surveyController.installation);
 
 module.exports = router;

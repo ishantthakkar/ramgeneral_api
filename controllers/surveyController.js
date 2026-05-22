@@ -52,7 +52,8 @@ const processUploadedImages = async (files) => {
 exports.createSurvey = async (req, res) => {
     try {
         const user_id = req.user.id;
-        const { id, customer_id, notes, status, surveyDate, area, heightInInches, existingFixtureType, otherFixtureType, existingBulbs, existingQuantity, proposedFixture, proposedQuantity, pricePerUnit, totalPrice, note } = req.body;
+        const { id, customer_id, notes, status, surveyDate, area, heightInInches, existingFixtureType, otherFixtureType, existingBulbs, existingQuantity, proposedFixture, proposedQuantity, pricePerUnit, totalPrice, note, markAsCompleted, MarkasCompleted } = req.body;
+        const completionFlag = markAsCompleted !== undefined ? markAsCompleted : MarkasCompleted !== undefined ? MarkasCompleted : false;
 
         const user = await User.findById(user_id);
         if (!user) {
@@ -83,6 +84,7 @@ exports.createSurvey = async (req, res) => {
                 status: status || survey.status,
                 notes: notes || survey.notes,
                 surveyDate: surveyDate ? new Date(surveyDate) : survey.surveyDate,
+                markAsCompleted: completionFlag,
             };
 
             if (customer_id) updateData.customer_id = customer_id;
@@ -130,6 +132,7 @@ exports.createSurvey = async (req, res) => {
                 status: status || 'Draft',
                 notes: notes || '',
                 surveyDate: surveyDate ? new Date(surveyDate) : undefined,
+                markAsCompleted: completionFlag,
             });
 
             await createLog('Survey Created', user_id, customer.name, 'Survey', survey._id);
@@ -248,7 +251,7 @@ exports.getSurvey = async (req, res) => {
 exports.updateSurvey = async (req, res) => {
     try {
         const { id } = req.params;
-        const { notes, status, surveyDate, area, heightInInches, existingFixtureType, otherFixtureType, existingBulbs, existingQuantity, proposedFixture, proposedQuantity, pricePerUnit, totalPrice, note } = req.body;
+        const { notes, status, surveyDate, area, heightInInches, existingFixtureType, otherFixtureType, existingBulbs, existingQuantity, proposedFixture, proposedQuantity, pricePerUnit, totalPrice, note, markAsCompleted, MarkasCompleted } = req.body;
         const updateData = {};
 
         if (notes !== undefined) updateData.notes = notes;
@@ -265,6 +268,8 @@ exports.updateSurvey = async (req, res) => {
         if (pricePerUnit !== undefined) updateData.pricePerUnit = pricePerUnit;
         if (totalPrice !== undefined) updateData.totalPrice = totalPrice;
         if (note !== undefined) updateData.note = note;
+        if (markAsCompleted !== undefined) updateData.markAsCompleted = markAsCompleted;
+        if (MarkasCompleted !== undefined) updateData.markAsCompleted = MarkasCompleted;
 
         const updatedSurvey = await Survey.findByIdAndUpdate(id, updateData, {
             new: true,
@@ -284,6 +289,39 @@ exports.updateSurvey = async (req, res) => {
     } catch (error) {
         console.error('Update survey error:', error);
         return res.status(500).json({ message: 'Server error updating survey.' });
+    }
+};
+
+exports.markSurveyCompleted = async (req, res) => {
+    try {
+        const user_id = req.user.id;
+        const { customer_id, survey_id, markAsCompleted, MarkasCompleted } = req.body;
+        const completionFlag = markAsCompleted !== undefined ? markAsCompleted : MarkasCompleted !== undefined ? MarkasCompleted : false;
+
+        if (!customer_id) {
+            return res.status(400).json({ message: 'customer_id is required.' });
+        }
+        if (!survey_id) {
+            return res.status(400).json({ message: 'survey_id is required.' });
+        }
+
+        const survey = await Survey.findOne({ _id: survey_id, customer_id });
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found for the provided customer.' });
+        }
+
+        survey.markAsCompleted = completionFlag;
+        await survey.save();
+
+        const surveyResponse = survey.toObject();
+        surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
+
+        await createLog('Survey Marked Completed', user_id, (await Customer.findById(customer_id))?.name || 'Unknown', 'Survey', survey._id);
+
+        return res.status(200).json({ survey: surveyResponse, message: 'Survey completion status updated successfully.' });
+    } catch (error) {
+        console.error('Mark survey completed error:', error);
+        return res.status(500).json({ message: 'Server error updating survey completion status.' });
     }
 };
 

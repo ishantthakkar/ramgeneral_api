@@ -38,6 +38,7 @@ const surveySchema = new mongoose.Schema({
   note: { type: String, trim: true, default: '' },
   images: [{ type: String, trim: true }],
   notes: { type: String, trim: true, default: '' },
+  markAsCompleted: { type: Boolean, default: false },
 }, {
   timestamps: true,
 });
