@@ -325,6 +325,48 @@ exports.markSurveyCompleted = async (req, res) => {
     }
 };
 
+exports.verifySurvey = async (req, res) => {
+    try {
+        const user_id = req.user.id;
+        const { survey_id, verifyQty, issueFound, comments } = req.body;
+
+        if (!survey_id) {
+            return res.status(400).json({ message: 'survey_id is required.' });
+        }
+
+        const survey = await Survey.findById(survey_id);
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found.' });
+        }
+
+        const newImages = await processUploadedImages(req.files);
+        if (newImages.length > 0) {
+            survey.verifyImages = [...(survey.verifyImages || []), ...newImages];
+        }
+
+        survey.verifyQty = verifyQty !== undefined ? Number(verifyQty) : survey.verifyQty;
+        survey.issueFound = issueFound === 'yes' ? 'yes' : 'no';
+        survey.verificationComments = comments !== undefined ? comments : survey.verificationComments;
+
+        await survey.save();
+
+        if (survey.issueFound === 'yes' && survey.customer_id) {
+            await Customer.findByIdAndUpdate(survey.customer_id, { installationStatus: 'reopen' });
+        }
+
+        const surveyResponse = survey.toObject();
+        surveyResponse.images = (surveyResponse.images || []).map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
+        surveyResponse.verifyImages = (surveyResponse.verifyImages || []).map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
+
+        await createLog('Survey Verified', user_id, (await Customer.findById(survey.customer_id))?.name || 'Unknown', 'Survey', survey._id);
+
+        return res.status(200).json({ survey: surveyResponse, message: 'Survey verification updated successfully.' });
+    } catch (error) {
+        console.error('Verify survey error:', error);
+        return res.status(500).json({ message: 'Server error verifying survey.' });
+    }
+};
+
 exports.assignSurvey = async (req, res) => {
     try {
         const user_id = req.user.id;

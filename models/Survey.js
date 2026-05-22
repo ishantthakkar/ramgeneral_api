@@ -37,8 +37,12 @@ const surveySchema = new mongoose.Schema({
   totalPrice: { type: String, trim: true, default: '' },
   note: { type: String, trim: true, default: '' },
   images: [{ type: String, trim: true }],
+  verifyImages: [{ type: String, trim: true }],
   notes: { type: String, trim: true, default: '' },
   markAsCompleted: { type: Boolean, default: false },
+  verifyQty: { type: Number, default: 0 },
+  issueFound: { type: String, trim: true, enum: ['yes','no'], default: 'no' },
+  verificationComments: { type: String, trim: true, default: '' },
 }, {
   timestamps: true,
 });
