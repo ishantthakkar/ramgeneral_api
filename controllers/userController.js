@@ -7,7 +7,26 @@ const Customer = require('../models/Customer');
 const CustomerActivity = require('../models/CustomerActivity');
 const { generateAccessToken, generateRefreshToken } = require('../utils/token');
 
-const ALLOWED_ROLES = ['project_manager', 'contractor', 'Contractor', 'sales_person', 'Sales Person', 'Project Manager'];
+const ROLE_VARIANTS = {
+  contractor: ['contractor', 'Contractor'],
+  sales_person: ['sales_person', 'Sales Person'],
+  project_manager: ['project_manager', 'Project Manager'],
+};
+
+const ALLOWED_ROLES = Object.values(ROLE_VARIANTS).flat();
+
+const getCanonicalRole = (value) => {
+  if (!value || typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return Object.keys(ROLE_VARIANTS).find(key =>
+    ROLE_VARIANTS[key].some(variant => variant.toLowerCase() === normalized)
+  ) || null;
+};
+
+const isContractorRole = (value) => ROLE_VARIANTS.contractor.includes(value);
+const isSalesPersonRole = (value) => ROLE_VARIANTS.sales_person.includes(value);
+const isProjectManagerRole = (value) => ROLE_VARIANTS.project_manager.includes(value);
+
 const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 exports.loginUser = async (req, res) => {
@@ -190,23 +209,19 @@ exports.getUser = async (req, res) => {
 
         let roleMetrics = {};
 
-        if (user.userRole === 'contractor') {
+        if (isContractorRole(user.userRole)) {
             roleMetrics = {
                 assignedProjects: 0,
                 completedInstallations: 0,
                 pendingInstallations: 0
             };
-        }
-
-        if (user.userRole === 'sales_person') {
+        } else if (isSalesPersonRole(user.userRole)) {
             roleMetrics = {
                 activeLeads: 0,
                 customers: 0,
                 closedLeads: 0
             };
-        }
-
-        if (user.userRole === 'Project Manager') {
+        } else if (isProjectManagerRole(user.userRole)) {
             roleMetrics = {
                 pendingInspections: 0,
                 completedInspections: 0
@@ -233,12 +248,13 @@ exports.listUsers = async (req, res) => {
         const filter = {};
 
         if (userRole) {
-            if (!ALLOWED_ROLES.includes(userRole)) {
+            const requestedRoleKey = getCanonicalRole(userRole);
+            if (!requestedRoleKey) {
                 return res.status(400).json({
                     message: `Invalid userRole. Allowed values: ${ALLOWED_ROLES.join(', ')}`,
                 });
             }
-            filter.userRole = userRole;
+            filter.userRole = { $in: ROLE_VARIANTS[requestedRoleKey] };
         }
 
         const users = await User.find(filter).sort({ createdAt: -1 }).lean();
@@ -247,24 +263,21 @@ exports.listUsers = async (req, res) => {
         const usersWithMetrics = await Promise.all(users.map(async user => {
             let roleMetrics = {};
 
-            if (user.userRole === 'contractor') {
+            if (isContractorRole(user.userRole)) {
                 const Customer = require('../models/Customer');
                 roleMetrics = {
                     assignedProjects: await Customer.countDocuments({ assignToContractor: user._id }),
                     completedInstallations: await Customer.countDocuments({ assignToContractor: user._id, contractorStatus: 'completed' }),
                     pendingInstallations: await Customer.countDocuments({ assignToContractor: user._id, contractorStatus: { $ne: 'completed' } })
                 };
-            }
-
-            if (user.userRole === 'sales_person') {
+            } else if (isSalesPersonRole(user.userRole)) {
+                const Customer = require('../models/Customer');
                 roleMetrics = {
                     activeLeads: await Lead.countDocuments({ user_id: user._id, status: { $in: ['New', 'In Progress'] } }),
                     customers: await Customer.countDocuments({ user_id: user._id }),
                     closedLeads: await Lead.countDocuments({ user_id: user._id, status: 'Lost Leads' })
                 };
-            }
-
-            if (user.userRole === 'Project Manager') {
+            } else if (isProjectManagerRole(user.userRole)) {
                 const Survey = require('../models/Survey');
                 roleMetrics = {
                     pendingInspections: await Survey.countDocuments({ assignedTo: user._id, status: { $ne: 'completed' } }),
@@ -280,9 +293,9 @@ exports.listUsers = async (req, res) => {
 
         const counts = {
             total_users: await User.countDocuments(),
-            total_sales_persons: await User.countDocuments({ userRole: 'Sales Person' }),
-            total_contractors: await User.countDocuments({ userRole: 'Contractor' }),
-            total_project_managers: await User.countDocuments({ userRole: 'Project Manager' }),
+            total_sales_persons: await User.countDocuments({ userRole: { $in: ROLE_VARIANTS.sales_person } }),
+            total_contractors: await User.countDocuments({ userRole: { $in: ROLE_VARIANTS.contractor } }),
+            total_project_managers: await User.countDocuments({ userRole: { $in: ROLE_VARIANTS.project_manager } }),
         };
 
         return res.status(200).json({ users: usersWithMetrics, counts });
@@ -295,7 +308,7 @@ exports.listUsers = async (req, res) => {
 
 exports.listContractors = async (req, res) => {
     try {
-        const users = await User.find({ userRole: 'Contractor' }).sort({ createdAt: -1 }).lean();
+        const users = await User.find({ userRole: { $in: ROLE_VARIANTS.contractor } }).sort({ createdAt: -1 }).lean();
 
         // Add contractor-specific metrics to each user
         const usersWithMetrics = await Promise.all(users.map(async user => {
