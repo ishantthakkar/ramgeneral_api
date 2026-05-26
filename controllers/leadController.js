@@ -187,7 +187,7 @@ exports.createLead = async (req, res) => {
     }
   } catch (error) {
     console.error('Save lead error:', error);
-    return res.status(500).json({ message: 'Server error saving lead.' });
+    return res.status(500).json({ message: 'Server error saving lead.', error: error.message });
   }
 };
 
