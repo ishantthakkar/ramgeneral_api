@@ -4,12 +4,12 @@ const surveySchema = new mongoose.Schema({
   customer_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Customer',
-    required: true,
+    required: false,
   },
   user_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
+    required: false,
   },
   assignedTo: {
     type: mongoose.Schema.Types.ObjectId,
@@ -25,7 +25,7 @@ const surveySchema = new mongoose.Schema({
     enum: ['Draft', 'In Progress', 'Completed', 'draft', 'in_progress', 'completed'],
     default: 'Draft',
   },
-  area: { type: String, trim: true, required: true },
+  area: { type: String, trim: true, required: false },
   heightInInches: { type: String, trim: true, default: '' },
   existingFixtureType: { type: String, trim: true, default: '' },
   otherFixtureType: { type: String, trim: true, default: '' },
