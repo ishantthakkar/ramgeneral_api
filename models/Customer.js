@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const customerSchema = new mongoose.Schema({
   accountNumber: {
     type: String,
-    required: true,
+    required: false,
     unique: true,
   },
   leadId: {
@@ -16,17 +16,17 @@ const customerSchema = new mongoose.Schema({
   },
   name: {
     type: String,
-    required: true,
+    required: false,
     trim: true,
   },
   company: {
     type: String,
-    required: true,
+    required: false,
     trim: true,
   },
   mobileNumber: {
     type: String,
-    required: true,
+    required: false,
     trim: true,
   },
   email: {
@@ -96,7 +96,7 @@ const customerSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    required: true,
+    required: false,
     enum: ['New', 'in_progress', 'draft', 'completed', 'reopen', 'pending_edit_approval'],
     default: 'New',
     trim: true,
