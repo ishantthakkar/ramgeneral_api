@@ -3,17 +3,17 @@ const mongoose = require('mongoose');
 const leadSchema = new mongoose.Schema({
   name: {
     type: String,
-    required: true,
+    required: false,
     trim: true,
   },
   company: {
     type: String,
-    required: true,
+    required: false,
     trim: true,
   },
   mobileNumber: {
     type: String,
-    required: true,
+    required: false,
     trim: true,
   },
   email: {
@@ -81,7 +81,7 @@ const leadSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    required: true,
+    required: false,
     enum: ['New', 'In Progress', 'Lost Leads', 'Converted To Customer'],
     default: 'New',
     trim: true,
