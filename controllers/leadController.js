@@ -42,10 +42,6 @@ exports.createLead = async (req, res) => {
       return res.status(401).json({ message: 'Invalid token or user not found.' });
     }
 
-    if (!name || !company || !mobileNumber) {
-      return res.status(400).json({ message: 'name, company, mobileNumber are required.' });
-    }
-
     if (status && !ALLOWED_STATUSES.includes(status)) {
       return res.status(400).json({
         message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
