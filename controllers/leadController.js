@@ -7,6 +7,40 @@ const ALLOWED_STATUSES = ['New', 'In Progress', 'Lost Leads', 'Converted To Cust
 
 const getBaseUrl = (req) => `${req.protocol}://${req.get('host')}`;
 
+const normalizeBillFilenames = (value) => {
+  if (!value) return [];
+  const parsed = tryParseJson(value);
+  if (Array.isArray(parsed)) {
+    return parsed.map((f) => String(f).trim()).filter(Boolean);
+  }
+  if (typeof parsed === 'string' && parsed.trim()) {
+    return [parsed.trim()];
+  }
+  return [];
+};
+
+const resolveNewBillFilenames = (req, uploadElectricityBill, upload_electricity_bill) => {
+  const fromFiles = (req.files && Array.isArray(req.files) ? req.files : []).map(
+    (f) => f.filename
+  );
+  const fromBody = [
+    ...normalizeBillFilenames(uploadElectricityBill),
+    ...normalizeBillFilenames(upload_electricity_bill),
+  ];
+  return [...new Set([...fromFiles, ...fromBody])];
+};
+
+const attachBillUrls = (leadObj, req) => {
+  const bills = normalizeBillFilenames(leadObj.uploadElectricityBill);
+  const baseUrl = getBaseUrl(req);
+  leadObj.uploadElectricityBill = bills;
+  leadObj.uploadElectricityBillUrls = bills.map(
+    (filename) => `${baseUrl}/uploads/leads/bills/${filename}`
+  );
+  leadObj.uploadElectricityBillUrl = leadObj.uploadElectricityBillUrls[0] || '';
+  return leadObj;
+};
+
 const tryParseJson = (value) => {
   if (typeof value !== 'string') return value;
   const trimmed = value.trim();
@@ -103,6 +137,34 @@ const normalizeContactInfo = (contactInfo) => {
     });
 };
 
+const normalizeNotes = (notes) => {
+  if (!notes) return [];
+  const parsed = tryParseJson(notes);
+  if (Array.isArray(parsed)) {
+    return parsed.filter(Boolean).map((n) => {
+      if (typeof n === 'string') {
+        return { title: '', note: n.trim(), createdAt: new Date() };
+      }
+      return {
+        title: (n.title ?? '').toString().trim(),
+        note: (n.note ?? '').toString().trim(),
+        createdAt: n.createdAt ? new Date(n.createdAt) : new Date(),
+      };
+    });
+  }
+  if (typeof parsed === 'object' && parsed !== null) {
+    return [{
+      title: (parsed.title ?? '').toString().trim(),
+      note: (parsed.note ?? '').toString().trim(),
+      createdAt: parsed.createdAt ? new Date(parsed.createdAt) : new Date(),
+    }];
+  }
+  if (typeof parsed === 'string' && parsed.trim()) {
+    return [{ title: '', note: parsed.trim(), createdAt: new Date() }];
+  }
+  return [];
+};
+
 exports.createLead = async (req, res) => {
   try {
     const {
@@ -159,18 +221,7 @@ exports.createLead = async (req, res) => {
       });
     }
 
-    // Process notes
-    let processedNotes = [];
-    if (notes) {
-      if (Array.isArray(notes)) {
-        processedNotes = notes.map(n => {
-          const noteText = typeof n === 'string' ? n : (n.note || '');
-          return { note: noteText, createdAt: new Date() };
-        });
-      } else {
-        processedNotes = [{ note: notes, createdAt: new Date() }];
-      }
-    }
+    const processedNotes = normalizeNotes(notes);
 
     // Process activity log
     let processedActivityLog = [];
@@ -201,11 +252,11 @@ exports.createLead = async (req, res) => {
     const processedAddresses = normalizeAddresses(addresses ?? address);
     const processedContactInfo = normalizeContactInfo(contactInfo ?? contact_info);
 
-    const billFilename =
-      (req.file && req.file.filename) ||
-      uploadElectricityBill ||
-      upload_electricity_bill ||
-      '';
+    const newBillFilenames = resolveNewBillFilenames(
+      req,
+      uploadElectricityBill,
+      upload_electricity_bill
+    );
 
     if (id) {
       // UPDATE RECORD
@@ -223,7 +274,10 @@ exports.createLead = async (req, res) => {
       if (accountNumber !== undefined) lead.accountNumber = accountNumber;
       if (electricCompany !== undefined) lead.electricCompany = electricCompany;
       if (electric_company !== undefined) lead.electricCompany = electric_company;
-      if (billFilename) lead.uploadElectricityBill = billFilename;
+      if (newBillFilenames.length > 0) {
+        const existingBills = normalizeBillFilenames(lead.uploadElectricityBill);
+        lead.uploadElectricityBill = [...existingBills, ...newBillFilenames];
+      }
 
       if (mobileNumber !== undefined) lead.mobileNumber = mobileNumber;
       if (mobile !== undefined) lead.mobileNumber = mobile;
@@ -298,10 +352,7 @@ exports.createLead = async (req, res) => {
 
       await createLog(`Lead Updated`, req.user.id, name, 'Lead', updatedLead._id);
 
-      const updatedObj = updatedLead.toObject();
-      if (updatedObj.uploadElectricityBill) {
-        updatedObj.uploadElectricityBillUrl = `${getBaseUrl(req)}/uploads/leads/bills/${updatedObj.uploadElectricityBill}`;
-      }
+      const updatedObj = attachBillUrls(updatedLead.toObject(), req);
       return res.status(200).json({ lead: updatedObj, message: 'Lead updated successfully.' });
     } else {
       // CREATE RECORD
@@ -313,7 +364,7 @@ exports.createLead = async (req, res) => {
         legalName: legalName || '',
         accountNumber: accountNumber || '',
         electricCompany: electricCompany || electric_company || '',
-        uploadElectricityBill: billFilename || '',
+        uploadElectricityBill: newBillFilenames,
         mobileNumber: mobileNumber || mobile || '',
         email: email ? email.toLowerCase() : '',
         leadSource: leadSource || '',
@@ -341,10 +392,7 @@ exports.createLead = async (req, res) => {
 
       await createLog('Lead Created', req.user.id, name, 'Lead', lead._id);
 
-      const leadObj = lead.toObject();
-      if (leadObj.uploadElectricityBill) {
-        leadObj.uploadElectricityBillUrl = `${getBaseUrl(req)}/uploads/leads/bills/${leadObj.uploadElectricityBill}`;
-      }
+      const leadObj = attachBillUrls(lead.toObject(), req);
       return res.status(201).json({ lead: leadObj, message: 'Lead created successfully.' });
     }
   } catch (error) {
@@ -372,8 +420,9 @@ exports.listLeads = async (req, res) => {
     }
 
     const leads = await Lead.find(filter).sort({ createdAt: -1 });
-    const baseUrl = getBaseUrl(req);
-    const leadSummaries = leads.map((lead) => ({
+    const leadSummaries = leads.map((lead) => {
+      const bills = attachBillUrls({ uploadElectricityBill: lead.uploadElectricityBill }, req);
+      return {
       id: lead._id,
       leadName: lead.leadName,
       name: lead.name,
@@ -382,10 +431,9 @@ exports.listLeads = async (req, res) => {
       legalName: lead.legalName,
       accountNumber: lead.accountNumber,
       electricCompany: lead.electricCompany,
-      uploadElectricityBill: lead.uploadElectricityBill,
-      uploadElectricityBillUrl: lead.uploadElectricityBill
-        ? `${baseUrl}/uploads/leads/bills/${lead.uploadElectricityBill}`
-        : '',
+      uploadElectricityBill: bills.uploadElectricityBill,
+      uploadElectricityBillUrls: bills.uploadElectricityBillUrls,
+      uploadElectricityBillUrl: bills.uploadElectricityBillUrl,
       mobileNumber: lead.mobileNumber,
       email: lead.email,
       leadSource: lead.leadSource,
@@ -401,7 +449,8 @@ exports.listLeads = async (req, res) => {
       status: lead.status,
       user_id: lead.user_id,
       createdByName: lead.createdByName,
-    }));
+      };
+    });
 
     return res.status(200).json({ leads: leadSummaries });
   } catch (error) {
@@ -419,7 +468,8 @@ exports.getLead = async (req, res) => {
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    return res.status(200).json({ lead });
+    const leadObj = attachBillUrls(lead.toObject(), req);
+    return res.status(200).json({ lead: leadObj });
   } catch (error) {
     console.error('Get lead error:', error);
     return res.status(500).json({ message: 'Server error fetching lead.' });

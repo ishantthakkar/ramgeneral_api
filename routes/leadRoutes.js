@@ -16,8 +16,9 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const timestamp = Date.now();
+    const unique = Math.round(Math.random() * 1e9);
     const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
-    cb(null, `${timestamp}-${safeName}`);
+    cb(null, `${timestamp}-${unique}-${safeName}`);
   },
 });
 
@@ -32,7 +33,8 @@ const uploadElectricityBill = multer({
     cb(null, true);
   },
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB
+    fileSize: 10 * 1024 * 1024, // 10MB per file
+    files: 20,
   },
 });
 
@@ -41,7 +43,7 @@ router.get('/leads/:id', verifyToken, leadController.getLead);
 router.post(
   '/leads-create',
   verifyToken,
-  uploadElectricityBill.single('upload_electricity_bill'),
+  uploadElectricityBill.array('upload_electricity_bill', 20),
   leadController.createLead
 );
 router.post('/leads/:id/convert', verifyToken, leadController.convertToCustomer);

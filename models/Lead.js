@@ -41,10 +41,8 @@ const leadSchema = new mongoose.Schema({
     default: '',
   },
   uploadElectricityBill: {
-    type: String,
-    required: false,
-    trim: true,
-    default: '',
+    type: [String],
+    default: [],
   },
   mobileNumber: {
     type: String,
@@ -102,7 +100,8 @@ const leadSchema = new mongoose.Schema({
     default: '',
   },
   notes: [{
-    note: { type: String, trim: true },
+    title: { type: String, trim: true, default: '' },
+    note: { type: String, trim: true, default: '' },
     createdAt: { type: Date, default: Date.now }
   }],
   activityLog: [{
