@@ -5,16 +5,127 @@ const { createLog } = require('../utils/logger');
 
 const ALLOWED_STATUSES = ['New', 'In Progress', 'Lost Leads', 'Converted To Customer'];
 
+const getBaseUrl = (req) => `${req.protocol}://${req.get('host')}`;
+
+const tryParseJson = (value) => {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+};
+
+const getSubdocId = (item) => {
+  if (!item) return null;
+  if (item.id) return String(item.id);
+  if (item._id) return String(item._id);
+  return null;
+};
+
+const toPlainSubdocs = (items) =>
+  (Array.isArray(items) ? items : []).map((doc) =>
+    doc && typeof doc.toObject === 'function' ? doc.toObject() : { ...doc }
+  );
+
+/** Update by subdoc id when present; otherwise append as new. */
+const mergeSubdocuments = (existing, incoming) => {
+  const result = toPlainSubdocs(existing);
+
+  for (const item of incoming) {
+    const itemId = getSubdocId(item);
+    const { id, _id, ...fields } = item;
+
+    if (itemId) {
+      const index = result.findIndex(
+        (r) => String(r._id) === itemId || String(r.id) === itemId
+      );
+      if (index >= 0) {
+        result[index] = {
+          ...result[index],
+          ...fields,
+          _id: result[index]._id,
+          createdAt: result[index].createdAt || fields.createdAt || new Date(),
+        };
+        continue;
+      }
+    }
+
+    result.push({
+      ...fields,
+      createdAt: fields.createdAt || new Date(),
+    });
+  }
+
+  return result;
+};
+
+const normalizeAddresses = (addresses) => {
+  if (!addresses) return null;
+  const parsed = tryParseJson(addresses);
+  if (!Array.isArray(parsed)) return null;
+  return parsed
+    .filter(Boolean)
+    .map((a) => {
+      const subdocId = getSubdocId(a);
+      return {
+        ...(subdocId ? { id: subdocId } : {}),
+        title: (a.title ?? a.label ?? '').toString().trim(),
+        street: (a.street ?? '').toString().trim(),
+        city: (a.city ?? '').toString().trim(),
+        state: (a.state ?? '').toString().trim(),
+        zip: (a.zip ?? '').toString().trim(),
+        ...(a.createdAt ? { createdAt: new Date(a.createdAt) } : {}),
+      };
+    });
+};
+
+const normalizeContactInfo = (contactInfo) => {
+  if (!contactInfo) return null;
+  const parsed = tryParseJson(contactInfo);
+  if (!Array.isArray(parsed)) return null;
+  return parsed
+    .filter(Boolean)
+    .map((c) => {
+      const subdocId = getSubdocId(c);
+      return {
+        ...(subdocId ? { id: subdocId } : {}),
+        position: (c.position ?? '').toString().trim(),
+        department: (c.department ?? '').toString().trim(),
+        name: (c.name ?? '').toString().trim(),
+        phone: (c.phone ?? '').toString().trim(),
+        mobile: (c.mobile ?? '').toString().trim(),
+        email: (c.email ?? '').toString().trim().toLowerCase(),
+        ...(c.createdAt ? { createdAt: new Date(c.createdAt) } : {}),
+      };
+    });
+};
+
 exports.createLead = async (req, res) => {
   try {
     const {
       id,
+      leadName,
       name,
       company,
+      dba,
+      legalName,
+      accountNumber,
+      electric_company,
+      electricCompany,
+      upload_electricity_bill,
+      uploadElectricityBill,
       mobileNumber,
+      mobile,
       email,
       leadSource,
       status,
+      addresses,
+      address,
+      contactInfo,
+      contact_info,
       street,
       city,
       state,
@@ -85,6 +196,17 @@ exports.createLead = async (req, res) => {
       }];
     }
 
+    const hasAddressesField = addresses !== undefined || address !== undefined;
+    const hasContactInfoField = contactInfo !== undefined || contact_info !== undefined;
+    const processedAddresses = normalizeAddresses(addresses ?? address);
+    const processedContactInfo = normalizeContactInfo(contactInfo ?? contact_info);
+
+    const billFilename =
+      (req.file && req.file.filename) ||
+      uploadElectricityBill ||
+      upload_electricity_bill ||
+      '';
+
     if (id) {
       // UPDATE RECORD
       const lead = await Lead.findById(id);
@@ -93,19 +215,43 @@ exports.createLead = async (req, res) => {
       }
 
       // Update basic fields
-      lead.name = name;
-      lead.company = company;
-      lead.mobileNumber = mobileNumber;
-      lead.email = email ? email.toLowerCase() : '';
-      lead.leadSource = leadSource || '';
-      lead.street = street || '';
-      lead.city = city || '';
-      lead.state = state || '';
-      lead.zip = zip || '';
-      lead.lastActivity = lastActivity ? new Date(lastActivity) : Date.now();
+      if (leadName !== undefined) lead.leadName = leadName;
+      if (name !== undefined) lead.name = name;
+      if (company !== undefined) lead.company = company;
+      if (dba !== undefined) lead.dba = dba;
+      if (legalName !== undefined) lead.legalName = legalName;
+      if (accountNumber !== undefined) lead.accountNumber = accountNumber;
+      if (electricCompany !== undefined) lead.electricCompany = electricCompany;
+      if (electric_company !== undefined) lead.electricCompany = electric_company;
+      if (billFilename) lead.uploadElectricityBill = billFilename;
+
+      if (mobileNumber !== undefined) lead.mobileNumber = mobileNumber;
+      if (mobile !== undefined) lead.mobileNumber = mobile;
+      if (email !== undefined) lead.email = email ? email.toLowerCase() : '';
+      if (leadSource !== undefined) lead.leadSource = leadSource || '';
+
+      // Backward-compatible single address fields
+      if (street !== undefined) lead.street = street || '';
+      if (city !== undefined) lead.city = city || '';
+      if (state !== undefined) lead.state = state || '';
+      if (zip !== undefined) lead.zip = zip || '';
+
+      if (lastActivity !== undefined) {
+        lead.lastActivity = lastActivity ? new Date(lastActivity) : Date.now();
+      }
       if (status) {
         lead.status = status;
         lead.convertedToCustomer = status === 'Converted To Customer';
+      }
+
+      if (hasAddressesField && processedAddresses !== null) {
+        lead.addresses = mergeSubdocuments(lead.addresses, processedAddresses);
+        lead.markModified('addresses');
+      }
+
+      if (hasContactInfoField && processedContactInfo !== null) {
+        lead.contactInfo = mergeSubdocuments(lead.contactInfo, processedContactInfo);
+        lead.markModified('contactInfo');
       }
 
       // Handle notes safely (force $set by reassigning the whole array)
@@ -152,15 +298,27 @@ exports.createLead = async (req, res) => {
 
       await createLog(`Lead Updated`, req.user.id, name, 'Lead', updatedLead._id);
 
-      return res.status(200).json({ lead: updatedLead, message: 'Lead updated successfully.' });
+      const updatedObj = updatedLead.toObject();
+      if (updatedObj.uploadElectricityBill) {
+        updatedObj.uploadElectricityBillUrl = `${getBaseUrl(req)}/uploads/leads/bills/${updatedObj.uploadElectricityBill}`;
+      }
+      return res.status(200).json({ lead: updatedObj, message: 'Lead updated successfully.' });
     } else {
       // CREATE RECORD
       const lead = await Lead.create({
+        leadName: leadName ?? '',
         name,
         company,
-        mobileNumber,
+        dba: dba || '',
+        legalName: legalName || '',
+        accountNumber: accountNumber || '',
+        electricCompany: electricCompany || electric_company || '',
+        uploadElectricityBill: billFilename || '',
+        mobileNumber: mobileNumber || mobile || '',
         email: email ? email.toLowerCase() : '',
         leadSource: leadSource || '',
+        addresses: processedAddresses || [],
+        contactInfo: processedContactInfo || [],
         street: street || '',
         city: city || '',
         state: state || '',
@@ -183,7 +341,11 @@ exports.createLead = async (req, res) => {
 
       await createLog('Lead Created', req.user.id, name, 'Lead', lead._id);
 
-      return res.status(201).json({ lead, message: 'Lead created successfully.' });
+      const leadObj = lead.toObject();
+      if (leadObj.uploadElectricityBill) {
+        leadObj.uploadElectricityBillUrl = `${getBaseUrl(req)}/uploads/leads/bills/${leadObj.uploadElectricityBill}`;
+      }
+      return res.status(201).json({ lead: leadObj, message: 'Lead created successfully.' });
     }
   } catch (error) {
     console.error('Save lead error:', error);
@@ -210,13 +372,25 @@ exports.listLeads = async (req, res) => {
     }
 
     const leads = await Lead.find(filter).sort({ createdAt: -1 });
+    const baseUrl = getBaseUrl(req);
     const leadSummaries = leads.map((lead) => ({
       id: lead._id,
+      leadName: lead.leadName,
       name: lead.name,
       company: lead.company,
+      dba: lead.dba,
+      legalName: lead.legalName,
+      accountNumber: lead.accountNumber,
+      electricCompany: lead.electricCompany,
+      uploadElectricityBill: lead.uploadElectricityBill,
+      uploadElectricityBillUrl: lead.uploadElectricityBill
+        ? `${baseUrl}/uploads/leads/bills/${lead.uploadElectricityBill}`
+        : '',
       mobileNumber: lead.mobileNumber,
       email: lead.email,
       leadSource: lead.leadSource,
+      addresses: lead.addresses || [],
+      contactInfo: lead.contactInfo || [],
       street: lead.street,
       city: lead.city,
       state: lead.state,

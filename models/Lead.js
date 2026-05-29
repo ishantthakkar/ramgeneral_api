@@ -1,15 +1,50 @@
 const mongoose = require('mongoose');
 
 const leadSchema = new mongoose.Schema({
+  leadName: {
+    type: String,
+    required: false,
+    trim: true,
+  },
   name: {
     type: String,
     required: false,
     trim: true,
   },
+  dba: {
+    type: String,
+    required: false,
+    trim: true,
+    default: '',
+  },
+  legalName: {
+    type: String,
+    required: false,
+    trim: true,
+    default: '',
+  },
+  accountNumber: {
+    type: String,
+    required: false,
+    trim: true,
+    default: '',
+  },
   company: {
     type: String,
     required: false,
     trim: true,
+  },
+  electricCompany: {
+    type: String,
+    required: false,
+    trim: true,
+    default: '',
+  },
+  uploadElectricityBill: {
+    type: String,
+    required: false,
+    trim: true,
+    default: '',
   },
   mobileNumber: {
     type: String,
@@ -25,6 +60,27 @@ const leadSchema = new mongoose.Schema({
     type: String,
     trim: true,
   },
+  addresses: [
+    {
+      title: { type: String, trim: true, default: '' },
+      street: { type: String, trim: true, default: '' },
+      city: { type: String, trim: true, default: '' },
+      state: { type: String, trim: true, default: '' },
+      zip: { type: String, trim: true, default: '' },
+      createdAt: { type: Date, default: Date.now },
+    },
+  ],
+  contactInfo: [
+    {
+      position: { type: String, trim: true, default: '' },
+      department: { type: String, trim: true, default: '' },
+      name: { type: String, trim: true, default: '' },
+      phone: { type: String, trim: true, default: '' },
+      mobile: { type: String, trim: true, default: '' },
+      email: { type: String, trim: true, lowercase: true, default: '' },
+      createdAt: { type: Date, default: Date.now },
+    },
+  ],
   street: {
     type: String,
     trim: true,
