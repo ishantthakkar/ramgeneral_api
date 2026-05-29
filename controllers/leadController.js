@@ -2,10 +2,58 @@ const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
 const User = require('../models/User');
 const { createLog } = require('../utils/logger');
+const {
+  LEAD_SOURCES,
+  LEAD_SOURCE_CODE_LIST,
+  resolveLeadSourceCode,
+  getLeadSourceName,
+} = require('../constants/leadSources');
 
 const ALLOWED_STATUSES = ['New', 'In Progress', 'Lost Leads', 'Converted To Customer'];
 
-const getBaseUrl = (req) => `${req.protocol}://${req.get('host')}`;
+const formatLeadId = (sourceCode, date, sequence) => {
+  const yy = String(date.getFullYear()).slice(-2);
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const seq = String(sequence).padStart(3, '0');
+  return `${sourceCode}/${yy}${mm}/${dd}${seq}`;
+};
+
+const getNextLeadId = async (leadSource, date = new Date()) => {
+  const sourceCode = resolveLeadSourceCode(leadSource);
+  if (!sourceCode) return null;
+
+  const yy = String(date.getFullYear()).slice(-2);
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const idPrefix = `${sourceCode}/${yy}${mm}/${dd}`;
+  const escapedPrefix = idPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const latest = await Lead.findOne({ lead_id: new RegExp(`^${escapedPrefix}\\d{3}$`) })
+    .sort({ lead_id: -1 })
+    .select('lead_id')
+    .lean();
+
+  let nextSequence = 1;
+  if (latest?.lead_id) {
+    const suffix = latest.lead_id.slice(idPrefix.length);
+    const parsed = parseInt(suffix, 10);
+    if (!Number.isNaN(parsed)) nextSequence = parsed + 1;
+  }
+
+  return formatLeadId(sourceCode, date, nextSequence);
+};
+
+const tryParseJson = (value) => {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+};
 
 const normalizeBillFilenames = (value) => {
   if (!value) return [];
@@ -19,6 +67,14 @@ const normalizeBillFilenames = (value) => {
   return [];
 };
 
+const formatLeadResponse = (leadObj) => {
+  leadObj.uploadElectricityBill = normalizeBillFilenames(leadObj.uploadElectricityBill);
+  if (leadObj.leadSource) {
+    leadObj.leadSourceName = getLeadSourceName(leadObj.leadSource);
+  }
+  return leadObj;
+};
+
 const resolveNewBillFilenames = (req, uploadElectricityBill, upload_electricity_bill) => {
   const fromFiles = (req.files && Array.isArray(req.files) ? req.files : []).map(
     (f) => f.filename
@@ -28,28 +84,6 @@ const resolveNewBillFilenames = (req, uploadElectricityBill, upload_electricity_
     ...normalizeBillFilenames(upload_electricity_bill),
   ];
   return [...new Set([...fromFiles, ...fromBody])];
-};
-
-const attachBillUrls = (leadObj, req) => {
-  const bills = normalizeBillFilenames(leadObj.uploadElectricityBill);
-  const baseUrl = getBaseUrl(req);
-  leadObj.uploadElectricityBill = bills;
-  leadObj.uploadElectricityBillUrls = bills.map(
-    (filename) => `${baseUrl}/uploads/leads/bills/${filename}`
-  );
-  leadObj.uploadElectricityBillUrl = leadObj.uploadElectricityBillUrls[0] || '';
-  return leadObj;
-};
-
-const tryParseJson = (value) => {
-  if (typeof value !== 'string') return value;
-  const trimmed = value.trim();
-  if (!trimmed) return value;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return value;
-  }
 };
 
 const getSubdocId = (item) => {
@@ -225,8 +259,14 @@ exports.createLead = async (req, res) => {
 
     // Process activity log
     let processedActivityLog = [];
-    if (activityLog && Array.isArray(activityLog)) {
-      processedActivityLog = activityLog.map(a => ({
+    const parsedActivityLog = tryParseJson(activityLog);
+    const activityLogItems = Array.isArray(parsedActivityLog)
+      ? parsedActivityLog
+      : Array.isArray(activityLog)
+        ? activityLog
+        : null;
+    if (activityLogItems) {
+      processedActivityLog = activityLogItems.map(a => ({
         activityType: a.activityType,
         date: a.date ? new Date(a.date) : new Date(),
         outcome: a.outcome || '',
@@ -282,7 +322,15 @@ exports.createLead = async (req, res) => {
       if (mobileNumber !== undefined) lead.mobileNumber = mobileNumber;
       if (mobile !== undefined) lead.mobileNumber = mobile;
       if (email !== undefined) lead.email = email ? email.toLowerCase() : '';
-      if (leadSource !== undefined) lead.leadSource = leadSource || '';
+      if (leadSource !== undefined) {
+        const leadSourceCode = resolveLeadSourceCode(leadSource);
+        if (leadSource && !leadSourceCode) {
+          return res.status(400).json({
+            message: `Invalid leadSource. Send a code (e.g. WB) or name (e.g. Website) from GET /api/lead-sources.`,
+          });
+        }
+        lead.leadSource = leadSourceCode || '';
+      }
 
       // Backward-compatible single address fields
       if (street !== undefined) lead.street = street || '';
@@ -352,11 +400,19 @@ exports.createLead = async (req, res) => {
 
       await createLog(`Lead Updated`, req.user.id, name, 'Lead', updatedLead._id);
 
-      const updatedObj = attachBillUrls(updatedLead.toObject(), req);
+      const updatedObj = formatLeadResponse(updatedLead.toObject());
       return res.status(200).json({ lead: updatedObj, message: 'Lead updated successfully.' });
     } else {
       // CREATE RECORD
-      const lead = await Lead.create({
+      const leadSourceCode = resolveLeadSourceCode(leadSource);
+      if (!leadSourceCode) {
+        return res.status(400).json({
+          message:
+            'Invalid or missing leadSource. Send a code (e.g. CA) or name (e.g. Company Appointment) from GET /api/lead-sources.',
+        });
+      }
+
+      const leadData = {
         leadName: leadName ?? '',
         name,
         company,
@@ -367,7 +423,7 @@ exports.createLead = async (req, res) => {
         uploadElectricityBill: newBillFilenames,
         mobileNumber: mobileNumber || mobile || '',
         email: email ? email.toLowerCase() : '',
-        leadSource: leadSource || '',
+        leadSource: leadSourceCode,
         addresses: processedAddresses || [],
         contactInfo: processedContactInfo || [],
         street: street || '',
@@ -388,17 +444,37 @@ exports.createLead = async (req, res) => {
         lastActivity: lastActivity ? new Date(lastActivity) : Date.now(),
         status: status || 'New',
         convertedToCustomer: status === 'Converted To Customer',
-      });
+      };
+
+      let lead;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const lead_id = await getNextLeadId(leadSourceCode);
+        try {
+          lead = await Lead.create({ ...leadData, lead_id });
+          break;
+        } catch (err) {
+          if (err.code === 11000 && err.keyPattern?.lead_id && attempt < 4) continue;
+          throw err;
+        }
+      }
+
+      if (!lead) {
+        return res.status(500).json({ message: 'Could not generate a unique lead_id.' });
+      }
 
       await createLog('Lead Created', req.user.id, name, 'Lead', lead._id);
 
-      const leadObj = attachBillUrls(lead.toObject(), req);
+      const leadObj = formatLeadResponse(lead.toObject());
       return res.status(201).json({ lead: leadObj, message: 'Lead created successfully.' });
     }
   } catch (error) {
     console.error('Save lead error:', error);
     return res.status(500).json({ message: 'Server error saving lead.', error: error.message });
   }
+};
+
+exports.getLeadSources = (req, res) => {
+  return res.status(200).json({ leadSources: LEAD_SOURCES });
 };
 
 exports.listLeads = async (req, res) => {
@@ -420,10 +496,9 @@ exports.listLeads = async (req, res) => {
     }
 
     const leads = await Lead.find(filter).sort({ createdAt: -1 });
-    const leadSummaries = leads.map((lead) => {
-      const bills = attachBillUrls({ uploadElectricityBill: lead.uploadElectricityBill }, req);
-      return {
+    const leadSummaries = leads.map((lead) => ({
       id: lead._id,
+      lead_id: lead.lead_id || '',
       leadName: lead.leadName,
       name: lead.name,
       company: lead.company,
@@ -431,12 +506,11 @@ exports.listLeads = async (req, res) => {
       legalName: lead.legalName,
       accountNumber: lead.accountNumber,
       electricCompany: lead.electricCompany,
-      uploadElectricityBill: bills.uploadElectricityBill,
-      uploadElectricityBillUrls: bills.uploadElectricityBillUrls,
-      uploadElectricityBillUrl: bills.uploadElectricityBillUrl,
+      uploadElectricityBill: normalizeBillFilenames(lead.uploadElectricityBill),
       mobileNumber: lead.mobileNumber,
       email: lead.email,
       leadSource: lead.leadSource,
+      leadSourceName: getLeadSourceName(lead.leadSource),
       addresses: lead.addresses || [],
       contactInfo: lead.contactInfo || [],
       street: lead.street,
@@ -449,8 +523,7 @@ exports.listLeads = async (req, res) => {
       status: lead.status,
       user_id: lead.user_id,
       createdByName: lead.createdByName,
-      };
-    });
+    }));
 
     return res.status(200).json({ leads: leadSummaries });
   } catch (error) {
@@ -468,7 +541,7 @@ exports.getLead = async (req, res) => {
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    const leadObj = attachBillUrls(lead.toObject(), req);
+    const leadObj = formatLeadResponse(lead.toObject());
     return res.status(200).json({ lead: leadObj });
   } catch (error) {
     console.error('Get lead error:', error);

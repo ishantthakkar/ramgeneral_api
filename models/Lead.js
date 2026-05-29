@@ -1,6 +1,12 @@
 const mongoose = require('mongoose');
 
 const leadSchema = new mongoose.Schema({
+  lead_id: {
+    type: String,
+    trim: true,
+    unique: true,
+    sparse: true,
+  },
   leadName: {
     type: String,
     required: false,
@@ -57,6 +63,7 @@ const leadSchema = new mongoose.Schema({
   leadSource: {
     type: String,
     trim: true,
+    uppercase: true,
   },
   addresses: [
     {
