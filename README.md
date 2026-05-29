@@ -45,6 +45,30 @@ Response:
 }
 ```
 
+## Products API
+
+All product routes require `Authorization: Bearer <accessToken>`.
+
+- `GET /api/products` — list products (optional `?category=PSE%26G`)
+- `POST /api/products` — create product
+
+```json
+{
+  "sku": "RAM-LED-001",
+  "name": "LED Panel 2x4",
+  "price": 89.99,
+  "category": "PSE&G"
+}
+```
+
+Categories: `PSE&G`, `JCP&L`, `ATLANTIC CITY ENERGY`
+
+Seed sample products:
+
+```bash
+npm run seed:products
+```
+
 ## MongoDB URL
 
 Default connection: `mongodb://127.0.0.1:27017/ramgeneral`
