@@ -1,26 +1,37 @@
 const Product = require('../models/Product');
-const { CATEGORIES } = require('../models/Product');
 const { createLog } = require('../utils/logger');
+
+function formatProduct(doc) {
+  const p = doc.toObject ? doc.toObject() : doc;
+  return {
+    _id: p._id,
+    sku: p.sku,
+    name: p.name,
+    salesPrice: p.salesPrice ?? p.price ?? 0,
+    commission: p.commission ?? 0,
+    installationCost: p.installationCost ?? 0,
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
+  };
+}
+
+function parseMoney(value, fieldName) {
+  const num = Number(value);
+  if (value === undefined || value === null || value === '' || isNaN(num) || num < 0) {
+    return { error: `${fieldName} must be a valid non-negative number.` };
+  }
+  return { value: num };
+}
 
 exports.listProducts = async (req, res) => {
   try {
-    const { category } = req.query;
-    const filter = {};
+    const products = await Product.find({}).sort({ createdAt: -1 });
+    const formatted = products.map(formatProduct);
 
-    if (category && category !== 'all' && CATEGORIES.includes(category)) {
-      filter.category = category;
-    }
-
-    const products = await Product.find(filter).sort({ createdAt: -1 });
-
-    const counts = {
-      total: await Product.countDocuments({}),
-    };
-    for (const cat of CATEGORIES) {
-      counts[cat] = await Product.countDocuments({ category: cat });
-    }
-
-    return res.status(200).json({ products, counts });
+    return res.status(200).json({
+      products: formatted,
+      total: formatted.length,
+    });
   } catch (error) {
     console.error('List products error:', error);
     return res.status(500).json({ message: 'Server error listing products.' });
@@ -29,19 +40,28 @@ exports.listProducts = async (req, res) => {
 
 exports.createProduct = async (req, res) => {
   try {
-    const { sku, name, price, category } = req.body;
+    const { sku, name, salesPrice, commission, installationCost, price } = req.body;
 
-    if (!sku || !name || price === undefined || price === null || !category) {
-      return res.status(400).json({ message: 'SKU, name, price, and category are required.' });
+    if (!sku || !name) {
+      return res.status(400).json({ message: 'SKU and name are required.' });
     }
 
-    if (!CATEGORIES.includes(category)) {
-      return res.status(400).json({ message: 'Invalid category.' });
+    const salesPriceResult = parseMoney(
+      salesPrice !== undefined ? salesPrice : price,
+      'Sales price'
+    );
+    if (salesPriceResult.error) {
+      return res.status(400).json({ message: salesPriceResult.error });
     }
 
-    const priceNum = Number(price);
-    if (isNaN(priceNum) || priceNum < 0) {
-      return res.status(400).json({ message: 'Price must be a valid non-negative number.' });
+    const commissionResult = parseMoney(commission ?? 0, 'Commission');
+    if (commissionResult.error) {
+      return res.status(400).json({ message: commissionResult.error });
+    }
+
+    const installationCostResult = parseMoney(installationCost ?? 0, 'Installation cost');
+    if (installationCostResult.error) {
+      return res.status(400).json({ message: installationCostResult.error });
     }
 
     const existingSku = await Product.findOne({ sku: sku.trim() });
@@ -52,23 +72,18 @@ exports.createProduct = async (req, res) => {
     const product = await Product.create({
       sku: sku.trim(),
       name: name.trim(),
-      price: priceNum,
-      category,
+      salesPrice: salesPriceResult.value,
+      commission: commissionResult.value,
+      installationCost: installationCostResult.value,
     });
 
     if (req.user?.id) {
-      await createLog(
-        'Product Created',
-        req.user.id,
-        product.name,
-        'Product',
-        product._id
-      );
+      await createLog('Product Created', req.user.id, product.name, 'Product', product._id);
     }
 
     return res.status(201).json({
       message: 'Product created successfully.',
-      product,
+      product: formatProduct(product),
     });
   } catch (error) {
     if (error.code === 11000) {
@@ -85,7 +100,7 @@ exports.getProduct = async (req, res) => {
     if (!product) {
       return res.status(404).json({ message: 'Product not found.' });
     }
-    return res.status(200).json({ product });
+    return res.status(200).json({ product: formatProduct(product) });
   } catch (error) {
     console.error('Get product error:', error);
     return res.status(500).json({ message: 'Server error fetching product.' });

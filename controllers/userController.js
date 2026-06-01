@@ -11,23 +11,116 @@ const { SALES_PERSON_ROLE_VARIANTS, isSalesPersonRole: isSalesPersonRoleFromCons
 
 const ROLE_VARIANTS = {
   contractor: ['contractor', 'Contractor'],
-  sales_person: SALES_PERSON_ROLE_VARIANTS,
+  sales_person: ['sales_person', 'Sales Person'],
+  sales_manager: ['sales_manager', 'Sales Manager'],
   project_manager: ['project_manager', 'Project Manager'],
+  admin: ['admin', 'Admin'],
 };
 
 const ALLOWED_ROLES = Object.values(ROLE_VARIANTS).flat();
 
+const normalizeRoleName = (value) =>
+  (value || '').toString().trim().toLowerCase().replace(/_/g, ' ');
+
 const getCanonicalRole = (value) => {
   if (!value || typeof value !== 'string') return null;
-  const normalized = value.trim().toLowerCase();
-  return Object.keys(ROLE_VARIANTS).find(key =>
-    ROLE_VARIANTS[key].some(variant => variant.toLowerCase() === normalized)
-  ) || null;
+  const normalized = normalizeRoleName(value);
+  return (
+    Object.keys(ROLE_VARIANTS).find((key) =>
+      ROLE_VARIANTS[key].some((variant) => normalizeRoleName(variant) === normalized)
+    ) || null
+  );
 };
 
-const isContractorRole = (value) => ROLE_VARIANTS.contractor.includes(value);
-const isSalesPersonRole = (value) => isSalesPersonRoleFromConstants(value);
-const isProjectManagerRole = (value) => ROLE_VARIANTS.project_manager.includes(value);
+const isContractorRole = (value) =>
+  ROLE_VARIANTS.contractor.some((v) => normalizeRoleName(v) === normalizeRoleName(value));
+const isSalesPersonRole = (value) =>
+  ROLE_VARIANTS.sales_person.some((v) => normalizeRoleName(v) === normalizeRoleName(value));
+const isSalesManagerRole = (value) =>
+  ROLE_VARIANTS.sales_manager.some((v) => normalizeRoleName(v) === normalizeRoleName(value));
+const isProjectManagerRole = (value) =>
+  ROLE_VARIANTS.project_manager.some((v) => normalizeRoleName(v) === normalizeRoleName(value));
+
+const resolveRoleNameFromInput = async (userRole) => {
+  if (mongoose.Types.ObjectId.isValid(userRole)) {
+    const roleDoc = await Role.findById(userRole);
+    if (roleDoc) {
+      return { roleId: userRole, userRole: roleDoc.roleName };
+    }
+    return { roleId: userRole, userRole: String(userRole) };
+  }
+  return { roleId: null, userRole: String(userRole) };
+};
+
+const validateAndResolveReportsTo = async (userRoleName, reportsToId, userId = null) => {
+  const role = normalizeRoleName(userRoleName);
+
+  if (role === 'sales person') {
+    if (!reportsToId || !mongoose.Types.ObjectId.isValid(reportsToId)) {
+      return { error: 'Sales manager is required for sales person.' };
+    }
+    if (userId && reportsToId.toString() === userId.toString()) {
+      return { error: 'A user cannot report to themselves.' };
+    }
+    const manager = await User.findById(reportsToId);
+    if (!manager || !isSalesManagerRole(manager.userRole)) {
+      return { error: 'Selected supervisor must be a sales manager.' };
+    }
+    return { reportsTo: manager._id };
+  }
+
+  if (role === 'sales manager') {
+    if (!reportsToId || !mongoose.Types.ObjectId.isValid(reportsToId)) {
+      return { error: 'Project manager is required for sales manager.' };
+    }
+    if (userId && reportsToId.toString() === userId.toString()) {
+      return { error: 'A user cannot report to themselves.' };
+    }
+    const manager = await User.findById(reportsToId);
+    if (!manager || !isProjectManagerRole(manager.userRole)) {
+      return { error: 'Selected supervisor must be a project manager.' };
+    }
+    return { reportsTo: manager._id };
+  }
+
+  return { reportsTo: null };
+};
+
+const pickWorkingHoursFields = (body) => {
+  const { workingDays, workingFrom, workingTo } = body;
+  const fields = {};
+
+  if (Array.isArray(workingDays)) {
+    fields.workingDays = workingDays;
+  } else if (typeof workingDays === 'string' && workingDays.trim()) {
+    try {
+      const parsed = JSON.parse(workingDays);
+      fields.workingDays = Array.isArray(parsed) ? parsed : [workingDays];
+    } catch {
+      fields.workingDays = workingDays.split(',').map((d) => d.trim()).filter(Boolean);
+    }
+  }
+
+  if (typeof workingFrom === 'string') fields.workingFrom = workingFrom.trim();
+  if (typeof workingTo === 'string') fields.workingTo = workingTo.trim();
+
+  return fields;
+};
+
+const formatReportsTo = (reportsTo) => {
+  if (!reportsTo) return null;
+  if (typeof reportsTo === 'object' && reportsTo._id) {
+    return {
+      _id: reportsTo._id,
+      fullName: reportsTo.fullName,
+      userRole: reportsTo.userRole,
+      company: reportsTo.company,
+      email: reportsTo.email,
+      mobileNumber: reportsTo.mobileNumber,
+    };
+  }
+  return reportsTo;
+};
 
 const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
 
@@ -83,10 +176,30 @@ exports.loginUser = async (req, res) => {
 
 exports.createUser = async (req, res) => {
     try {
-        const { id, fullName, company, email, mobileNumber, userRole, status, password } = req.body;
+        const {
+            id,
+            fullName,
+            company,
+            email,
+            mobileNumber,
+            userRole,
+            status,
+            password,
+            reportsToId,
+        } = req.body;
 
         if (!fullName || !company || !mobileNumber || !userRole || !status) {
             return res.status(400).json({ message: 'All user fields are required.' });
+        }
+
+        const roleResolved = await resolveRoleNameFromInput(userRole);
+        const reportsToResult = await validateAndResolveReportsTo(
+            roleResolved.userRole,
+            reportsToId,
+            id || null
+        );
+        if (reportsToResult.error) {
+            return res.status(400).json({ message: reportsToResult.error });
         }
 
         if (id) {
@@ -116,39 +229,32 @@ exports.createUser = async (req, res) => {
                 ...(email && { email: email.toLowerCase() }),
                 mobileNumber,
                 status,
+                roleId: roleResolved.roleId,
+                userRole: roleResolved.userRole,
+                reportsTo: reportsToResult.reportsTo,
+                ...pickWorkingHoursFields(req.body),
             };
 
-            // Handle dynamic userRole (ID or Name)
-            if (mongoose.Types.ObjectId.isValid(userRole)) {
-                updateData.roleId = userRole;
-                const roleDoc = await Role.findById(userRole);
-                if (roleDoc) {
-                    updateData.userRole = roleDoc.roleName;
-                } else {
-                    updateData.userRole = userRole; // fallback
-                }
-            } else {
-                updateData.userRole = userRole;
-                updateData.roleId = null;
-            }
-
-            // Store password if provided
             if (password) {
                 const salt = await bcrypt.genSalt(10);
                 updateData.password = await bcrypt.hash(password, salt);
             }
 
-            const updatedUser = await User.findByIdAndUpdate(
-                id,
-                updateData,
-                { new: true, runValidators: true }
-            );
+            const updatedUser = await User.findByIdAndUpdate(id, updateData, {
+                new: true,
+                runValidators: true,
+            })
+                .populate('reportsTo', 'fullName userRole company email mobileNumber')
+                .select('-password -refreshTokens -otpCode -otpExpiresAt');
 
             if (!updatedUser) {
                 return res.status(404).json({ message: 'User not found.' });
             }
 
-            return res.status(200).json({ user: updatedUser, message: 'User updated successfully.' });
+            const userObj = updatedUser.toObject();
+            userObj.reportsTo = formatReportsTo(userObj.reportsTo);
+
+            return res.status(200).json({ user: userObj, message: 'User updated successfully.' });
         }
 
         if (email) {
@@ -169,31 +275,26 @@ exports.createUser = async (req, res) => {
             ...(email && { email: email.toLowerCase() }),
             mobileNumber,
             status,
+            roleId: roleResolved.roleId,
+            userRole: roleResolved.userRole,
+            reportsTo: reportsToResult.reportsTo,
+            ...pickWorkingHoursFields(req.body),
         };
 
-        // Handle dynamic userRole (ID or Name)
-        if (mongoose.Types.ObjectId.isValid(userRole)) {
-            userData.roleId = userRole;
-            const roleDoc = await Role.findById(userRole);
-            if (roleDoc) {
-                userData.userRole = roleDoc.roleName;
-            } else {
-                userData.userRole = userRole; // fallback
-            }
-        } else {
-            userData.userRole = userRole;
-            userData.roleId = null;
-        }
-
-        // Store password if provided
         if (password) {
             const salt = await bcrypt.genSalt(10);
             userData.password = await bcrypt.hash(password, salt);
         }
 
         const newUser = await User.create(userData);
+        const populated = await User.findById(newUser._id)
+            .populate('reportsTo', 'fullName userRole company email mobileNumber')
+            .select('-password -refreshTokens -otpCode -otpExpiresAt')
+            .lean();
 
-        return res.status(201).json({ user: newUser, message: 'User created successfully.' });
+        populated.reportsTo = formatReportsTo(populated.reportsTo);
+
+        return res.status(201).json({ user: populated, message: 'User created successfully.' });
     } catch (error) {
         console.error('Create user error:', error);
         return res.status(500).json({ message: 'Server error creating user.' });
@@ -203,41 +304,71 @@ exports.createUser = async (req, res) => {
 exports.getUser = async (req, res) => {
     try {
         const { id } = req.params;
-        const user = await User.findById(id).lean(); // use lean() for plain object
+        const user = await User.findById(id)
+            .populate('reportsTo', 'fullName userRole company email mobileNumber')
+            .lean();
 
         if (!user) {
             return res.status(404).json({ message: 'User not found.' });
         }
 
+        delete user.password;
+        delete user.refreshTokens;
+        delete user.otpCode;
+        delete user.otpExpiresAt;
+
         let roleMetrics = {};
 
         if (isContractorRole(user.userRole)) {
             roleMetrics = {
-                assignedProjects: 0,
-                completedInstallations: 0,
-                pendingInstallations: 0
+                assignedProjects: await Customer.countDocuments({ assignToContractor: user._id }),
+                completedInstallations: await Customer.countDocuments({
+                    assignToContractor: user._id,
+                    contractorStatus: 'completed',
+                }),
+                pendingInstallations: await Customer.countDocuments({
+                    assignToContractor: user._id,
+                    contractorStatus: { $ne: 'completed' },
+                }),
             };
         } else if (isSalesPersonRole(user.userRole)) {
             roleMetrics = {
-                activeLeads: 0,
-                customers: 0,
-                closedLeads: 0
+                activeLeads: await Lead.countDocuments({
+                    user_id: user._id,
+                    status: { $in: ['New', 'In Progress'] },
+                }),
+                customers: await Customer.countDocuments({ user_id: user._id }),
+                closedLeads: await Lead.countDocuments({ user_id: user._id, status: 'Lost Leads' }),
             };
         } else if (isProjectManagerRole(user.userRole)) {
+            const Survey = require('../models/Survey');
             roleMetrics = {
-                pendingInspections: 0,
-                completedInspections: 0
+                pendingInspections: await Survey.countDocuments({
+                    assignedTo: user._id,
+                    status: { $ne: 'completed' },
+                }),
+                completedInspections: await Survey.countDocuments({
+                    assignedTo: user._id,
+                    status: 'completed',
+                }),
             };
         }
 
-        // Merge user + roleMetrics
-        const response = {
+        const directReports = await User.find({ reportsTo: user._id })
+            .select('fullName company email mobileNumber userRole status workingDays workingFrom workingTo')
+            .sort({ fullName: 1 })
+            .lean();
+
+        const userPayload = {
             ...user,
-            ...roleMetrics
+            ...roleMetrics,
+            reportsTo: formatReportsTo(user.reportsTo),
         };
 
-        return res.status(200).json(response);
-
+        return res.status(200).json({
+            user: userPayload,
+            directReports,
+        });
     } catch (error) {
         console.error('Get user error:', error);
         return res.status(500).json({ message: 'Server error fetching user.' });
@@ -259,7 +390,10 @@ exports.listUsers = async (req, res) => {
             filter.userRole = { $in: ROLE_VARIANTS[requestedRoleKey] };
         }
 
-        const users = await User.find(filter).sort({ createdAt: -1 }).lean();
+        const users = await User.find(filter)
+            .populate('reportsTo', 'fullName userRole company email mobileNumber')
+            .sort({ createdAt: -1 })
+            .lean();
 
         // Add role-based metrics to each user
         const usersWithMetrics = await Promise.all(users.map(async user => {
@@ -292,7 +426,8 @@ exports.listUsers = async (req, res) => {
 
             return {
                 ...user,
-                ...roleMetrics
+                reportsTo: formatReportsTo(user.reportsTo),
+                ...roleMetrics,
             };
         }));
 
@@ -301,6 +436,8 @@ exports.listUsers = async (req, res) => {
             total_sales_persons: await User.countDocuments({ userRole: { $in: ROLE_VARIANTS.sales_person } }),
             total_contractors: await User.countDocuments({ userRole: { $in: ROLE_VARIANTS.contractor } }),
             total_project_managers: await User.countDocuments({ userRole: { $in: ROLE_VARIANTS.project_manager } }),
+            total_sales_managers: await User.countDocuments({ userRole: { $in: ROLE_VARIANTS.sales_manager } }),
+            total_admins: await User.countDocuments({ userRole: { $in: ROLE_VARIANTS.admin } }),
         };
 
         return res.status(200).json({ users: usersWithMetrics, counts });
