@@ -50,12 +50,15 @@ const resolveRoleNameFromInput = async (userRole) => {
   return { roleId: null, userRole: String(userRole) };
 };
 
-const validateAndResolveReportsTo = async (userRoleName, reportsToId) => {
+const validateAndResolveReportsTo = async (userRoleName, reportsToId, userId = null) => {
   const role = normalizeRoleName(userRoleName);
 
   if (role === 'sales person') {
     if (!reportsToId || !mongoose.Types.ObjectId.isValid(reportsToId)) {
       return { error: 'Sales manager is required for sales person.' };
+    }
+    if (userId && reportsToId.toString() === userId.toString()) {
+      return { error: 'A user cannot report to themselves.' };
     }
     const manager = await User.findById(reportsToId);
     if (!manager || !isSalesManagerRole(manager.userRole)) {
@@ -67,6 +70,9 @@ const validateAndResolveReportsTo = async (userRoleName, reportsToId) => {
   if (role === 'sales manager') {
     if (!reportsToId || !mongoose.Types.ObjectId.isValid(reportsToId)) {
       return { error: 'Project manager is required for sales manager.' };
+    }
+    if (userId && reportsToId.toString() === userId.toString()) {
+      return { error: 'A user cannot report to themselves.' };
     }
     const manager = await User.findById(reportsToId);
     if (!manager || !isProjectManagerRole(manager.userRole)) {
@@ -187,7 +193,8 @@ exports.createUser = async (req, res) => {
         const roleResolved = await resolveRoleNameFromInput(userRole);
         const reportsToResult = await validateAndResolveReportsTo(
             roleResolved.userRole,
-            reportsToId
+            reportsToId,
+            id || null
         );
         if (reportsToResult.error) {
             return res.status(400).json({ message: reportsToResult.error });
