@@ -36,6 +36,25 @@ const userSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Role'
   },
+  reportsTo: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+  },
+  workingDays: {
+    type: [String],
+    default: [],
+  },
+  workingFrom: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  workingTo: {
+    type: String,
+    trim: true,
+    default: '',
+  },
   status: {
     type: String,
     required: true,
