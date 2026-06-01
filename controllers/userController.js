@@ -7,9 +7,11 @@ const Customer = require('../models/Customer');
 const CustomerActivity = require('../models/CustomerActivity');
 const { generateAccessToken, generateRefreshToken } = require('../utils/token');
 
+const { SALES_PERSON_ROLE_VARIANTS, isSalesPersonRole: isSalesPersonRoleFromConstants } = require('../constants/userRoles');
+
 const ROLE_VARIANTS = {
   contractor: ['contractor', 'Contractor'],
-  sales_person: ['sales_person', 'Sales Person'],
+  sales_person: SALES_PERSON_ROLE_VARIANTS,
   project_manager: ['project_manager', 'Project Manager'],
 };
 
@@ -24,7 +26,7 @@ const getCanonicalRole = (value) => {
 };
 
 const isContractorRole = (value) => ROLE_VARIANTS.contractor.includes(value);
-const isSalesPersonRole = (value) => ROLE_VARIANTS.sales_person.includes(value);
+const isSalesPersonRole = (value) => isSalesPersonRoleFromConstants(value);
 const isProjectManagerRole = (value) => ROLE_VARIANTS.project_manager.includes(value);
 
 const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
@@ -273,7 +275,10 @@ exports.listUsers = async (req, res) => {
             } else if (isSalesPersonRole(user.userRole)) {
                 const Customer = require('../models/Customer');
                 roleMetrics = {
-                    activeLeads: await Lead.countDocuments({ user_id: user._id, status: { $in: ['New', 'In Progress'] } }),
+                    activeLeads: await Lead.countDocuments({
+                      user_id: user._id,
+                      status: { $in: ['New', 'Assigned', 'In Progress'] },
+                    }),
                     customers: await Customer.countDocuments({ user_id: user._id }),
                     closedLeads: await Lead.countDocuments({ user_id: user._id, status: 'Lost Leads' })
                 };
@@ -341,11 +346,21 @@ exports.listSalesPersons = async (req, res) => {
         const orClauses = [{ userRole: 'Sales Person' }];
         if (role) orClauses.push({ roleId: role._id });
 
-        const users = await User.find({ $or: orClauses }).select('fullName').sort({ createdAt: -1 }).lean();
+        const users = await User.find({ $or: orClauses })
+            .select('fullName email mobileNumber company status userRole')
+            .sort({ fullName: 1 })
+            .lean();
 
-        // Map to only id and fullName
-        const mapped = users.map(u => ({ id: u._id, fullName: u.fullName }));
-        return res.status(200).json({ users: mapped, count: mapped.length });
+        const mapped = users.map((u) => ({
+            id: u._id,
+            fullName: u.fullName,
+            email: u.email || '',
+            mobileNumber: u.mobileNumber || '',
+            company: u.company || '',
+            status: u.status || '',
+            userRole: u.userRole,
+        }));
+        return res.status(200).json({ salesPersons: mapped, users: mapped, count: mapped.length });
     } catch (error) {
         console.error('List sales persons error:', error);
         return res.status(500).json({ message: 'Server error listing sales persons.' });

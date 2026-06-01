@@ -56,6 +56,12 @@ const parseAreasInput = (areas) => {
         heightFt: (item?.heightFt ?? item?.height_ft ?? '').toString().trim(),
         heightIn: (item?.heightIn ?? item?.height_in ?? '').toString().trim(),
         existingBulbs: (item?.existingBulbs ?? item?.existing_bulbs ?? '').toString().trim(),
+        existingFixtureType: (
+            item?.existingFixtureType ?? item?.existing_fixture_type ?? ''
+        )
+            .toString()
+            .trim(),
+        note: (item?.note ?? '').toString().trim(),
         existingQty: (
             item?.existingQty ??
             item?.existing_qty ??
@@ -154,7 +160,7 @@ exports.createSurvey = async (req, res) => {
         const processedAreas = areas !== undefined ? await buildAreasWithImages(areas, req.files) : null;
         if (processedAreas === null && areas !== undefined && areas !== '') {
             return res.status(400).json({
-                message: 'Invalid areas. Send a JSON array with product_id, heightFt, heightIn, existingBulbs, etc.',
+                message: 'Invalid areas. Send a JSON array with product_id, heightFt, heightIn, existingBulbs, existingFixtureType, note, etc.',
             });
         }
 
@@ -466,7 +472,7 @@ exports.verifySurvey = async (req, res) => {
         await survey.save();
 
         if (survey.issueFound === 'yes' && survey.customer_id) {
-            await Customer.findByIdAndUpdate(survey.customer_id, { installationStatus: 'reopen' });
+            await Customer.findByIdAndUpdate(survey.customer_id, { inspectionStatus: 'reopen' });
         }
 
         const surveyResponse = await formatSurveyResponse(survey.toObject());

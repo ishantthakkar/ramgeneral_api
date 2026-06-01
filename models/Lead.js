@@ -124,6 +124,13 @@ const leadSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
   },
+  assignedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  },
+  assignedAt: {
+    type: Date,
+  },
   createdByName: {
     type: String,
     trim: true,
@@ -144,7 +151,7 @@ const leadSchema = new mongoose.Schema({
   status: {
     type: String,
     required: false,
-    enum: ['New', 'In Progress', 'Lost Leads', 'Converted To Customer'],
+    enum: ['New', 'Assigned', 'In Progress', 'Lost Leads', 'Converted To Customer'],
     default: 'New',
     trim: true,
   },

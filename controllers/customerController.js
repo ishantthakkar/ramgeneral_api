@@ -444,7 +444,7 @@ exports.updateCustomer = async (req, res) => {
       customer.markModified('uploadElectricityBill');
     }
 
-    await customer.save();
+    await customer.save({ validateModifiedOnly: true });
 
     if (customer.leadId && body.status && LEAD_CREATE_STATUSES.includes(body.status)) {
       await Lead.findByIdAndUpdate(customer.leadId, {

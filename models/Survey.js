@@ -36,6 +36,8 @@ const surveySchema = new mongoose.Schema({
       heightFt: { type: String, trim: true, default: '' },
       heightIn: { type: String, trim: true, default: '' },
       existingBulbs: { type: String, trim: true, default: '' },
+      existingFixtureType: { type: String, trim: true, default: '' },
+      note: { type: String, trim: true, default: '' },
       existingQty: { type: String, trim: true, default: '' },
       proposedQty: { type: String, trim: true, default: '' },
       price: { type: String, trim: true, default: '' },

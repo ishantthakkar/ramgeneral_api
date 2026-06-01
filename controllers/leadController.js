@@ -1,7 +1,10 @@
+const mongoose = require('mongoose');
 const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
 const User = require('../models/User');
+const Role = require('../models/Role');
 const { createLog } = require('../utils/logger');
+const { SALES_PERSON_ROLE_VARIANTS, isSalesPersonRole } = require('../constants/userRoles');
 const {
   LEAD_SOURCES,
   LEAD_SOURCE_CODE_LIST,
@@ -9,7 +12,21 @@ const {
   getLeadSourceName,
 } = require('../constants/leadSources');
 
-const ALLOWED_STATUSES = ['New', 'In Progress', 'Lost Leads', 'Converted To Customer'];
+const ALLOWED_STATUSES = ['New', 'Assigned', 'In Progress', 'Lost Leads', 'Converted To Customer'];
+
+const resolveSalesPerson = async (salesPersonId) => {
+  if (!salesPersonId || !mongoose.Types.ObjectId.isValid(salesPersonId)) {
+    return { error: 'Valid salesPersonId (or sales_person_user_id) is required.' };
+  }
+  const user = await User.findById(salesPersonId);
+  if (!user) {
+    return { error: 'Sales person not found.' };
+  }
+  if (!isSalesPersonRole(user.userRole)) {
+    return { error: 'Selected user is not a sales person.' };
+  }
+  return { user };
+};
 
 const formatLeadId = (sourceCode, date, sequence) => {
   const yy = String(date.getFullYear()).slice(-2);
@@ -412,6 +429,29 @@ exports.createLead = async (req, res) => {
         });
       }
 
+      const salesPersonId = req.body.salesPersonId || req.body.sales_person_user_id;
+      let assignedSalesPerson = null;
+      if (salesPersonId) {
+        const resolved = await resolveSalesPerson(salesPersonId);
+        if (resolved.error) {
+          return res.status(400).json({ message: resolved.error });
+        }
+        assignedSalesPerson = resolved.user;
+      }
+
+      const isAssigningToSalesPerson =
+        assignedSalesPerson && String(assignedSalesPerson._id) !== String(currentUser._id);
+
+      const initialStatus = isAssigningToSalesPerson
+        ? 'Assigned'
+        : status || 'New';
+
+      if (status && !ALLOWED_STATUSES.includes(status)) {
+        return res.status(400).json({
+          message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
+        });
+      }
+
       const leadData = {
         leadName: leadName ?? '',
         name,
@@ -434,16 +474,21 @@ exports.createLead = async (req, res) => {
         activityLog: processedActivityLog.length > 0 ? processedActivityLog : [{
           activityType: 'Creation',
           date: new Date(),
-          outcome: 'Lead Created',
+          outcome: isAssigningToSalesPerson
+            ? `Lead created and assigned to ${assignedSalesPerson.fullName}`
+            : 'Lead Created',
           createdAt: new Date()
         }],
-        user_id: currentUser._id,
+        user_id: assignedSalesPerson ? assignedSalesPerson._id : currentUser._id,
+        ...(isAssigningToSalesPerson
+          ? { assignedBy: currentUser._id, assignedAt: new Date() }
+          : {}),
         createdByName: is_admin ? currentUser.email : currentUser.fullName,
         createdByEmail: currentUser.email,
         createdByRole: is_admin ? 'admin' : currentUser.userRole,
         lastActivity: lastActivity ? new Date(lastActivity) : Date.now(),
-        status: status || 'New',
-        convertedToCustomer: status === 'Converted To Customer',
+        status: isAssigningToSalesPerson ? 'Assigned' : initialStatus,
+        convertedToCustomer: initialStatus === 'Converted To Customer',
       };
 
       let lead;
@@ -477,6 +522,99 @@ exports.getLeadSources = (req, res) => {
   return res.status(200).json({ leadSources: LEAD_SOURCES });
 };
 
+exports.listSalesPersons = async (req, res) => {
+  try {
+    const role = await Role.findOne({ roleName: 'Sales Person' });
+    const orClauses = [{ userRole: { $in: SALES_PERSON_ROLE_VARIANTS } }];
+    if (role) orClauses.push({ roleId: role._id });
+
+    const users = await User.find({ $or: orClauses })
+      .select('fullName email mobileNumber company status userRole')
+      .sort({ fullName: 1 })
+      .lean();
+
+    const salesPersons = users.map((u) => ({
+      id: u._id,
+      fullName: u.fullName,
+      email: u.email || '',
+      mobileNumber: u.mobileNumber || '',
+      company: u.company || '',
+      status: u.status || '',
+      userRole: u.userRole,
+    }));
+
+    return res.status(200).json({
+      salesPersons,
+      count: salesPersons.length,
+    });
+  } catch (error) {
+    console.error('List sales persons error:', error);
+    return res.status(500).json({ message: 'Server error listing sales persons.' });
+  }
+};
+
+exports.assignLeadToSalesPerson = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const salesPersonId = req.body.salesPersonId || req.body.sales_person_user_id;
+
+    const resolved = await resolveSalesPerson(salesPersonId);
+    if (resolved.error) {
+      return res.status(400).json({ message: resolved.error });
+    }
+    const salesPerson = resolved.user;
+
+    const lead = await Lead.findById(id);
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    if (lead.status === 'Converted To Customer') {
+      return res.status(400).json({
+        message: 'Cannot reassign a lead that is already converted to customer.',
+      });
+    }
+
+    const assigner = await User.findById(req.user.id);
+    const assignerName = assigner?.fullName || assigner?.email || 'Manager';
+
+    lead.user_id = salesPerson._id;
+    lead.assignedBy = req.user.id;
+    lead.assignedAt = new Date();
+    lead.status = 'Assigned';
+    lead.lastActivity = new Date();
+    lead.activityLog.push({
+      activityType: 'Assignment',
+      date: new Date(),
+      outcome: `Assigned to ${salesPerson.fullName} by ${assignerName}`,
+      createdAt: new Date(),
+    });
+    lead.markModified('activityLog');
+
+    await lead.save();
+
+    await createLog(
+      'Lead Assigned',
+      req.user.id,
+      `${lead.name || lead.leadName} → ${salesPerson.fullName}`,
+      'Lead',
+      lead._id
+    );
+
+    const leadObj = formatLeadResponse(
+      (await Lead.findById(lead._id).populate('user_id', 'fullName email').populate('assignedBy', 'fullName email')).toObject()
+    );
+
+    return res.status(200).json({
+      message: 'Lead assigned to sales person successfully.',
+      lead: leadObj,
+    });
+  } catch (error) {
+    console.error('Assign lead error:', error);
+    return res.status(500).json({ message: 'Server error assigning lead.' });
+  }
+};
+
 exports.listLeads = async (req, res) => {
   try {
     const { status, salesPerson } = req.query;
@@ -495,7 +633,11 @@ exports.listLeads = async (req, res) => {
       filter.user_id = salesPerson;
     }
 
-    const leads = await Lead.find(filter).sort({ createdAt: -1 });
+    const leads = await Lead.find(filter)
+      .sort({ createdAt: -1 })
+      .populate('user_id', 'fullName email')
+      .populate('assignedBy', 'fullName email');
+
     const leadSummaries = leads.map((lead) => ({
       id: lead._id,
       lead_id: lead.lead_id || '',
@@ -522,7 +664,11 @@ exports.listLeads = async (req, res) => {
       lastActivity: lead.lastActivity,
       status: lead.status,
       lostReason: lead.lostReason || '',
-      user_id: lead.user_id,
+      user_id: lead.user_id?._id || lead.user_id,
+      salesPersonName: lead.user_id?.fullName || '',
+      assignedBy: lead.assignedBy?._id || lead.assignedBy || null,
+      assignedByName: lead.assignedBy?.fullName || '',
+      assignedAt: lead.assignedAt || null,
       createdByName: lead.createdByName,
     }));
 
@@ -536,7 +682,9 @@ exports.listLeads = async (req, res) => {
 exports.getLead = async (req, res) => {
   try {
     const { id } = req.params;
-    const lead = await Lead.findById(id).populate("user_id", "fullName");
+    const lead = await Lead.findById(id)
+      .populate('user_id', 'fullName email')
+      .populate('assignedBy', 'fullName email');
 
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });

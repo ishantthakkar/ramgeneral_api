@@ -39,6 +39,7 @@ const uploadElectricityBill = multer({
 });
 
 router.get('/lead-sources', verifyToken, leadController.getLeadSources);
+router.get('/leads/sales-persons', verifyToken, leadController.listSalesPersons);
 router.get('/leads', verifyToken, leadController.listLeads);
 router.get('/leads/:id', verifyToken, leadController.getLead);
 router.post(
@@ -47,6 +48,7 @@ router.post(
   uploadElectricityBill.array('upload_electricity_bill', 20),
   leadController.createLead
 );
+router.post('/leads/:id/assign', verifyToken, leadController.assignLeadToSalesPerson);
 router.post('/leads/:id/lost', verifyToken, leadController.markLeadAsLost);
 router.post('/leads/:id/convert', verifyToken, leadController.convertToCustomer);
 router.post('/leads/:id/status', verifyToken, leadController.updateLeadStatus);

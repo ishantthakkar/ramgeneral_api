@@ -212,7 +212,7 @@ const customerSchema = new mongoose.Schema({
   },
   installationStatus: {
     type: String,
-    enum: ['to-do', 'start', 'in_progress', 'continue', 'completed'],
+    enum: ['to-do', 'start', 'in_progress', 'continue', 'completed', 'reopen'],
     default: 'to-do',
   },
   inspectionStatus: {
