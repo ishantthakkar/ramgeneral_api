@@ -15,16 +15,31 @@ const productSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
-    price: {
+    salesPrice: {
       type: Number,
       required: true,
       min: 0,
     },
+    commission: {
+      type: Number,
+      required: true,
+      min: 0,
+      default: 0,
+    },
+    installationCost: {
+      type: Number,
+      required: true,
+      min: 0,
+      default: 0,
+    },
     category: {
       type: String,
-      required: true,
       enum: CATEGORIES,
       trim: true,
+    },
+    price: {
+      type: Number,
+      min: 0,
     },
   },
   { timestamps: true }
