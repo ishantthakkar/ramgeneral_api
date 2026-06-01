@@ -152,6 +152,11 @@ const leadSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  lostReason: {
+    type: String,
+    trim: true,
+    default: '',
+  },
 }, {
   timestamps: true,
 });

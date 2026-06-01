@@ -521,6 +521,7 @@ exports.listLeads = async (req, res) => {
       createdDate: lead.createdAt,
       lastActivity: lead.lastActivity,
       status: lead.status,
+      lostReason: lead.lostReason || '',
       user_id: lead.user_id,
       createdByName: lead.createdByName,
     }));
@@ -597,6 +598,51 @@ exports.convertToCustomer = async (req, res) => {
   } catch (error) {
     console.error('Convert lead error:', error);
     return res.status(500).json({ message: 'Server error converting lead.' });
+  }
+};
+
+exports.markLeadAsLost = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const reason =
+      req.body.reason !== undefined && req.body.reason !== null
+        ? String(req.body.reason).trim()
+        : '';
+
+    const lead = await Lead.findById(id);
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    if (lead.status === 'Converted To Customer') {
+      return res.status(400).json({
+        message: 'Cannot mark a converted lead as lost.',
+      });
+    }
+
+    lead.status = 'Lost Leads';
+    lead.convertedToCustomer = false;
+    lead.lostReason = reason;
+    lead.lastActivity = new Date();
+    lead.activityLog.push({
+      activityType: 'Lost Lead',
+      date: new Date(),
+      outcome: 'Lead marked as lost',
+      notes: reason,
+      createdAt: new Date(),
+    });
+
+    await lead.save();
+    await createLog('Lead Marked as Lost', req.user.id, lead.name, 'Lead', lead._id);
+
+    const leadObj = formatLeadResponse(lead.toObject());
+    return res.status(200).json({
+      message: 'Lead marked as lost successfully.',
+      lead: leadObj,
+    });
+  } catch (error) {
+    console.error('Mark lead as lost error:', error);
+    return res.status(500).json({ message: 'Server error marking lead as lost.' });
   }
 };
 

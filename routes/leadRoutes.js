@@ -47,6 +47,7 @@ router.post(
   uploadElectricityBill.array('upload_electricity_bill', 20),
   leadController.createLead
 );
+router.post('/leads/:id/lost', verifyToken, leadController.markLeadAsLost);
 router.post('/leads/:id/convert', verifyToken, leadController.convertToCustomer);
 router.post('/leads/:id/status', verifyToken, leadController.updateLeadStatus);
 router.post('/leads/update-status', verifyToken, leadController.updateLeadStatusById);
