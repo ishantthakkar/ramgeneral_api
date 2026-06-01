@@ -34,6 +34,36 @@ const upload = multer({
     },
 });
 
+const billStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const uploadPath = path.join(__dirname, '../uploads/leads/bills');
+        fs.mkdirSync(uploadPath, { recursive: true });
+        cb(null, uploadPath);
+    },
+    filename: (req, file, cb) => {
+        const timestamp = Date.now();
+        const unique = Math.round(Math.random() * 1e9);
+        const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+        cb(null, `${timestamp}-${unique}-${safeName}`);
+    },
+});
+
+const uploadElectricityBill = multer({
+    storage: billStorage,
+    fileFilter: (req, file, cb) => {
+        const isImage = file.mimetype && file.mimetype.startsWith('image/');
+        const isPdf = file.mimetype === 'application/pdf';
+        if (!isImage && !isPdf) {
+            return cb(new Error('Only image or PDF files are allowed.'), false);
+        }
+        cb(null, true);
+    },
+    limits: {
+        fileSize: 10 * 1024 * 1024,
+        files: 20,
+    },
+});
+
 router.get('/customers', verifyToken, customerController.listCustomers);
 router.get('/customers-list', verifyToken, customerController.listConvertedCustomers);
 router.get('/customers-user', verifyToken, customerController.getCustomersByUser);
@@ -46,7 +76,12 @@ router.get('/installation-list', verifyToken, customerController.installationLis
 router.get('/inspection-list-user', verifyToken, customerController.inspectionListByUser);
 router.get('/:id', verifyToken, customerController.getCustomer);
 router.post('/customers/reassign-salesperson', verifyToken, customerController.reassignSalesPerson);
-router.post('/customers/:id', verifyToken, customerController.updateCustomer);
+router.post(
+    '/customers/:id',
+    verifyToken,
+    uploadElectricityBill.array('upload_electricity_bill', 20),
+    customerController.updateCustomer
+);
 router.post('/customers/:id/assign-contractor', verifyToken, customerController.assignContractor);
 router.post('/customers/:id/assign', verifyToken, customerController.assignCustomer);
 router.post('/:customerId/:status/update-status', verifyToken, customerController.updateCustomerSurveyStatus);

@@ -1,11 +1,32 @@
 const Customer = require('../models/Customer');
+const Lead = require('../models/Lead');
 const Survey = require('../models/Survey');
 const CustomerActivity = require('../models/CustomerActivity');
 const { createLog } = require('../utils/logger');
+const { resolveLeadSourceCode } = require('../constants/leadSources');
+const {
+  tryParseJson,
+  mergeSubdocuments,
+  normalizeAddresses,
+  normalizeContactInfo,
+  normalizeNotes,
+  normalizeActivityLog,
+  normalizeBillFilenames,
+  resolveNewBillFilenames,
+} = require('../utils/subdocumentHelpers');
 const path = require('path');
 const fs = require('fs');
 
-const ALLOWED_STATUSES = ['New', 'In Progress', 'Closed', 'draft', 'in_progress', 'completed'];
+const CUSTOMER_STATUSES = [
+  'New',
+  'in_progress',
+  'draft',
+  'completed',
+  'reopen',
+  'pending_edit_approval',
+];
+
+const LEAD_CREATE_STATUSES = ['New', 'In Progress', 'Lost Leads', 'Converted To Customer'];
 
 exports.listCustomers = async (req, res) => {
   try {
@@ -273,83 +294,196 @@ exports.getCustomer = async (req, res) => {
 exports.updateCustomer = async (req, res) => {
   try {
     const { id } = req.params;
-    const {
-      name,
-      company,
-      mobileNumber,
-      email,
-      leadSource,
-      lastActivity,
-      convertedDate,
-      status,
-      notes,
-      address,
-      activityLog,
-      surveys, // Array of survey objects to update
-    } = req.body;
+    const body = req.body;
 
-
-    const updatedData = {
-      ...(name && { name }),
-      ...(company && { company }),
-      ...(mobileNumber && { mobileNumber }),
-      ...(email && { email }),
-      ...(leadSource && { leadSource }),
-      ...(lastActivity && { lastActivity: new Date(lastActivity) }),
-      ...(convertedDate && { convertedDate: new Date(convertedDate) }),
-      ...(status && { status }),
-      ...(address && { address }),
-      ...(activityLog && { activityLog }),
-      ...(notes && { notes }),
-    };
-
-    const customer = await Customer.findByIdAndUpdate(id, updatedData, {
-      new: true,
-      runValidators: true,
-    });
-
+    const customer = await Customer.findById(id);
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
     }
 
-    // ✅ If surveys are provided, update them
-    if (surveys && Array.isArray(surveys)) {
-      const Survey = require('../models/Survey');
-      for (const surveyData of surveys) {
-        if (surveyData._id) {
-          const { _id, ...updateFields } = surveyData;
-          await Survey.findByIdAndUpdate(_id, updateFields, {
-            new: true,
-            runValidators: true,
+    const setString = (field) => {
+      if (body[field] !== undefined) {
+        customer[field] = body[field] === null ? '' : String(body[field]).trim();
+      }
+    };
+
+    setString('leadName');
+    setString('name');
+    setString('dba');
+    setString('legalName');
+    setString('accountNumber');
+    setString('company');
+
+    if (body.electricCompany !== undefined) {
+      customer.electricCompany = body.electricCompany || '';
+    }
+    if (body.electric_company !== undefined) {
+      customer.electricCompany = body.electric_company || '';
+    }
+
+    if (body.mobileNumber !== undefined) {
+      customer.mobileNumber = body.mobileNumber || '';
+    }
+    if (body.mobile !== undefined) {
+      customer.mobileNumber = body.mobile || '';
+    }
+
+    if (body.email !== undefined) {
+      customer.email = body.email ? String(body.email).trim().toLowerCase() : '';
+    }
+
+    if (body.leadSource !== undefined) {
+      if (body.leadSource) {
+        const leadSourceCode = resolveLeadSourceCode(body.leadSource);
+        if (!leadSourceCode) {
+          return res.status(400).json({
+            message: 'Invalid leadSource. Send a code (e.g. WB) or name (e.g. Website).',
           });
         }
+        customer.leadSource = leadSourceCode;
+      } else {
+        customer.leadSource = '';
       }
     }
 
-    // ✅ Get updated surveys to return in response
-    const Survey = require('../models/Survey');
+    if (body.lastActivity !== undefined) {
+      customer.lastActivity = body.lastActivity ? new Date(body.lastActivity) : new Date();
+    }
+
+    if (body.address !== undefined) {
+      const parsedAddress = tryParseJson(body.address);
+      if (typeof parsedAddress === 'object' && parsedAddress !== null) {
+        customer.address = {
+          street: (parsedAddress.street ?? '').toString().trim(),
+          city: (parsedAddress.city ?? '').toString().trim(),
+          state: (parsedAddress.state ?? '').toString().trim(),
+          zip: (parsedAddress.zip ?? '').toString().trim(),
+        };
+      }
+    }
+    if (body.street !== undefined) customer.address.street = body.street || '';
+    if (body.city !== undefined) customer.address.city = body.city || '';
+    if (body.state !== undefined) customer.address.state = body.state || '';
+    if (body.zip !== undefined) customer.address.zip = body.zip || '';
+
+    const hasAddressesField = body.addresses !== undefined || body.address !== undefined;
+    const hasContactInfoField = body.contactInfo !== undefined || body.contact_info !== undefined;
+
+    if (hasAddressesField) {
+      const processedAddresses = normalizeAddresses(body.addresses ?? body.address);
+      if (processedAddresses !== null) {
+        customer.addresses = mergeSubdocuments(customer.addresses, processedAddresses);
+        customer.markModified('addresses');
+      }
+    }
+
+    if (hasContactInfoField) {
+      const processedContactInfo = normalizeContactInfo(body.contactInfo ?? body.contact_info);
+      if (processedContactInfo !== null) {
+        customer.contactInfo = mergeSubdocuments(customer.contactInfo, processedContactInfo);
+        customer.markModified('contactInfo');
+      }
+    }
+
+    if (body.notes !== undefined) {
+      const processedNotes = normalizeNotes(body.notes);
+      if (processedNotes.length > 0) {
+        customer.notes = [...(customer.notes || []), ...processedNotes];
+        customer.markModified('notes');
+      }
+    }
+
+    let processedActivityLog = [];
+    const parsedActivityLog = tryParseJson(body.activityLog);
+    const activityLogItems = Array.isArray(parsedActivityLog)
+      ? parsedActivityLog
+      : Array.isArray(body.activityLog)
+        ? body.activityLog
+        : null;
+
+    if (activityLogItems) {
+      processedActivityLog = activityLogItems.map((a) => ({
+        activityType: a.activityType,
+        date: a.date ? new Date(a.date) : new Date(),
+        outcome: a.outcome || '',
+        notes: a.notes || '',
+        followUpDate: a.followUpDate ? new Date(a.followUpDate) : undefined,
+        nextFollowUpDate: a.nextFollowUpDate ? new Date(a.nextFollowUpDate) : undefined,
+        createdAt: new Date(),
+      }));
+    } else if (body.activityType) {
+      processedActivityLog = [
+        {
+          activityType: body.activityType,
+          date: body.activityDate ? new Date(body.activityDate) : new Date(),
+          outcome: body.outcome || '',
+          notes: typeof body.notes === 'string' ? body.notes : '',
+          followUpDate: body.followUpDate ? new Date(body.followUpDate) : undefined,
+          nextFollowUpDate: body.nextFollowUpDate ? new Date(body.nextFollowUpDate) : undefined,
+          createdAt: new Date(),
+        },
+      ];
+    }
+
+    if (processedActivityLog.length > 0) {
+      customer.activityLog = [...(customer.activityLog || []), ...processedActivityLog];
+      customer.markModified('activityLog');
+    }
+
+    const newBillFilenames = resolveNewBillFilenames(
+      req,
+      body.uploadElectricityBill,
+      body.upload_electricity_bill
+    );
+    if (newBillFilenames.length > 0) {
+      const existingBills = normalizeBillFilenames(customer.uploadElectricityBill);
+      customer.uploadElectricityBill = [...existingBills, ...newBillFilenames];
+      customer.markModified('uploadElectricityBill');
+    } else if (body.uploadElectricityBill !== undefined) {
+      customer.uploadElectricityBill = normalizeBillFilenames(body.uploadElectricityBill);
+      customer.markModified('uploadElectricityBill');
+    }
+
+    await customer.save();
+
+    if (customer.leadId && body.status && LEAD_CREATE_STATUSES.includes(body.status)) {
+      await Lead.findByIdAndUpdate(customer.leadId, {
+        status: body.status,
+        convertedToCustomer: body.status === 'Converted To Customer',
+      });
+    }
+
     const updatedSurveys = await Survey.find({ customer_id: id }).sort({ createdAt: -1 });
+    const surveyBaseUrl = 'https://ramgeneral-api.onrender.com/uploads/surveys/';
+    const billBaseUrl = 'https://ramgeneral-api.onrender.com/uploads/leads/bills/';
 
-    // ✅ Convert survey and material images to full URLs for the response
-    const surveyBaseUrl = "https://ramgeneral-api.onrender.com/uploads/surveys/";
-    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
-
-    const surveysWithFullUrls = updatedSurveys.map(survey => {
+    const surveysWithFullUrls = updatedSurveys.map((survey) => {
       const surveyObj = survey.toObject();
-      surveyObj.images = (surveyObj.images || []).map(img => `${surveyBaseUrl}${img}`);
+      surveyObj.images = (surveyObj.images || []).map((img) => `${surveyBaseUrl}${img}`);
       return surveyObj;
     });
+
+    const customerResponse = customer.toObject();
+    customerResponse.uploadElectricityBill = normalizeBillFilenames(
+      customerResponse.uploadElectricityBill
+    );
+    customerResponse.uploadElectricityBillUrls = customerResponse.uploadElectricityBill.map(
+      (filename) => `${billBaseUrl}${filename}`
+    );
 
     await createLog('Customer Updated', req.user.id, customer.name, 'Customer', customer._id);
 
     return res.status(200).json({
-      customer,
+      customer: customerResponse,
       surveys: surveysWithFullUrls,
-      message: 'Customer updated successfully.'
+      message: 'Customer updated successfully.',
     });
   } catch (error) {
     console.error('Update customer error:', error);
-    return res.status(500).json({ message: 'Server error updating customer.', error: error });
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'Account number already exists.' });
+    }
+    return res.status(500).json({ message: 'Server error updating customer.', error: error.message });
   }
 };
 
