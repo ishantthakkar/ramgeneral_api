@@ -9,6 +9,8 @@ const LEAD_SOURCES = [
   { code: 'WB', name: 'Website' },
   { code: 'YL', name: 'Yelp' },
   { code: 'YP', name: 'Yellow Pages' },
+  { code: 'OT', name: 'Others' },
+  { code: 'RE', name: 'Referral' },
 ];
 
 const LEAD_SOURCE_CODES = Object.fromEntries(

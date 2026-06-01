@@ -10,6 +10,72 @@ const customerSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Lead',
   },
+  lead_id: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  leadName: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  dba: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  legalName: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  electricCompany: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  uploadElectricityBill: {
+    type: [String],
+    default: [],
+  },
+  addresses: [
+    {
+      title: { type: String, trim: true, default: '' },
+      street: { type: String, trim: true, default: '' },
+      city: { type: String, trim: true, default: '' },
+      state: { type: String, trim: true, default: '' },
+      zip: { type: String, trim: true, default: '' },
+      createdAt: { type: Date, default: Date.now },
+    },
+  ],
+  contactInfo: [
+    {
+      position: { type: String, trim: true, default: '' },
+      department: { type: String, trim: true, default: '' },
+      name: { type: String, trim: true, default: '' },
+      phone: { type: String, trim: true, default: '' },
+      mobile: { type: String, trim: true, default: '' },
+      email: { type: String, trim: true, lowercase: true, default: '' },
+      createdAt: { type: Date, default: Date.now },
+    },
+  ],
+  createdByName: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  createdByEmail: {
+    type: String,
+    trim: true,
+    lowercase: true,
+    default: '',
+  },
+  createdByRole: {
+    type: String,
+    trim: true,
+    default: '',
+  },
   user_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -126,6 +192,7 @@ const customerSchema = new mongoose.Schema({
   ],
   notes: [
     {
+      title: { type: String, trim: true, default: '' },
       note: { type: String, trim: true, required: true },
       createdAt: { type: Date, default: Date.now },
     },

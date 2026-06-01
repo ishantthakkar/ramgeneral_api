@@ -5,9 +5,100 @@ const Survey = require('../models/Survey');
 const Customer = require('../models/Customer');
 const User = require('../models/User');
 const Admin = require('../models/Admin');
+const Product = require('../models/Product');
 const { createLog } = require('../utils/logger');
+const {
+    resolveProductCategory,
+    getElectricCompanyForCustomer,
+    toProductObjectId,
+    validateAreaProducts,
+    enrichAreasWithProducts,
+} = require('../utils/surveyProductUtils');
 const UPLOAD_DIR = path.join(__dirname, '../uploads/surveys');
 const COMPRESS_THRESHOLD = 800 * 1024;
+const SURVEY_IMAGE_BASE = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
+
+const tryParseJson = (value) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+    try {
+        return JSON.parse(trimmed);
+    } catch {
+        return value;
+    }
+};
+
+const toSurveyImageUrl = (filename) =>
+    `${SURVEY_IMAGE_BASE}/uploads/surveys/${filename}`;
+
+const mapSurveyImageUrls = (surveyObj) => {
+    surveyObj.areas = (surveyObj.areas || []).map((area) => ({
+        ...area,
+        images: (area.images || []).map(toSurveyImageUrl),
+    }));
+    surveyObj.verifyImages = (surveyObj.verifyImages || []).map(toSurveyImageUrl);
+    return surveyObj;
+};
+
+const formatSurveyResponse = async (surveyObj) => {
+    mapSurveyImageUrls(surveyObj);
+    surveyObj.areas = await enrichAreasWithProducts(surveyObj.areas || []);
+    return surveyObj;
+};
+
+const parseAreasInput = (areas) => {
+    if (areas === undefined || areas === null || areas === '') return [];
+    const parsed = tryParseJson(areas);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.map((item) => ({
+        product_id: toProductObjectId(item?.product_id ?? item?.productId),
+        heightFt: (item?.heightFt ?? item?.height_ft ?? '').toString().trim(),
+        heightIn: (item?.heightIn ?? item?.height_in ?? '').toString().trim(),
+        existingBulbs: (item?.existingBulbs ?? item?.existing_bulbs ?? '').toString().trim(),
+        existingQty: (
+            item?.existingQty ??
+            item?.existing_qty ??
+            item?.existingQuantity ??
+            item?.qty ??
+            ''
+        )
+            .toString()
+            .trim(),
+        proposedQty: (item?.proposedQty ?? item?.proposed_qty ?? item?.proposedQuantity ?? '')
+            .toString()
+            .trim(),
+        price: item?.price !== undefined && item?.price !== null ? String(item.price).trim() : '',
+        images: [],
+    }));
+};
+
+const validateAreasForCustomer = async (areas, customerId) => {
+    if (!areas?.length || !customerId) return { valid: true };
+    const electricCompany = await getElectricCompanyForCustomer(customerId);
+    const category = resolveProductCategory(electricCompany);
+    return validateAreaProducts(areas, category);
+};
+
+const buildAreasWithImages = async (areasInput, files) => {
+    const areas = parseAreasInput(areasInput);
+    if (areas === null) return null;
+
+    const filesByField = {};
+    for (const file of files || []) {
+        if (/^area_images_\d+$/.test(file.fieldname)) {
+            if (!filesByField[file.fieldname]) filesByField[file.fieldname] = [];
+            filesByField[file.fieldname].push(file);
+        }
+    }
+
+    for (let i = 0; i < areas.length; i++) {
+        const fieldFiles = filesByField[`area_images_${i}`] || [];
+        areas[i].images = await processUploadedImages(fieldFiles);
+    }
+
+    return areas;
+};
 
 const ensureUploadDir = async () => {
     await fs.promises.mkdir(UPLOAD_DIR, { recursive: true });
@@ -52,7 +143,7 @@ const processUploadedImages = async (files) => {
 exports.createSurvey = async (req, res) => {
     try {
         const user_id = req.user.id;
-        const { id, customer_id, notes, status, surveyDate, area, heightInInches, existingFixtureType, otherFixtureType, existingBulbs, existingQuantity, proposedFixture, proposedQuantity, pricePerUnit, totalPrice, note, markAsCompleted, MarkasCompleted } = req.body;
+        const { id, customer_id, areaName, note, notes, status, surveyDate, areas, markAsCompleted, MarkasCompleted } = req.body;
         const completionFlag = markAsCompleted !== undefined ? markAsCompleted : MarkasCompleted !== undefined ? MarkasCompleted : false;
 
         const user = await User.findById(user_id);
@@ -60,7 +151,12 @@ exports.createSurvey = async (req, res) => {
             return res.status(401).json({ message: 'Invalid authenticated user.' });
         }
 
-        const newImages = await processUploadedImages(req.files);
+        const processedAreas = areas !== undefined ? await buildAreasWithImages(areas, req.files) : null;
+        if (processedAreas === null && areas !== undefined && areas !== '') {
+            return res.status(400).json({
+                message: 'Invalid areas. Send a JSON array with product_id, heightFt, heightIn, existingBulbs, etc.',
+            });
+        }
 
         if (id) {
             // Update existing record
@@ -69,29 +165,29 @@ exports.createSurvey = async (req, res) => {
                 return res.status(404).json({ message: 'Survey not found.' });
             }
 
+            if (processedAreas !== null) {
+                const areaValidation = await validateAreasForCustomer(
+                    processedAreas,
+                    customer_id || survey.customer_id
+                );
+                if (!areaValidation.valid) {
+                    return res.status(400).json({ message: areaValidation.message });
+                }
+            }
+
             const updateData = {
-                area: area !== undefined ? area : survey.area,
-                heightInInches: heightInInches !== undefined ? heightInInches : survey.heightInInches,
-                existingFixtureType: existingFixtureType !== undefined ? existingFixtureType : survey.existingFixtureType,
-                otherFixtureType: otherFixtureType !== undefined ? otherFixtureType : survey.otherFixtureType,
-                existingBulbs: existingBulbs !== undefined ? existingBulbs : survey.existingBulbs,
-                existingQuantity: existingQuantity !== undefined ? existingQuantity : survey.existingQuantity,
-                proposedFixture: proposedFixture !== undefined ? proposedFixture : survey.proposedFixture,
-                proposedQuantity: proposedQuantity !== undefined ? proposedQuantity : survey.proposedQuantity,
-                pricePerUnit: pricePerUnit !== undefined ? pricePerUnit : survey.pricePerUnit,
-                totalPrice: totalPrice !== undefined ? totalPrice : survey.totalPrice,
-                note: note !== undefined ? note : survey.note,
                 status: status || survey.status,
-                notes: notes || survey.notes,
+                areaName: areaName !== undefined ? areaName : survey.areaName,
+                note: note !== undefined ? note : survey.note,
+                notes: notes !== undefined ? notes : survey.notes,
                 surveyDate: surveyDate ? new Date(surveyDate) : survey.surveyDate,
                 markAsCompleted: completionFlag,
             };
 
             if (customer_id) updateData.customer_id = customer_id;
 
-            // Append new images to existing ones if any were uploaded
-            if (newImages.length > 0) {
-                updateData.images = [...survey.images, ...newImages];
+            if (processedAreas !== null) {
+                updateData.areas = processedAreas;
             }
 
             survey = await Survey.findByIdAndUpdate(id, updateData, { new: true });
@@ -99,8 +195,7 @@ exports.createSurvey = async (req, res) => {
             const customer = await Customer.findById(survey.customer_id);
             await createLog('Survey Updated', user_id, customer?.name || 'Unknown', 'Survey', survey._id);
 
-            const surveyResponse = survey.toObject();
-            surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
+            const surveyResponse = await formatSurveyResponse(survey.toObject());
 
             return res.status(200).json({ survey: surveyResponse, message: 'Survey updated successfully.' });
         } else {
@@ -114,21 +209,19 @@ exports.createSurvey = async (req, res) => {
                 return res.status(404).json({ message: 'Customer not found.' });
             }
 
+            if (processedAreas !== null) {
+                const areaValidation = await validateAreasForCustomer(processedAreas, customer_id);
+                if (!areaValidation.valid) {
+                    return res.status(400).json({ message: areaValidation.message });
+                }
+            }
+
             const survey = await Survey.create({
                 customer_id,
                 user_id,
-                area,
-                heightInInches,
-                existingFixtureType,
-                otherFixtureType,
-                existingBulbs,
-                existingQuantity,
-                proposedFixture,
-                proposedQuantity,
-                pricePerUnit,
-                totalPrice,
-                note,
-                images: newImages,
+                areaName: areaName || '',
+                note: note || '',
+                areas: processedAreas !== null ? processedAreas : [],
                 status: status || 'Draft',
                 notes: notes || '',
                 surveyDate: surveyDate ? new Date(surveyDate) : undefined,
@@ -137,15 +230,52 @@ exports.createSurvey = async (req, res) => {
 
             await createLog('Survey Created', user_id, customer.name, 'Survey', survey._id);
 
-            // Add full image URLs to response
-            const surveyResponse = survey.toObject();
-            surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
+            const surveyResponse = await formatSurveyResponse(survey.toObject());
 
             return res.status(201).json({ survey: surveyResponse, message: 'Survey stored successfully.' });
         }
     } catch (error) {
         console.error('Process survey error:', error);
         return res.status(500).json({ message: 'Server error processing survey.' });
+    }
+};
+
+exports.getSurveyProducts = async (req, res) => {
+    try {
+        const { customer_id } = req.query;
+
+        if (!customer_id) {
+            return res.status(400).json({ message: 'customer_id is required.' });
+        }
+
+        const customer = await Customer.findById(customer_id);
+        if (!customer) {
+            return res.status(404).json({ message: 'Customer not found.' });
+        }
+
+        const electricCompany = await getElectricCompanyForCustomer(customer_id);
+        const category = resolveProductCategory(electricCompany);
+
+        if (!category) {
+            return res.status(200).json({
+                electricCompany: electricCompany || '',
+                category: null,
+                products: [],
+                message:
+                    'Lead electric company does not match a product category. Use one of: PSE&G, JCP&L, ATLANTIC CITY ENERGY.',
+            });
+        }
+
+        const products = await Product.find({ category }).sort({ name: 1 }).lean();
+
+        return res.status(200).json({
+            electricCompany,
+            category,
+            products,
+        });
+    } catch (error) {
+        console.error('Get survey products error:', error);
+        return res.status(500).json({ message: 'Server error fetching survey products.' });
     }
 };
 
@@ -176,11 +306,9 @@ exports.listSurveys = async (req, res) => {
         }
 
         const surveys = await Survey.find(filter).sort({ createdAt: -1 }).populate('assignedTo', 'fullName email');
-        const surveysResponse = surveys.map(survey => {
-            const surveyObj = survey.toObject();
-            surveyObj.images = surveyObj.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
-            return surveyObj;
-        });
+        const surveysResponse = await Promise.all(
+            surveys.map((survey) => formatSurveyResponse(survey.toObject()))
+        );
         return res.status(200).json({ surveys: surveysResponse });
     } catch (error) {
         console.error('List surveys error:', error);
@@ -215,11 +343,9 @@ exports.listAssignedSurveys = async (req, res) => {
             .populate('user_id', 'fullName email')
             .populate('assignedTo', 'fullName email');
 
-        const surveysResponse = surveys.map(survey => {
-            const surveyObj = survey.toObject();
-            surveyObj.images = surveyObj.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
-            return surveyObj;
-        });
+        const surveysResponse = await Promise.all(
+            surveys.map((survey) => formatSurveyResponse(survey.toObject()))
+        );
 
         return res.status(200).json({
             message: 'Assigned surveys retrieved successfully.',
@@ -239,8 +365,7 @@ exports.getSurvey = async (req, res) => {
         if (!survey) {
             return res.status(404).json({ message: 'Survey not found.' });
         }
-        const surveyResponse = survey.toObject();
-        surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
+        const surveyResponse = await formatSurveyResponse(survey.toObject());
         return res.status(200).json({ survey: surveyResponse });
     } catch (error) {
         console.error('Get survey error:', error);
@@ -251,23 +376,14 @@ exports.getSurvey = async (req, res) => {
 exports.updateSurvey = async (req, res) => {
     try {
         const { id } = req.params;
-        const { notes, status, surveyDate, area, heightInInches, existingFixtureType, otherFixtureType, existingBulbs, existingQuantity, proposedFixture, proposedQuantity, pricePerUnit, totalPrice, note, markAsCompleted, MarkasCompleted } = req.body;
+        const { areaName, note, notes, status, surveyDate, markAsCompleted, MarkasCompleted } = req.body;
         const updateData = {};
 
+        if (areaName !== undefined) updateData.areaName = areaName;
+        if (note !== undefined) updateData.note = note;
         if (notes !== undefined) updateData.notes = notes;
         if (status) updateData.status = status;
         if (surveyDate) updateData.surveyDate = new Date(surveyDate);
-        if (area !== undefined) updateData.area = area;
-        if (heightInInches !== undefined) updateData.heightInInches = heightInInches;
-        if (existingFixtureType !== undefined) updateData.existingFixtureType = existingFixtureType;
-        if (otherFixtureType !== undefined) updateData.otherFixtureType = otherFixtureType;
-        if (existingBulbs !== undefined) updateData.existingBulbs = existingBulbs;
-        if (existingQuantity !== undefined) updateData.existingQuantity = existingQuantity;
-        if (proposedFixture !== undefined) updateData.proposedFixture = proposedFixture;
-        if (proposedQuantity !== undefined) updateData.proposedQuantity = proposedQuantity;
-        if (pricePerUnit !== undefined) updateData.pricePerUnit = pricePerUnit;
-        if (totalPrice !== undefined) updateData.totalPrice = totalPrice;
-        if (note !== undefined) updateData.note = note;
         if (markAsCompleted !== undefined) updateData.markAsCompleted = markAsCompleted;
         if (MarkasCompleted !== undefined) updateData.markAsCompleted = MarkasCompleted;
 
@@ -280,8 +396,7 @@ exports.updateSurvey = async (req, res) => {
             return res.status(404).json({ message: 'Survey not found.' });
         }
 
-        const surveyResponse = updatedSurvey.toObject();
-        surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
+        const surveyResponse = await formatSurveyResponse(updatedSurvey.toObject());
 
         await createLog('Survey Updated', req.user.id, (await Customer.findById(updatedSurvey.customer_id))?.name || 'Unknown', 'Survey', updatedSurvey._id);
 
@@ -313,8 +428,7 @@ exports.markSurveyCompleted = async (req, res) => {
         survey.markAsCompleted = completionFlag;
         await survey.save();
 
-        const surveyResponse = survey.toObject();
-        surveyResponse.images = surveyResponse.images.map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
+        const surveyResponse = await formatSurveyResponse(survey.toObject());
 
         await createLog('Survey Marked Completed', user_id, (await Customer.findById(customer_id))?.name || 'Unknown', 'Survey', survey._id);
 
@@ -339,7 +453,8 @@ exports.verifySurvey = async (req, res) => {
             return res.status(404).json({ message: 'Survey not found.' });
         }
 
-        const newImages = await processUploadedImages(req.files);
+        const verifyImageFiles = (req.files || []).filter((file) => file.fieldname === 'images');
+        const newImages = await processUploadedImages(verifyImageFiles);
         if (newImages.length > 0) {
             survey.verifyImages = [...(survey.verifyImages || []), ...newImages];
         }
@@ -354,9 +469,7 @@ exports.verifySurvey = async (req, res) => {
             await Customer.findByIdAndUpdate(survey.customer_id, { installationStatus: 'reopen' });
         }
 
-        const surveyResponse = survey.toObject();
-        surveyResponse.images = (surveyResponse.images || []).map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
-        surveyResponse.verifyImages = (surveyResponse.verifyImages || []).map(img => `https://ramgeneral-api.onrender.com/uploads/surveys/${img}`);
+        const surveyResponse = await formatSurveyResponse(survey.toObject());
 
         await createLog('Survey Verified', user_id, (await Customer.findById(survey.customer_id))?.name || 'Unknown', 'Survey', survey._id);
 

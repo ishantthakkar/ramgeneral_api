@@ -30,18 +30,20 @@ const upload = multer({
   },
   limits: {
     fileSize: 10 * 1024 * 1024,
+    files: 50,
   },
 });
 
-router.post('/surveys', verifyToken, upload.array('images', 5), surveyController.createSurvey);
+router.post('/surveys', verifyToken, upload.any(), surveyController.createSurvey);
 router.get('/surveys', verifyToken, surveyController.listSurveys);
+router.get('/surveys/products', verifyToken, surveyController.getSurveyProducts);
 router.get('/surveys/assigned', verifyToken, surveyController.listAssignedSurveys);
 router.get('/surveys/:id', verifyToken, surveyController.getSurvey);
 router.put('/surveys/:id', verifyToken, surveyController.updateSurvey);
 router.post('/surveys/:id/assign', verifyToken, surveyController.assignSurvey);
 router.post('/surveys/:id/assign-contractor', verifyToken, surveyController.assignContractor);
 router.post('/surveys/mark-completed', verifyToken, surveyController.markSurveyCompleted);
-router.post('/surveys/verify', verifyToken, upload.array('images', 5), surveyController.verifySurvey);
+router.post('/surveys/verify', verifyToken, upload.any(), surveyController.verifySurvey);
 router.get('/installation', verifyToken, surveyController.installation);
 
 module.exports = router;

@@ -550,6 +550,59 @@ exports.getLead = async (req, res) => {
   }
 };
 
+const mapLeadNotesForCustomer = (leadNotes) => {
+  if (!Array.isArray(leadNotes)) return [];
+  return leadNotes
+    .map((n) => {
+      const noteText = (n?.note ?? '').toString().trim();
+      const title = (n?.title ?? '').toString().trim();
+      if (!noteText && !title) return null;
+      return {
+        title,
+        note: noteText || title,
+        createdAt: n?.createdAt || new Date(),
+      };
+    })
+    .filter(Boolean);
+};
+
+const buildCustomerPayloadFromLead = (lead, userId) => {
+  const leadObj = lead.toObject ? lead.toObject() : lead;
+
+  return {
+    leadId: leadObj._id,
+    user_id: leadObj.user_id || userId,
+    lead_id: leadObj.lead_id || '',
+    leadName: leadObj.leadName || '',
+    name: leadObj.name || '',
+    dba: leadObj.dba || '',
+    legalName: leadObj.legalName || '',
+    ...(leadObj.accountNumber ? { accountNumber: leadObj.accountNumber } : {}),
+    company: leadObj.company || '',
+    electricCompany: leadObj.electricCompany || '',
+    uploadElectricityBill: normalizeBillFilenames(leadObj.uploadElectricityBill),
+    mobileNumber: leadObj.mobileNumber || '',
+    email: leadObj.email || '',
+    leadSource: leadObj.leadSource || '',
+    address: {
+      street: leadObj.street || '',
+      city: leadObj.city || '',
+      state: leadObj.state || '',
+      zip: leadObj.zip || '',
+    },
+    addresses: toPlainSubdocs(leadObj.addresses),
+    contactInfo: toPlainSubdocs(leadObj.contactInfo),
+    notes: mapLeadNotesForCustomer(leadObj.notes),
+    activityLog: toPlainSubdocs(leadObj.activityLog),
+    createdByName: leadObj.createdByName || '',
+    createdByEmail: leadObj.createdByEmail || '',
+    createdByRole: leadObj.createdByRole || '',
+    convertedDate: new Date(),
+    lastActivity: leadObj.lastActivity || new Date(),
+    status: 'New',
+  };
+};
+
 exports.convertToCustomer = async (req, res) => {
   try {
     const { id } = req.params;
@@ -559,28 +612,14 @@ exports.convertToCustomer = async (req, res) => {
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
+    const customerPayload = buildCustomerPayloadFromLead(lead, req.user.id);
+
     let customer = await Customer.findOne({ leadId: lead._id });
     if (!customer) {
-      customer = await Customer.create({
-        leadId: lead._id,
-        user_id: lead.user_id || req.user.id,
-        name: lead.name,
-        company: lead.company,
-        mobileNumber: lead.mobileNumber,
-        email: lead.email,
-        leadSource: lead.leadSource,
-        convertedDate: new Date(),
-        lastActivity: lead.lastActivity,
-        status: 'New',
-        address: {
-          street: lead.street,
-          city: lead.city,
-          state: lead.state,
-          zip: lead.zip,
-        },
-        notes: lead.notes || [],
-        activityLog: lead.activityLog,
-      });
+      customer = await Customer.create(customerPayload);
+    } else {
+      Object.assign(customer, customerPayload);
+      await customer.save();
     }
 
     lead.status = 'Converted To Customer';
