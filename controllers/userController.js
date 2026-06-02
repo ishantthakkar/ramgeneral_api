@@ -22,6 +22,95 @@ const ALLOWED_ROLES = Object.values(ROLE_VARIANTS).flat();
 const normalizeRoleName = (value) =>
   (value || '').toString().trim().toLowerCase().replace(/_/g, ' ');
 
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function normalizeDayName(value) {
+  return (value || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function isWorkingDayMatch(workingDayValue, targetDate) {
+  if (workingDayValue === undefined || workingDayValue === null) return false;
+
+  // Accept numeric day index: 0-6 (Sun-Sat)
+  const dayIndexText = workingDayValue.toString().trim();
+  if (/^\d$/.test(dayIndexText)) {
+    const idx = Number(dayIndexText);
+    return idx >= 0 && idx <= 6 && idx === targetDate.getDay();
+  }
+
+  const targetFull = normalizeDayName(DAY_NAMES[targetDate.getDay()]);
+  const targetShort = targetFull.slice(0, 3); // sun, mon, tue...
+
+  const normalized = normalizeDayName(workingDayValue);
+  if (!normalized) return false;
+
+  const normalizedShort = normalized.slice(0, 3);
+  return normalized === targetFull || normalizedShort === targetShort;
+}
+
+function parseDateOnly(value) {
+  if (!value) return null;
+  const text = value.toString().trim();
+  if (!text) return null;
+
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!isoMatch) return null;
+
+  const y = Number(isoMatch[1]);
+  const m = Number(isoMatch[2]);
+  const d = Number(isoMatch[3]);
+  if (!y || !m || !d) return null;
+
+  const dt = new Date(y, m - 1, d);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt;
+}
+
+function parseTimeToMinutes(value) {
+  const text = (value || '').toString().trim();
+  if (!text) return null;
+
+  // Accept: "HH:mm"
+  const h24 = /^(\d{1,2}):(\d{2})$/.exec(text);
+  if (h24) {
+    const hh = Number(h24[1]);
+    const mm = Number(h24[2]);
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+    return hh * 60 + mm;
+  }
+
+  // Accept: "h:mm AM" or "h:mmPM"
+  const h12 = /^(\d{1,2}):(\d{2})\s*([ap]m)$/i.exec(text);
+  if (h12) {
+    let hh = Number(h12[1]);
+    const mm = Number(h12[2]);
+    const ampm = h12[3].toLowerCase();
+    if (hh < 1 || hh > 12 || mm < 0 || mm > 59) return null;
+    if (ampm === 'pm' && hh !== 12) hh += 12;
+    if (ampm === 'am' && hh === 12) hh = 0;
+    return hh * 60 + mm;
+  }
+
+  return null;
+}
+
+function formatMinutesToRange(startMinutes, endMinutes) {
+  function toLabel(mins) {
+    const hh24 = Math.floor(mins / 60) % 24;
+    const mm = mins % 60;
+    const ampm = hh24 >= 12 ? 'PM' : 'AM';
+    let hh12 = hh24 % 12;
+    if (hh12 === 0) hh12 = 12;
+    const mmStr = String(mm).padStart(2, '0');
+    return `${hh12}:${mmStr} ${ampm}`;
+  }
+  return `${toLabel(startMinutes)} - ${toLabel(endMinutes)}`;
+}
+
 const getCanonicalRole = (value) => {
   if (!value || typeof value !== 'string') return null;
   const normalized = normalizeRoleName(value);
@@ -174,6 +263,67 @@ exports.loginUser = async (req, res) => {
         console.error('User login error:', error);
         return res.status(500).json({ message: 'Server error during user login.' });
     }
+};
+
+exports.getUserWorkingHours = async (req, res) => {
+  try {
+    const id = req.user?.id;
+    const dateParam = req.query?.date;
+
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(401).json({ message: 'Invalid authenticated user.' });
+    }
+
+    const user = await User.findById(id)
+      .select('workingDays workingFrom workingTo fullName')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const requestedDate = parseDateOnly(dateParam) || new Date();
+    const dayName = DAY_NAMES[requestedDate.getDay()];
+    const isWorkingToday = (user.workingDays || []).some((d) =>
+      isWorkingDayMatch(d, requestedDate)
+    );
+
+    const fromMinutes = parseTimeToMinutes(user.workingFrom);
+    const toMinutes = parseTimeToMinutes(user.workingTo);
+
+    const now = new Date();
+    const isToday =
+      now.getFullYear() === requestedDate.getFullYear() &&
+      now.getMonth() === requestedDate.getMonth() &&
+      now.getDate() === requestedDate.getDate();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+    const slot = [];
+    for (let start = 0; start < 24 * 60; start += 60) {
+      const end = Math.min(start + 60, 24 * 60);
+      const hasWorkingWindow =
+        fromMinutes !== null && toMinutes !== null && toMinutes > fromMinutes;
+      const isWithinWorkingHours = hasWorkingWindow
+        ? start >= fromMinutes && end <= toMinutes
+        : false;
+
+      slot.push({
+        time: formatMinutesToRange(start, end),
+        available: Boolean(isWorkingToday && isWithinWorkingHours),
+      });
+    }
+
+    return res.status(200).json({
+      user_id: id,
+      fullName: user.fullName,
+      date: requestedDate.toISOString().slice(0, 10),
+      day: dayName,
+      slot,
+    });
+  } catch (error) {
+    console.error('Get user working hours error:', error);
+    return res.status(500).json({ message: 'Server error fetching user working hours.' });
+  }
 };
 
 exports.createUser = async (req, res) => {
