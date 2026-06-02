@@ -115,6 +115,68 @@ exports.createProduct = async (req, res) => {
   }
 };
 
+exports.updateProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { sku, name, salesPrice, commission, installationCost, price } = req.body;
+
+    if (!sku || !name) {
+      return res.status(400).json({ message: 'SKU and name are required.' });
+    }
+
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({ message: 'Product not found.' });
+    }
+
+    const salesPriceResult = parseMoney(
+      salesPrice !== undefined ? salesPrice : price,
+      'Sales price'
+    );
+    if (salesPriceResult.error) {
+      return res.status(400).json({ message: salesPriceResult.error });
+    }
+
+    const commissionResult = parseMoney(commission ?? 0, 'Commission');
+    if (commissionResult.error) {
+      return res.status(400).json({ message: commissionResult.error });
+    }
+
+    const installationCostResult = parseMoney(installationCost ?? 0, 'Installation cost');
+    if (installationCostResult.error) {
+      return res.status(400).json({ message: installationCostResult.error });
+    }
+
+    const trimmedSku = sku.trim();
+    const existingSku = await Product.findOne({ sku: trimmedSku, _id: { $ne: id } });
+    if (existingSku) {
+      return res.status(400).json({ message: 'A product with this SKU already exists.' });
+    }
+
+    product.sku = trimmedSku;
+    product.name = name.trim();
+    product.salesPrice = salesPriceResult.value;
+    product.commission = commissionResult.value;
+    product.installationCost = installationCostResult.value;
+    await product.save();
+
+    if (req.user?.id) {
+      await createLog('Product Updated', req.user.id, product.name, 'Product', product._id);
+    }
+
+    return res.status(200).json({
+      message: 'Product updated successfully.',
+      product: formatProduct(product),
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'A product with this SKU already exists.' });
+    }
+    console.error('Update product error:', error);
+    return res.status(500).json({ message: 'Server error updating product.' });
+  }
+};
+
 exports.getProduct = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);

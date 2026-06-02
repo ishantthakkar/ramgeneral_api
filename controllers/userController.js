@@ -40,6 +40,8 @@ const isSalesManagerRole = (value) =>
   ROLE_VARIANTS.sales_manager.some((v) => normalizeRoleName(v) === normalizeRoleName(value));
 const isProjectManagerRole = (value) =>
   ROLE_VARIANTS.project_manager.some((v) => normalizeRoleName(v) === normalizeRoleName(value));
+const isAdminRole = (value) =>
+  ROLE_VARIANTS.admin.some((v) => normalizeRoleName(v) === normalizeRoleName(value));
 
 const resolveRoleNameFromInput = async (userRole) => {
   if (mongoose.Types.ObjectId.isValid(userRole)) {
@@ -69,16 +71,16 @@ const validateAndResolveReportsTo = async (userRoleName, reportsToId, userId = n
     return { reportsTo: manager._id };
   }
 
-  if (role === 'sales manager') {
+  if (role === 'sales manager' || role === 'project manager') {
     if (!reportsToId || !mongoose.Types.ObjectId.isValid(reportsToId)) {
-      return { error: 'Project manager is required for sales manager.' };
+      return { error: 'Admin is required for sales manager and project manager.' };
     }
     if (userId && reportsToId.toString() === userId.toString()) {
       return { error: 'A user cannot report to themselves.' };
     }
     const manager = await User.findById(reportsToId);
-    if (!manager || !isProjectManagerRole(manager.userRole)) {
-      return { error: 'Selected supervisor must be a project manager.' };
+    if (!manager || !isAdminRole(manager.userRole)) {
+      return { error: 'Selected supervisor must be an admin.' };
     }
     return { reportsTo: manager._id };
   }
