@@ -1,5 +1,6 @@
 const Product = require('../models/Product');
 const { createLog } = require('../utils/logger');
+const { CATEGORIES } = require('../models/Product');
 
 function formatProduct(doc) {
   const p = doc.toObject ? doc.toObject() : doc;
@@ -25,7 +26,27 @@ function parseMoney(value, fieldName) {
 
 exports.listProducts = async (req, res) => {
   try {
-    const products = await Product.find({}).sort({ createdAt: -1 });
+    const { type, category } = req.query;
+
+    const filter = {};
+    const requestedType = (type ?? category ?? '').toString().trim();
+
+    if (requestedType) {
+      const matchedCategory =
+        CATEGORIES.find((c) => c.toLowerCase() === requestedType.toLowerCase()) ||
+        null;
+
+      if (!matchedCategory) {
+        return res.status(400).json({
+          message: 'Invalid product type.',
+          allowedTypes: CATEGORIES,
+        });
+      }
+
+      filter.category = matchedCategory;
+    }
+
+    const products = await Product.find(filter).sort({ createdAt: -1 });
     const formatted = products.map(formatProduct);
 
     return res.status(200).json({
