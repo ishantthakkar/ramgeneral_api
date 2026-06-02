@@ -1062,7 +1062,7 @@ exports.addCustomerActivity = async (req, res) => {
   try {
     const { id: customer_id } = req.params;
     const user_id = req.user.id;
-    const { activityType, date, outcome, nextFollowUpDate } = req.body;
+    const { activityType, date, timeSlot, location, address, notes, outcome, nextFollowUpDate } = req.body;
 
     if (!activityType) {
       return res.status(400).json({ message: 'activityType is required.' });
@@ -1078,6 +1078,10 @@ exports.addCustomerActivity = async (req, res) => {
       user_id,
       activityType,
       date: date || Date.now(),
+      timeSlot: timeSlot || '',
+      location: location || '',
+      address: address || '',
+      notes: notes || '',
       outcome: outcome || '',
       nextFollowUpDate,
     });

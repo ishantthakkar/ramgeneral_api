@@ -14,12 +14,41 @@ const customerActivitySchema = new mongoose.Schema({
   activityType: {
     type: String,
     required: true,
-    enum: ['Call', 'Meeting', 'Site Visit', 'WhatsApp', 'Email', 'Follow-up'],
+    enum: [
+      'Call',
+      'Meeting',
+      'Site Visit',
+      'WhatsApp',
+      'Email',
+      'Follow-up',
+      'Schedule a Meeting',
+      'Schedule Site Visit',
+    ],
     trim: true,
   },
   date: {
     type: Date,
     default: Date.now,
+  },
+  timeSlot: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  location: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  address: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  notes: {
+    type: String,
+    trim: true,
+    default: '',
   },
   outcome: {
     type: String,
