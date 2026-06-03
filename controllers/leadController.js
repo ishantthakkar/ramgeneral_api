@@ -4,7 +4,11 @@ const Customer = require('../models/Customer');
 const User = require('../models/User');
 const Role = require('../models/Role');
 const { createLog } = require('../utils/logger');
-const { SALES_PERSON_ROLE_VARIANTS, isSalesPersonRole } = require('../constants/userRoles');
+const {
+  SALES_PERSON_ROLE_VARIANTS,
+  isSalesPersonRole,
+  isSalesManagerRole,
+} = require('../constants/userRoles');
 const {
   LEAD_SOURCES,
   LEAD_SOURCE_CODE_LIST,
@@ -634,6 +638,40 @@ exports.assignLeadToSalesPerson = async (req, res) => {
   }
 };
 
+const mapLeadToSummary = (lead) => ({
+  id: lead._id,
+  lead_id: lead.lead_id || '',
+  leadName: lead.leadName,
+  name: lead.name,
+  company: lead.company,
+  dba: lead.dba,
+  legalName: lead.legalName,
+  accountNumber: lead.accountNumber,
+  electricCompany: lead.electricCompany,
+  uploadElectricityBill: normalizeBillFilenames(lead.uploadElectricityBill),
+  mobileNumber: lead.mobileNumber,
+  email: lead.email,
+  leadSource: lead.leadSource,
+  leadSourceName: getLeadSourceName(lead.leadSource),
+  addresses: lead.addresses || [],
+  contactInfo: lead.contactInfo || [],
+  street: lead.street,
+  city: lead.city,
+  state: lead.state,
+  zip: lead.zip,
+  notes: lead.notes,
+  createdDate: lead.createdAt,
+  lastActivity: lead.lastActivity,
+  status: lead.status,
+  lostReason: lead.lostReason || '',
+  user_id: lead.user_id?._id || lead.user_id,
+  salesPersonName: lead.user_id?.fullName || '',
+  assignedBy: lead.assignedBy?._id || lead.assignedBy || null,
+  assignedByName: lead.assignedBy?.fullName || '',
+  assignedAt: lead.assignedAt || null,
+  createdByName: lead.createdByName,
+});
+
 exports.listLeads = async (req, res) => {
   try {
     const { status, salesPerson } = req.query;
@@ -657,44 +695,101 @@ exports.listLeads = async (req, res) => {
       .populate('user_id', 'fullName email')
       .populate('assignedBy', 'fullName email');
 
-    const leadSummaries = leads.map((lead) => ({
-      id: lead._id,
-      lead_id: lead.lead_id || '',
-      leadName: lead.leadName,
-      name: lead.name,
-      company: lead.company,
-      dba: lead.dba,
-      legalName: lead.legalName,
-      accountNumber: lead.accountNumber,
-      electricCompany: lead.electricCompany,
-      uploadElectricityBill: normalizeBillFilenames(lead.uploadElectricityBill),
-      mobileNumber: lead.mobileNumber,
-      email: lead.email,
-      leadSource: lead.leadSource,
-      leadSourceName: getLeadSourceName(lead.leadSource),
-      addresses: lead.addresses || [],
-      contactInfo: lead.contactInfo || [],
-      street: lead.street,
-      city: lead.city,
-      state: lead.state,
-      zip: lead.zip,
-      notes: lead.notes,
-      createdDate: lead.createdAt,
-      lastActivity: lead.lastActivity,
-      status: lead.status,
-      lostReason: lead.lostReason || '',
-      user_id: lead.user_id?._id || lead.user_id,
-      salesPersonName: lead.user_id?.fullName || '',
-      assignedBy: lead.assignedBy?._id || lead.assignedBy || null,
-      assignedByName: lead.assignedBy?.fullName || '',
-      assignedAt: lead.assignedAt || null,
-      createdByName: lead.createdByName,
-    }));
+    const leadSummaries = leads.map((lead) => mapLeadToSummary(lead));
 
     return res.status(200).json({ leads: leadSummaries });
   } catch (error) {
     console.error('List leads error:', error);
     return res.status(500).json({ message: 'Server error listing leads.' });
+  }
+};
+
+exports.listSalesManagerTeamLeads = async (req, res) => {
+  try {
+    const managerId = req.user.id;
+    const { status, salesPersonId, salesPerson } = req.query;
+    const filterSalesPersonId = salesPersonId || salesPerson;
+
+    const manager = await User.findById(managerId)
+      .select('-password -refreshTokens -otpCode -otpExpiresAt')
+      .lean();
+    if (!manager) {
+      return res.status(401).json({ message: 'Invalid authenticated user.' });
+    }
+
+    if (!isSalesManagerRole(manager.userRole)) {
+      return res.status(403).json({
+        message: 'Only sales managers can view team leads.',
+      });
+    }
+
+    const salesPersons = await User.find({
+      reportsTo: managerId,
+      userRole: { $in: SALES_PERSON_ROLE_VARIANTS },
+    })
+      .select('-password -refreshTokens -otpCode -otpExpiresAt')
+      .sort({ fullName: 1 })
+      .lean();
+
+    const salesPersonIds = salesPersons.map((u) => u._id);
+
+    if (!salesPersonIds.length) {
+      return res.status(200).json({
+        message: 'No sales persons report to this manager.',
+        salesPersons: [],
+        team: [],
+        leads: [],
+        total: 0,
+      });
+    }
+
+    const leadFilter = { user_id: { $in: salesPersonIds } };
+
+    if (status) {
+      if (!ALLOWED_STATUSES.includes(status)) {
+        return res.status(400).json({
+          message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
+        });
+      }
+      leadFilter.status = status;
+    }
+
+    if (filterSalesPersonId) {
+      if (!mongoose.Types.ObjectId.isValid(filterSalesPersonId)) {
+        return res.status(400).json({ message: 'Invalid salesPersonId.' });
+      }
+      const isOnTeam = salesPersonIds.some(
+        (id) => id.toString() === filterSalesPersonId.toString()
+      );
+      if (!isOnTeam) {
+        return res.status(403).json({
+          message: 'Sales person is not on your team.',
+        });
+      }
+      leadFilter.user_id = filterSalesPersonId;
+    }
+
+    const leads = await Lead.find(leadFilter)
+      .sort({ createdAt: -1 })
+      .populate('user_id')
+      .populate('assignedBy');
+
+    const fullLeads = leads.map((lead) => formatLeadResponse(lead.toObject()));
+
+    const getLeadOwnerId = (lead) => {
+      const owner = lead.user_id;
+      if (!owner) return null;
+      return owner._id?.toString?.() || owner.toString?.();
+    };
+
+    return res.status(200).json({
+      message: 'Team leads retrieved successfully.',
+      leads: fullLeads,
+      total: fullLeads.length,
+    });
+  } catch (error) {
+    console.error('List sales manager team leads error:', error);
+    return res.status(500).json({ message: 'Server error fetching team leads.' });
   }
 };
 

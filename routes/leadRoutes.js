@@ -40,6 +40,7 @@ const uploadElectricityBill = multer({
 
 router.get('/lead-sources', verifyToken, leadController.getLeadSources);
 router.get('/leads/sales-persons', verifyToken, leadController.listSalesPersons);
+router.get('/leads/sales-manager-leads', verifyToken, leadController.listSalesManagerTeamLeads);
 router.get('/leads', verifyToken, leadController.listLeads);
 router.get('/leads/:id', verifyToken, leadController.getLead);
 router.post(
