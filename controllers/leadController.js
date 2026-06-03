@@ -551,8 +551,14 @@ exports.listSalesPersons = async (req, res) => {
     const orClauses = [{ userRole: { $in: SALES_PERSON_ROLE_VARIANTS } }];
     if (role) orClauses.push({ roleId: role._id });
 
-    const users = await User.find({ $or: orClauses })
-      .select('fullName email mobileNumber company status userRole')
+    const filter = { $or: orClauses };
+    const currentUser = await User.findById(req.user.id).select('userRole').lean();
+    if (currentUser && isSalesManagerRole(currentUser.userRole)) {
+      filter.reportsTo = req.user.id;
+    }
+
+    const users = await User.find(filter)
+      .select('fullName email mobileNumber company status userRole reportsTo')
       .sort({ fullName: 1 })
       .lean();
 
@@ -600,6 +606,15 @@ exports.assignLeadToSalesPerson = async (req, res) => {
 
     const assigner = await User.findById(req.user.id);
     const assignerName = assigner?.fullName || assigner?.email || 'Manager';
+
+    if (isSalesManagerRole(assigner?.userRole)) {
+      const reportsToId = salesPerson.reportsTo?.toString?.() || String(salesPerson.reportsTo || '');
+      if (reportsToId !== req.user.id.toString()) {
+        return res.status(403).json({
+          message: 'You can only assign leads to sales persons on your team.',
+        });
+      }
+    }
 
     lead.user_id = salesPerson._id;
     lead.assignedBy = req.user.id;
