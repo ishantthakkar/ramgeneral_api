@@ -1099,7 +1099,7 @@ exports.addCustomerActivity = async (req, res) => {
   }
 };
 
-exports.getCustomerActivities = async (req, res) => {
+exports.getCustomerActivities = async (req, res) => {dddd
   try {
     const { id: customer_id } = req.params;
 

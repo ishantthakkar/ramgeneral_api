@@ -232,6 +232,23 @@ const customerSchema = new mongoose.Schema({
       timestamp: { type: Date, default: Date.now },
     },
   ],
+  quotations: [
+    {
+      url: { type: String, trim: true, default: '' },
+      filename: { type: String, trim: true, default: '' },
+      mimeType: { type: String, trim: true, default: '' },
+      source: {
+        type: String,
+        enum: ['generated', 'uploaded'],
+        default: 'generated',
+      },
+      surveyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Survey' },
+      subtotal: { type: Number, default: 0 },
+      taxAmount: { type: Number, default: 0 },
+      grandTotal: { type: Number, default: 0 },
+      createdAt: { type: Date, default: Date.now },
+    },
+  ],
 }, {
   timestamps: true,
 });

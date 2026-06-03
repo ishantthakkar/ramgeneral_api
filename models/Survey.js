@@ -29,6 +29,7 @@ const surveySchema = new mongoose.Schema({
   note: { type: String, trim: true, default: '' },
   areas: [
     {
+      areaName: { type: String, trim: true, default: '' },
       product_id: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Product',

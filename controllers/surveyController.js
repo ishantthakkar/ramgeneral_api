@@ -52,6 +52,7 @@ const parseAreasInput = (areas) => {
     const parsed = tryParseJson(areas);
     if (!Array.isArray(parsed)) return null;
     return parsed.map((item) => ({
+        areaName: (item?.areaName ?? item?.area_name ?? '').toString().trim(),
         product_id: toProductObjectId(item?.product_id ?? item?.productId),
         heightFt: (item?.heightFt ?? item?.height_ft ?? '').toString().trim(),
         heightIn: (item?.heightIn ?? item?.height_in ?? '').toString().trim(),

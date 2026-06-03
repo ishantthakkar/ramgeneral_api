@@ -1,5 +1,6 @@
 const express = require('express');
 const customerController = require('../controllers/customerController');
+const quotationController = require('../controllers/quotationController');
 const { verifyToken } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -64,6 +65,37 @@ const uploadElectricityBill = multer({
     },
 });
 
+const quotationUploadStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const uploadPath = path.join(__dirname, '../uploads/quotations');
+        fs.mkdirSync(uploadPath, { recursive: true });
+        cb(null, uploadPath);
+    },
+    filename: (req, file, cb) => {
+        const customerId = req.params.customerId || req.params.id || 'customer';
+        const timestamp = Date.now();
+        const unique = Math.round(Math.random() * 1e9);
+        const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+        cb(null, `${customerId}-${timestamp}-${unique}-${safeName}`);
+    },
+});
+
+const uploadQuotation = multer({
+    storage: quotationUploadStorage,
+    fileFilter: (req, file, cb) => {
+        const isImage = file.mimetype && file.mimetype.startsWith('image/');
+        const isPdf = file.mimetype === 'application/pdf';
+        if (!isImage && !isPdf) {
+            return cb(new Error('Only PDF or image files are allowed.'), false);
+        }
+        cb(null, true);
+    },
+    limits: {
+        fileSize: 10 * 1024 * 1024,
+        files: 20,
+    },
+});
+
 router.get('/customers', verifyToken, customerController.listCustomers);
 router.get('/customers-list', verifyToken, customerController.listConvertedCustomers);
 router.get('/customers-user', verifyToken, customerController.getCustomersByUser);
@@ -89,6 +121,20 @@ router.post('/customers/:id/materials', verifyToken, upload.array('images', 10),
 router.post('/customers/:id/assign-to-contractor', verifyToken, customerController.assignToContractor);
 router.post('/customers/:id/verify', verifyToken, customerController.verifyCustomer);
 router.post('/:id/activities', verifyToken, customerController.addCustomerActivity);
+router.post('/:customerId/quotation', verifyToken, quotationController.createQuotation);
+router.post('/customers/:customerId/quotation', verifyToken, quotationController.createQuotation);
+router.post(
+    '/:customerId/quotation/upload',
+    verifyToken,
+    uploadQuotation.array('quotations', 20),
+    quotationController.uploadQuotation
+);
+router.post(
+    '/customers/:customerId/quotation/upload',
+    verifyToken,
+    uploadQuotation.array('quotations', 20),
+    quotationController.uploadQuotation
+);
 router.post('/customers/:id/commissions', verifyToken, customerController.updateCustomerCommissions);
 router.get('/customers/:id/activities', verifyToken, customerController.getCustomerActivities);
 router.post('/:id/edit-status', verifyToken, customerController.editCustomerStatus);
