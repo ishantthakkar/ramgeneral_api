@@ -126,8 +126,9 @@ exports.listConvertedCustomers = async (req, res) => {
 
     const customerSummaries = customers.map((customer) => ({
       id: customer._id,
-      leadId: customer.lead_id,
-      leadName: customer.leadName,
+      lead_id: customer.lead_id || '',
+      leadId: customer.lead_id || '',
+      leadName: customer.leadName || customer.name || '',
       dba: customer.dba,
       legalName: customer.legalName,
       electricCompany: customer.electricCompany,
