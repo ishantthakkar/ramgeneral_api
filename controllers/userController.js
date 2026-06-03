@@ -476,11 +476,11 @@ exports.getUser = async (req, res) => {
                 assignedProjects: await Customer.countDocuments({ assignToContractor: user._id }),
                 completedInstallations: await Customer.countDocuments({
                     assignToContractor: user._id,
-                    contractorStatus: 'completed',
+                    installationStatus: 'completed',
                 }),
                 pendingInstallations: await Customer.countDocuments({
                     assignToContractor: user._id,
-                    contractorStatus: { $ne: 'completed' },
+                    installationStatus: { $ne: 'completed' },
                 }),
             };
         } else if (isSalesPersonRole(user.userRole)) {
@@ -555,8 +555,8 @@ exports.listUsers = async (req, res) => {
                 const Customer = require('../models/Customer');
                 roleMetrics = {
                     assignedProjects: await Customer.countDocuments({ assignToContractor: user._id }),
-                    completedInstallations: await Customer.countDocuments({ assignToContractor: user._id, contractorStatus: 'completed' }),
-                    pendingInstallations: await Customer.countDocuments({ assignToContractor: user._id, contractorStatus: { $ne: 'completed' } })
+                    completedInstallations: await Customer.countDocuments({ assignToContractor: user._id, installationStatus: 'completed' }),
+                    pendingInstallations: await Customer.countDocuments({ assignToContractor: user._id, installationStatus: { $ne: 'completed' } })
                 };
             } else if (isSalesPersonRole(user.userRole)) {
                 const Customer = require('../models/Customer');
@@ -609,8 +609,8 @@ exports.listContractors = async (req, res) => {
             const Customer = require('../models/Customer');
             const roleMetrics = {
                 assignedProjects: await Customer.countDocuments({ assignToContractor: user._id }),
-                completedInstallations: await Customer.countDocuments({ assignToContractor: user._id, contractorStatus: 'completed' }),
-                pendingInstallations: await Customer.countDocuments({ assignToContractor: user._id, contractorStatus: { $ne: 'completed' } })
+                completedInstallations: await Customer.countDocuments({ assignToContractor: user._id, installationStatus: 'completed' }),
+                pendingInstallations: await Customer.countDocuments({ assignToContractor: user._id, installationStatus: { $ne: 'completed' } })
             };
 
             return {
@@ -682,8 +682,8 @@ exports.getProfile = async (req, res) => {
         if (isContractorRole(user.userRole)) {
             roleMetrics = {
                 assignedProjects: await Customer.countDocuments({ assignToContractor: user._id }),
-                completedInstallations: await Customer.countDocuments({ assignToContractor: user._id, contractorStatus: 'completed' }),
-                pendingInstallations: await Customer.countDocuments({ assignToContractor: user._id, contractorStatus: { $ne: 'completed' } }),
+                completedInstallations: await Customer.countDocuments({ assignToContractor: user._id, installationStatus: 'completed' }),
+                pendingInstallations: await Customer.countDocuments({ assignToContractor: user._id, installationStatus: { $ne: 'completed' } }),
             };
         } else if (isSalesPersonRole(user.userRole)) {
             roleMetrics = {
