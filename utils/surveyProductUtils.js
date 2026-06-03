@@ -38,15 +38,7 @@ const validateAreaProducts = async (areas, category) => {
         message: 'Product not found for one of the survey area items.',
       };
     }
-
-    if (category && product.category !== category) {
-      return {
-        valid: false,
-        message: `Product "${product.name}" is not available for electric company category "${category}".`,
-      };
-    }
   }
-
   return { valid: true };
 };
 
