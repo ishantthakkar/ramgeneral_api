@@ -704,95 +704,6 @@ exports.listLeads = async (req, res) => {
   }
 };
 
-exports.listSalesManagerTeamLeads = async (req, res) => {
-  try {
-    const managerId = req.user.id;
-    const { status, salesPersonId, salesPerson } = req.query;
-    const filterSalesPersonId = salesPersonId || salesPerson;
-
-    const manager = await User.findById(managerId)
-      .select('-password -refreshTokens -otpCode -otpExpiresAt')
-      .lean();
-    if (!manager) {
-      return res.status(401).json({ message: 'Invalid authenticated user.' });
-    }
-
-    if (!isSalesManagerRole(manager.userRole)) {
-      return res.status(403).json({
-        message: 'Only sales managers can view team leads.',
-      });
-    }
-
-    const salesPersons = await User.find({
-      reportsTo: managerId,
-      userRole: { $in: SALES_PERSON_ROLE_VARIANTS },
-    })
-      .select('-password -refreshTokens -otpCode -otpExpiresAt')
-      .sort({ fullName: 1 })
-      .lean();
-
-    const salesPersonIds = salesPersons.map((u) => u._id);
-
-    if (!salesPersonIds.length) {
-      return res.status(200).json({
-        message: 'No sales persons report to this manager.',
-        salesPersons: [],
-        team: [],
-        leads: [],
-        total: 0,
-      });
-    }
-
-    const leadFilter = { user_id: { $in: salesPersonIds } };
-
-    if (status) {
-      if (!ALLOWED_STATUSES.includes(status)) {
-        return res.status(400).json({
-          message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
-        });
-      }
-      leadFilter.status = status;
-    }
-
-    if (filterSalesPersonId) {
-      if (!mongoose.Types.ObjectId.isValid(filterSalesPersonId)) {
-        return res.status(400).json({ message: 'Invalid salesPersonId.' });
-      }
-      const isOnTeam = salesPersonIds.some(
-        (id) => id.toString() === filterSalesPersonId.toString()
-      );
-      if (!isOnTeam) {
-        return res.status(403).json({
-          message: 'Sales person is not on your team.',
-        });
-      }
-      leadFilter.user_id = filterSalesPersonId;
-    }
-
-    const leads = await Lead.find(leadFilter)
-      .sort({ createdAt: -1 })
-      .populate('user_id')
-      .populate('assignedBy');
-
-    const fullLeads = leads.map((lead) => formatLeadResponse(lead.toObject()));
-
-    const getLeadOwnerId = (lead) => {
-      const owner = lead.user_id;
-      if (!owner) return null;
-      return owner._id?.toString?.() || owner.toString?.();
-    };
-
-    return res.status(200).json({
-      message: 'Team leads retrieved successfully.',
-      leads: fullLeads,
-      total: fullLeads.length,
-    });
-  } catch (error) {
-    console.error('List sales manager team leads error:', error);
-    return res.status(500).json({ message: 'Server error fetching team leads.' });
-  }
-};
-
 exports.getLead = async (req, res) => {
   try {
     const { id } = req.params;
@@ -1003,9 +914,66 @@ exports.getLeadsByUser = async (req, res) => {
       return res.status(401).json({ message: 'User not authenticated.' });
     }
 
-    const leads = await Lead.find({ user_id: userId }).sort({ createdAt: -1 });
+    const user = await User.findById(userId).select('userRole').lean();
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid authenticated user.' });
+    }
 
-    return res.status(200).json({ leads });
+    const { status, salesPersonId, salesPerson } = req.query;
+    const filterSalesPersonId = salesPersonId || salesPerson;
+    const leadFilter = {};
+
+    if (isSalesManagerRole(user.userRole)) {
+      const salesPersons = await User.find({
+        reportsTo: userId,
+        userRole: { $in: SALES_PERSON_ROLE_VARIANTS },
+      })
+        .select('_id')
+        .lean();
+
+      const salesPersonIds = salesPersons.map((sp) => sp._id);
+
+      if (!salesPersonIds.length) {
+        return res.status(200).json({ leads: [] });
+      }
+
+      leadFilter.user_id = { $in: salesPersonIds };
+
+      if (filterSalesPersonId) {
+        if (!mongoose.Types.ObjectId.isValid(filterSalesPersonId)) {
+          return res.status(400).json({ message: 'Invalid salesPersonId.' });
+        }
+        const isOnTeam = salesPersonIds.some(
+          (id) => id.toString() === filterSalesPersonId.toString()
+        );
+        if (!isOnTeam) {
+          return res.status(403).json({
+            message: 'Sales person is not on your team.',
+          });
+        }
+        leadFilter.user_id = filterSalesPersonId;
+      }
+    } else {
+      leadFilter.user_id = userId;
+    }
+
+    if (status) {
+      if (!ALLOWED_STATUSES.includes(status)) {
+        return res.status(400).json({
+          message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
+        });
+      }
+      leadFilter.status = status;
+    }
+
+    const leads = await Lead.find(leadFilter)
+      .sort({ createdAt: -1 })
+      .populate('user_id')
+      .populate('assignedBy');
+
+    const formattedLeads = leads.map((lead) => formatLeadResponse(lead.toObject()));
+
+    return res.status(200).json({ leads: formattedLeads });
   } catch (error) {
     console.error('Get leads by user error:', error);
     return res.status(500).json({ message: 'Server error fetching leads by user.' });
