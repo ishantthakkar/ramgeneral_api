@@ -188,27 +188,45 @@ const normalizeContactInfo = (contactInfo) => {
     });
 };
 
+const buildNoteAuthor = (currentUser, is_admin) => ({
+  writtenByName: is_admin
+    ? 'Admin'
+    : (currentUser.fullName || currentUser.email || 'User').toString().trim(),
+  writtenByEmail: (currentUser.email || '').toString().trim().toLowerCase(),
+  writtenByRole: is_admin ? 'admin' : (currentUser.userRole || 'user').toString().trim(),
+});
+
+const attachAuthorToNotes = (notes, author) => {
+  if (!author || !Array.isArray(notes) || notes.length === 0) return notes;
+  return notes.map((n) => ({
+    ...n,
+    writtenByName: (n.writtenByName || '').trim() || author.writtenByName,
+    writtenByEmail: (n.writtenByEmail || '').trim() || author.writtenByEmail,
+    writtenByRole: (n.writtenByRole || '').trim() || author.writtenByRole,
+  }));
+};
+
 const normalizeNotes = (notes) => {
   if (!notes) return [];
   const parsed = tryParseJson(notes);
+  const mapNote = (n) => {
+    if (typeof n === 'string') {
+      return { title: '', note: n.trim(), createdAt: new Date() };
+    }
+    return {
+      title: (n.title ?? '').toString().trim(),
+      note: (n.note ?? '').toString().trim(),
+      writtenByName: (n.writtenByName ?? '').toString().trim(),
+      writtenByEmail: (n.writtenByEmail ?? '').toString().trim().toLowerCase(),
+      writtenByRole: (n.writtenByRole ?? '').toString().trim(),
+      createdAt: n.createdAt ? new Date(n.createdAt) : new Date(),
+    };
+  };
   if (Array.isArray(parsed)) {
-    return parsed.filter(Boolean).map((n) => {
-      if (typeof n === 'string') {
-        return { title: '', note: n.trim(), createdAt: new Date() };
-      }
-      return {
-        title: (n.title ?? '').toString().trim(),
-        note: (n.note ?? '').toString().trim(),
-        createdAt: n.createdAt ? new Date(n.createdAt) : new Date(),
-      };
-    });
+    return parsed.filter(Boolean).map(mapNote);
   }
   if (typeof parsed === 'object' && parsed !== null) {
-    return [{
-      title: (parsed.title ?? '').toString().trim(),
-      note: (parsed.note ?? '').toString().trim(),
-      createdAt: parsed.createdAt ? new Date(parsed.createdAt) : new Date(),
-    }];
+    return [mapNote(parsed)];
   }
   if (typeof parsed === 'string' && parsed.trim()) {
     return [{ title: '', note: parsed.trim(), createdAt: new Date() }];
@@ -272,7 +290,8 @@ exports.createLead = async (req, res) => {
       });
     }
 
-    const processedNotes = normalizeNotes(notes);
+    const noteAuthor = buildNoteAuthor(currentUser, is_admin);
+    const processedNotes = attachAuthorToNotes(normalizeNotes(notes), noteAuthor);
 
     // Process activity log
     let processedActivityLog = [];
