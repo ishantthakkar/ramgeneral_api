@@ -4,10 +4,7 @@ const CustomerActivity = require('../models/CustomerActivity');
 const Survey = require('../models/Survey');
 const User = require('../models/User');
 const { createLog } = require('../utils/logger');
-const {
-  SALES_PERSON_ROLE_VARIANTS,
-  isSalesManagerRole,
-} = require('../constants/userRoles');
+const { isSalesManagerRole } = require('../constants/userRoles');
 const { enrichAreasWithProducts } = require('../utils/surveyProductUtils');
 const {
   getQuotationAddresses,
@@ -153,14 +150,23 @@ async function buildManagerApprovalQuotationsList(customers) {
   return customers.map((customer) => mapCustomerQuotationApprovalItem(customer, userMap));
 }
 
-async function getTeamSalesPersonIds(managerId) {
-  const teamMembers = await User.find({
-    reportsTo: managerId,
-    userRole: { $in: SALES_PERSON_ROLE_VARIANTS },
-  })
-    .select('_id')
-    .lean();
+function applyQuotationStatusFilter(customerFilter, statusFilter) {
+  if (statusFilter === 'all') return;
 
+  if (statusFilter === 'pending') {
+    customerFilter.$or = [
+      { quotationStatus: 'pending' },
+      { quotationStatus: { $exists: false } },
+      { quotationStatus: null },
+    ];
+    return;
+  }
+
+  customerFilter.quotationStatus = statusFilter;
+}
+
+async function getTeamSalesPersonIds(managerId) {
+  const teamMembers = await User.find({ reportsTo: managerId }).select('_id').lean();
   return teamMembers.map((sp) => sp._id);
 }
 
@@ -495,7 +501,9 @@ exports.listQuotationsForManagerApproval = async (req, res) => {
 
     const { quotationStatus, salesPersonId, salesPerson } = req.query;
     const filterSalesPersonId = salesPersonId || salesPerson;
-    const statusFilter = (quotationStatus || 'pending').toString().trim().toLowerCase();
+    const statusFilter = quotationStatus
+      ? quotationStatus.toString().trim().toLowerCase()
+      : 'all';
 
     if (!['pending', 'approved', 'all'].includes(statusFilter)) {
       return res.status(400).json({
@@ -504,14 +512,22 @@ exports.listQuotationsForManagerApproval = async (req, res) => {
     }
 
     const teamIds = await getTeamSalesPersonIds(managerId);
-    if (!teamIds.length) {
-      return res.status(200).json({ quotations: [], total: 0 });
-    }
 
     const customerFilter = {
-      user_id: { $in: teamIds },
+      user_id: { $exists: true, $ne: null },
       quotations: { $elemMatch: { source: 'uploaded' } },
     };
+
+    if (teamIds.length) {
+      customerFilter.user_id = { $in: teamIds };
+    } else {
+      return res.status(200).json({
+        quotations: [],
+        total: 0,
+        message:
+          'No sales persons are assigned to you (reportsTo). Assign team members in user settings.',
+      });
+    }
 
     if (filterSalesPersonId) {
       if (!mongoose.Types.ObjectId.isValid(filterSalesPersonId)) {
@@ -524,9 +540,7 @@ exports.listQuotationsForManagerApproval = async (req, res) => {
       customerFilter.user_id = filterSalesPersonId;
     }
 
-    if (statusFilter !== 'all') {
-      customerFilter.quotationStatus = statusFilter;
-    }
+    applyQuotationStatusFilter(customerFilter, statusFilter);
 
     const customers = await Customer.find(customerFilter)
       .select('name quotations quotationStatus quotationApprovedAt user_id leadId')
