@@ -21,6 +21,35 @@ const {
   stripCustomerLogFields,
 } = require('../utils/customerLeadHelpers');
 const { isSalesManagerRole } = require('../constants/userRoles');
+const { enrichAreasWithProducts } = require('../utils/surveyProductUtils');
+const { applySurveySiteUpdates } = require('../utils/surveySiteUpdate');
+
+async function formatSurveysForResponse(surveys, surveyBaseUrl) {
+  return Promise.all(
+    surveys.map(async (survey) => {
+      const surveyObj = survey.toObject ? survey.toObject() : survey;
+      surveyObj.areas = await enrichAreasWithProducts(surveyObj.areas || []);
+      surveyObj.areas = (surveyObj.areas || []).map((area) => ({
+        ...area,
+        images: (area.images || []).map((img) => {
+          const filename = String(img || '').replace(/^\//, '');
+          if (!filename) return img;
+          if (filename.startsWith('http')) return filename;
+          return `${surveyBaseUrl}${filename}`;
+        }),
+      }));
+      if (Array.isArray(surveyObj.images)) {
+        surveyObj.images = surveyObj.images.map((img) => {
+          const filename = String(img || '').replace(/^\//, '');
+          if (!filename) return img;
+          if (filename.startsWith('http')) return filename;
+          return `${surveyBaseUrl}${filename}`;
+        });
+      }
+      return surveyObj;
+    })
+  );
+}
 
 const flattenPopulatedLead = (leadId, customer) => {
   const lead = leadId && typeof leadId === 'object' ? leadId : null;
@@ -304,12 +333,7 @@ exports.getCustomer = async (req, res) => {
     const surveyBaseUrl = "https://ramgeneral-api.onrender.com/uploads/surveys/";
     const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
 
-    // ✅ Convert survey images to full URLs
-    const surveysWithFullUrls = surveys.map(survey => {
-      const surveyObj = survey.toObject();
-      surveyObj.images = (surveyObj.images || []).map(img => `${surveyBaseUrl}${img}`);
-      return surveyObj;
-    });
+    const surveysWithFullUrls = await formatSurveysForResponse(surveys, surveyBaseUrl);
 
     // ✅ Convert material image to full URLs
     const updatedCustomer = stripCustomerLogFields(customer.toObject());
@@ -481,6 +505,10 @@ exports.updateCustomer = async (req, res) => {
 
     await customer.save({ validateModifiedOnly: true });
 
+    if (body.surveys !== undefined) {
+      await applySurveySiteUpdates(id, body.surveys);
+    }
+
     if (customer.leadId && body.status && LEAD_CREATE_STATUSES.includes(body.status)) {
       await Lead.findByIdAndUpdate(customer.leadId, {
         status: body.status,
@@ -492,11 +520,10 @@ exports.updateCustomer = async (req, res) => {
     const surveyBaseUrl = 'https://ramgeneral-api.onrender.com/uploads/surveys/';
     const billBaseUrl = 'https://ramgeneral-api.onrender.com/uploads/leads/bills/';
 
-    const surveysWithFullUrls = updatedSurveys.map((survey) => {
-      const surveyObj = survey.toObject();
-      surveyObj.images = (surveyObj.images || []).map((img) => `${surveyBaseUrl}${img}`);
-      return surveyObj;
-    });
+    const surveysWithFullUrls = await formatSurveysForResponse(
+      updatedSurveys,
+      surveyBaseUrl
+    );
 
     const customerResponse = customer.toObject();
     customerResponse.uploadElectricityBill = normalizeBillFilenames(
