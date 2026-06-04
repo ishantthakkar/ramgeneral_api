@@ -10,12 +10,16 @@ const {
   normalizeAddresses,
   normalizeContactInfo,
   normalizeNotes,
-  normalizeActivityLog,
   normalizeBillFilenames,
   resolveNewBillFilenames,
 } = require('../utils/subdocumentHelpers');
 const path = require('path');
 const fs = require('fs');
+const {
+  LEAD_FIELDS_FOR_POPULATE,
+  syncLeadFieldsFromBody,
+  stripCustomerLogFields,
+} = require('../utils/customerLeadHelpers');
 
 const CUSTOMER_STATUSES = [
   'New',
@@ -117,29 +121,21 @@ exports.listConvertedCustomers = async (req, res) => {
     }
 
     const customers = await Customer.find(filter)
-      .populate('leadId', 'name company email mobileNumber leadSource status convertedToCustomer user_id')
+      .populate('leadId', LEAD_FIELDS_FOR_POPULATE)
       .populate('assignToContractor', 'fullName email')
-      .populate('user_id', 'fullName')
+      .populate('user_id', 'fullName email userRole')
       .sort({ convertedDate: -1 });
 
     const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
 
     const customerSummaries = customers.map((customer) => ({
       id: customer._id,
-      lead_id: customer.lead_id || '',
-      leadId: customer.lead_id || '',
-      leadName: customer.leadName || customer.name || '',
-      dba: customer.dba,
+      leadId: customer.leadId || null,
       legalName: customer.legalName,
-      electricCompany: customer.electricCompany,
       uploadElectricityBill: normalizeBillFilenames(customer.uploadElectricityBill),
       addresses: customer.addresses,
       contactInfo: customer.contactInfo,
       notes: customer.notes,
-      activityLog: customer.activityLog,
-      createdByName: customer.createdByName,
-      createdByEmail: customer.createdByEmail,
-      createdByRole: customer.createdByRole,
       accountNumber: customer.accountNumber,
       name: customer.name,
       company: customer.company,
@@ -257,9 +253,10 @@ exports.getCustomer = async (req, res) => {
 
     // ✅ Get customer
     const customer = await Customer.findById(id)
+      .populate('leadId', LEAD_FIELDS_FOR_POPULATE)
       .populate('assignToContractor', 'fullName email mobileNumber')
       .populate('assignedTo', 'fullName email mobileNumber')
-      .populate('user_id', 'fullName name email');
+      .populate('user_id', 'fullName name email userRole');
 
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
@@ -284,7 +281,7 @@ exports.getCustomer = async (req, res) => {
     });
 
     // ✅ Convert material image to full URLs
-    const updatedCustomer = customer.toObject();
+    const updatedCustomer = stripCustomerLogFields(customer.toObject());
     if (updatedCustomer.material && Array.isArray(updatedCustomer.material)) {
       updatedCustomer.material = updatedCustomer.material.map(item => {
         item.images = (item.images || []).map(img => `${materialBaseUrl}${img}`);
@@ -321,19 +318,10 @@ exports.updateCustomer = async (req, res) => {
       }
     };
 
-    setString('leadName');
     setString('name');
-    setString('dba');
     setString('legalName');
     setString('accountNumber');
     setString('company');
-
-    if (body.electricCompany !== undefined) {
-      customer.electricCompany = body.electricCompany || '';
-    }
-    if (body.electric_company !== undefined) {
-      customer.electricCompany = body.electric_company || '';
-    }
 
     if (body.mobileNumber !== undefined) {
       customer.mobileNumber = body.mobileNumber || '';
@@ -407,42 +395,44 @@ exports.updateCustomer = async (req, res) => {
       }
     }
 
-    let processedActivityLog = [];
+    const activityItems = [];
     const parsedActivityLog = tryParseJson(body.activityLog);
-    const activityLogItems = Array.isArray(parsedActivityLog)
-      ? parsedActivityLog
-      : Array.isArray(body.activityLog)
-        ? body.activityLog
-        : null;
-
-    if (activityLogItems) {
-      processedActivityLog = activityLogItems.map((a) => ({
-        activityType: a.activityType,
-        date: a.date ? new Date(a.date) : new Date(),
-        outcome: a.outcome || '',
-        notes: a.notes || '',
-        followUpDate: a.followUpDate ? new Date(a.followUpDate) : undefined,
-        nextFollowUpDate: a.nextFollowUpDate ? new Date(a.nextFollowUpDate) : undefined,
-        createdAt: new Date(),
-      }));
+    if (Array.isArray(parsedActivityLog)) {
+      activityItems.push(...parsedActivityLog);
+    } else if (Array.isArray(body.activityLog)) {
+      activityItems.push(...body.activityLog);
     } else if (body.activityType) {
-      processedActivityLog = [
-        {
-          activityType: body.activityType,
-          date: body.activityDate ? new Date(body.activityDate) : new Date(),
-          outcome: body.outcome || '',
-          notes: typeof body.notes === 'string' ? body.notes : '',
-          followUpDate: body.followUpDate ? new Date(body.followUpDate) : undefined,
-          nextFollowUpDate: body.nextFollowUpDate ? new Date(body.nextFollowUpDate) : undefined,
-          createdAt: new Date(),
-        },
-      ];
+      activityItems.push({
+        activityType: body.activityType,
+        date: body.activityDate,
+        outcome: body.outcome,
+        notes: body.notes,
+        nextFollowUpDate: body.nextFollowUpDate,
+        timeSlot: body.timeSlot,
+        location: body.location,
+        address: body.address,
+      });
     }
 
-    if (processedActivityLog.length > 0) {
-      customer.activityLog = [...(customer.activityLog || []), ...processedActivityLog];
-      customer.markModified('activityLog');
+    if (activityItems.length > 0 && req.user?.id) {
+      for (const item of activityItems) {
+        if (!item?.activityType) continue;
+        await CustomerActivity.create({
+          customer_id: id,
+          user_id: req.user.id,
+          activityType: item.activityType,
+          date: item.date ? new Date(item.date) : new Date(),
+          timeSlot: item.timeSlot || '',
+          location: item.location || '',
+          address: item.address || '',
+          notes: item.notes || '',
+          outcome: item.outcome || '',
+          nextFollowUpDate: item.nextFollowUpDate ? new Date(item.nextFollowUpDate) : undefined,
+        });
+      }
     }
+
+    await syncLeadFieldsFromBody(customer, body);
 
     const newBillFilenames = resolveNewBillFilenames(
       req,
@@ -1113,7 +1103,7 @@ exports.addCustomerActivity = async (req, res) => {
   }
 };
 
-exports.getCustomerActivities = async (req, res) => {dddd
+exports.getCustomerActivities = async (req, res) => {
   try {
     const { id: customer_id } = req.params;
 

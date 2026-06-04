@@ -1,7 +1,13 @@
 const mongoose = require('mongoose');
 const Customer = require('../models/Customer');
+const CustomerActivity = require('../models/CustomerActivity');
 const Survey = require('../models/Survey');
+const User = require('../models/User');
 const { createLog } = require('../utils/logger');
+const {
+  SALES_PERSON_ROLE_VARIANTS,
+  isSalesManagerRole,
+} = require('../constants/userRoles');
 const { enrichAreasWithProducts } = require('../utils/surveyProductUtils');
 const {
   getQuotationAddresses,
@@ -11,6 +17,11 @@ const {
 
 const API_BASE_URL = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
 
+function getCustomerDisplayName(customer) {
+  const lead = customer?.leadId && typeof customer.leadId === 'object' ? customer.leadId : null;
+  return customer?.name || lead?.leadName || lead?.name || 'Customer';
+}
+
 function getCompanyInfo() {
   return {
     name: process.env.COMPANY_NAME || 'RAM GENERAL SUPPLY',
@@ -18,6 +29,186 @@ function getCompanyInfo() {
     phone: process.env.COMPANY_PHONE || '(123) 456 7890',
     email: process.env.COMPANY_EMAIL || 'ramgeneral@123.gmail.com',
   };
+}
+
+function buildQuotationRecord({
+  url,
+  filename,
+  pdfName,
+  mimeType,
+  source,
+  surveyId,
+  subtotal,
+  taxAmount,
+  grandTotal,
+  uploadedBy,
+  uploadedByName,
+}) {
+  return {
+    url,
+    filename,
+    pdfName: pdfName || filename || '',
+    mimeType: mimeType || '',
+    source: source || 'uploaded',
+    uploadedBy: uploadedBy || null,
+    uploadedByName: uploadedByName || '',
+    surveyId: surveyId || null,
+    subtotal: subtotal ?? 0,
+    taxAmount: taxAmount ?? 0,
+    grandTotal: grandTotal ?? 0,
+    createdAt: new Date(),
+  };
+}
+
+async function loadUsersMap(userIds) {
+  const ids = [...userIds].filter(Boolean);
+  if (!ids.length) return new Map();
+
+  const users = await User.find({ _id: { $in: ids } })
+    .select('fullName email mobileNumber userRole')
+    .lean();
+
+  return new Map(users.map((u) => [u._id.toString(), u]));
+}
+
+function mapUserFromId(id, userMap) {
+  if (!id) return null;
+  const key = id.toString?.() || String(id);
+  const user = userMap.get(key);
+  if (!user) return { _id: key };
+  return {
+    _id: user._id,
+    fullName: user.fullName,
+    email: user.email,
+    mobileNumber: user.mobileNumber,
+    userRole: user.userRole,
+  };
+}
+
+async function formatQuotationsForResponse(quotations) {
+  const list = quotations || [];
+  const userIds = new Set();
+
+  for (const q of list) {
+    const plain = q?.toObject ? q.toObject() : q;
+    if (plain.uploadedBy) userIds.add(plain.uploadedBy.toString());
+  }
+
+  const userMap = await loadUsersMap(userIds);
+
+  return list.map((q) => {
+    const plain = q?.toObject ? q.toObject() : { ...q };
+    const uploader = mapUserFromId(plain.uploadedBy, userMap);
+    return {
+      ...plain,
+      uploadedByName: plain.uploadedByName || uploader?.fullName || '',
+      uploadedByUser: uploader,
+    };
+  });
+}
+
+function mapUploadedByUserForApproval(user) {
+  if (!user) return null;
+  return {
+    _id: user._id,
+    fullName: user.fullName || '',
+    email: user.email || '',
+    mobileNumber: user.mobileNumber || '',
+    userRole: user.userRole || '',
+  };
+}
+
+function mapCustomerQuotationApprovalItem(customer, userMap) {
+  const uploaded = (customer.quotations || []).filter((q) => q.source === 'uploaded');
+  const quotations = uploaded.map((q) => {
+    const plain = q?.toObject ? q.toObject() : { ...q };
+    return {
+      url: plain.url || '',
+      uploadedByUser: mapUploadedByUserForApproval(
+        mapUserFromId(plain.uploadedBy, userMap)
+      ),
+    };
+  });
+
+  return {
+    customerId: customer._id,
+    customerName: getCustomerDisplayName(customer),
+    quotationStatus: customer.quotationStatus || 'pending',
+    quotations,
+  };
+}
+
+async function buildManagerApprovalQuotationsList(customers) {
+  const userIds = new Set();
+  for (const customer of customers) {
+    for (const q of customer.quotations || []) {
+      if (q.source === 'uploaded' && q.uploadedBy) {
+        userIds.add(q.uploadedBy.toString());
+      }
+    }
+  }
+
+  const userMap = await loadUsersMap(userIds);
+
+  return customers.map((customer) => mapCustomerQuotationApprovalItem(customer, userMap));
+}
+
+async function getTeamSalesPersonIds(managerId) {
+  const teamMembers = await User.find({
+    reportsTo: managerId,
+    userRole: { $in: SALES_PERSON_ROLE_VARIANTS },
+  })
+    .select('_id')
+    .lean();
+
+  return teamMembers.map((sp) => sp._id);
+}
+
+async function assertSalesManagerCanAccessCustomer(managerId, customer) {
+  if (!customer?.user_id) {
+    return { ok: false, message: 'Customer has no assigned sales person.' };
+  }
+
+  const salesPersonId = customer.user_id._id || customer.user_id;
+  const salesPerson = await User.findById(salesPersonId).select('reportsTo userRole').lean();
+
+  if (!salesPerson) {
+    return { ok: false, message: 'Assigned sales person not found.' };
+  }
+
+  const reportsToId = salesPerson.reportsTo?.toString?.() || String(salesPerson.reportsTo || '');
+  if (reportsToId !== managerId.toString()) {
+    return { ok: false, message: 'This customer is not assigned to your sales team.' };
+  }
+
+  return { ok: true, salesPerson };
+}
+
+async function formatCustomerQuotationMeta(customer) {
+  const plain = customer?.toObject ? customer.toObject() : customer;
+  const userIds = new Set();
+
+  if (plain.quotationApprovedBy) userIds.add(plain.quotationApprovedBy.toString());
+
+  const userMap = await loadUsersMap(userIds);
+
+  return {
+    quotationStatus: plain.quotationStatus || 'pending',
+    quotationApprovedBy: plain.quotationApprovedBy || null,
+    quotationApprovedAt: plain.quotationApprovedAt || null,
+    quotationApprovedByUser: mapUserFromId(plain.quotationApprovedBy, userMap),
+  };
+}
+
+async function recordQuotationCustomerActivity(customerId, userId, activityType, notes) {
+  await CustomerActivity.create({
+    customer_id: customerId,
+    user_id: userId,
+    activityType,
+    date: new Date(),
+    notes: notes || '',
+    outcome: activityType,
+  });
 }
 
 function resolveAreaLabel(survey, area, index) {
@@ -101,6 +292,7 @@ exports.createQuotation = async (req, res) => {
 
     const customer = await Customer.findById(customerId)
       .populate('user_id', 'fullName mobileNumber email')
+      .populate('leadId', 'leadName name')
       .lean();
 
     if (!customer) {
@@ -137,11 +329,11 @@ exports.createQuotation = async (req, res) => {
       serviceAddress,
       billingAddress,
       salesPerson: {
-        name: salesPerson.fullName || customer.createdByName || '',
+        name: salesPerson.fullName || '',
         phone: salesPerson.mobileNumber || customer.mobileNumber || '',
       },
       customerContact: {
-        name: primaryContact.name || customer.name || customer.leadName || '',
+        name: primaryContact.name || getCustomerDisplayName(customer),
         phone: primaryContact.phone || primaryContact.mobile || customer.mobileNumber || '',
         email: primaryContact.email || customer.email || '',
       },
@@ -156,33 +348,42 @@ exports.createQuotation = async (req, res) => {
     const { filename, relativePath } = await saveQuotationPdf(pdfBuffer, customerId);
     const pdfUrl = `${API_BASE_URL}/${relativePath}`;
 
-    const quotationRecord = {
+    const generator = req.user?.id
+      ? await User.findById(req.user.id).select('fullName email').lean()
+      : null;
+
+    const quotationRecord = buildQuotationRecord({
       url: pdfUrl,
       filename,
-      mimeType: 'application/pdf',
-      source: 'generated',
       surveyId: surveys[0]._id,
-      subtotal,
-      taxAmount,
-      grandTotal,
-      createdAt: new Date(),
-    };
-
-    await Customer.findByIdAndUpdate(customerId, {
-      $push: { quotations: quotationRecord },
+      uploadedBy: req.user?.id,
+      uploadedByName: generator?.fullName || '',
     });
+
+    const updatedCustomer = await Customer.findByIdAndUpdate(
+      customerId,
+      { $push: { quotations: quotationRecord } },
+      { new: true }
+    );
 
     if (req.user?.id) {
       await createLog(
         'Quotation Generated',
         req.user.id,
-        customer.name || customer.leadName || 'Customer',
+        getCustomerDisplayName(customer),
         'Customer',
         customer._id
       );
     }
 
-    return res.status(201).json({ pdfUrl });
+    const savedQuotation = updatedCustomer.quotations[updatedCustomer.quotations.length - 1];
+    const formatted = (await formatQuotationsForResponse([savedQuotation]))[0];
+
+    return res.status(201).json({
+      message: 'Quotation generated successfully.',
+      pdfUrl,
+      quotation: formatted,
+    });
   } catch (error) {
     console.error('Create quotation error:', error);
     return res.status(500).json({ message: 'Server error generating quotation PDF.' });
@@ -209,38 +410,261 @@ exports.uploadQuotation = async (req, res) => {
       return res.status(404).json({ message: 'Customer not found.' });
     }
 
+    const uploader = req.user?.id
+      ? await User.findById(req.user.id).select('fullName email mobileNumber').lean()
+      : null;
+    const uploadedByName = uploader?.fullName || req.user?.email || '';
+
     const quotationRecords = files.map((file) => {
       const relativePath = `uploads/quotations/${file.filename}`;
-      return {
+      const pdfName = file.originalname || file.filename;
+      return buildQuotationRecord({
         url: `${API_BASE_URL}/${relativePath}`,
         filename: file.filename,
+        pdfName,
         mimeType: file.mimetype,
         source: 'uploaded',
-        createdAt: new Date(),
-      };
+        uploadedBy: req.user?.id,
+        uploadedByName,
+      });
     });
 
-    await Customer.findByIdAndUpdate(customerId, {
-      $push: { quotations: { $each: quotationRecords } },
-    });
+    customer.quotations.push(...quotationRecords);
+    customer.quotationStatus = 'pending';
+    customer.quotationApprovedBy = null;
+    customer.quotationApprovedAt = null;
+    customer.markModified('quotations');
+    await customer.save();
+
+    const updatedCustomer = await Customer.findById(customerId);
 
     if (req.user?.id) {
+      await recordQuotationCustomerActivity(
+        customer._id,
+        req.user.id,
+        'Quotation Uploaded',
+        `Uploaded ${quotationRecords.length} quotation file(s).`
+      );
       await createLog(
         'Quotation Uploaded',
         req.user.id,
-        customer.name || customer.leadName || 'Customer',
+        getCustomerDisplayName(customer),
         'Customer',
         customer._id
       );
     }
 
-    const pdfUrls = quotationRecords.map((q) => q.url);
+    const savedQuotations = updatedCustomer.quotations
+      .filter((q) => q.source === 'uploaded')
+      .slice(-quotationRecords.length);
+    const formattedQuotations = await formatQuotationsForResponse(savedQuotations);
+    const quotationMeta = await formatCustomerQuotationMeta(updatedCustomer);
+
     return res.status(201).json({
       message: 'Quotation received successfully.',
-      pdfUrls,
+      ...quotationMeta,
+      pdfUrls: formattedQuotations.map((q) => q.url),
+      quotations: formattedQuotations,
     });
   } catch (error) {
     console.error('Upload quotation error:', error);
     return res.status(500).json({ message: 'Server error uploading quotation files.' });
+  }
+};
+
+exports.listQuotationsForManagerApproval = async (req, res) => {
+  try {
+    const managerId = req.user?.id;
+    if (!managerId) {
+      return res.status(401).json({ message: 'User not authenticated.' });
+    }
+
+    const manager = await User.findById(managerId)
+      .select('fullName email mobileNumber userRole')
+      .lean();
+
+    if (!manager) {
+      return res.status(401).json({ message: 'Invalid authenticated user.' });
+    }
+
+    if (!isSalesManagerRole(manager.userRole)) {
+      return res.status(403).json({
+        message: 'Only sales managers can view the quotation approval list.',
+      });
+    }
+
+    const { quotationStatus, salesPersonId, salesPerson } = req.query;
+    const filterSalesPersonId = salesPersonId || salesPerson;
+    const statusFilter = (quotationStatus || 'pending').toString().trim().toLowerCase();
+
+    if (!['pending', 'approved', 'all'].includes(statusFilter)) {
+      return res.status(400).json({
+        message: 'Invalid quotationStatus. Allowed: pending, approved, all.',
+      });
+    }
+
+    const teamIds = await getTeamSalesPersonIds(managerId);
+    if (!teamIds.length) {
+      return res.status(200).json({ quotations: [], total: 0 });
+    }
+
+    const customerFilter = {
+      user_id: { $in: teamIds },
+      quotations: { $elemMatch: { source: 'uploaded' } },
+    };
+
+    if (filterSalesPersonId) {
+      if (!mongoose.Types.ObjectId.isValid(filterSalesPersonId)) {
+        return res.status(400).json({ message: 'Invalid salesPersonId.' });
+      }
+      const isOnTeam = teamIds.some((id) => id.toString() === filterSalesPersonId.toString());
+      if (!isOnTeam) {
+        return res.status(403).json({ message: 'Sales person is not on your team.' });
+      }
+      customerFilter.user_id = filterSalesPersonId;
+    }
+
+    if (statusFilter !== 'all') {
+      customerFilter.quotationStatus = statusFilter;
+    }
+
+    const customers = await Customer.find(customerFilter)
+      .select('name quotations quotationStatus quotationApprovedAt user_id leadId')
+      .populate('user_id', 'fullName email mobileNumber')
+      .populate('leadId', 'leadName name')
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    const quotations = await buildManagerApprovalQuotationsList(customers);
+
+    return res.status(200).json({
+      quotations,
+      total: quotations.length,
+    });
+  } catch (error) {
+    console.error('List quotations for manager approval error:', error);
+    return res.status(500).json({ message: 'Server error fetching quotation approval list.' });
+  }
+};
+
+exports.listCustomerQuotations = async (req, res) => {
+  try {
+    const customerId = req.params.customerId || req.params.id;
+    const { quotationStatus } = req.query;
+
+    if (!customerId || !mongoose.Types.ObjectId.isValid(customerId)) {
+      return res.status(400).json({ message: 'Valid customerId is required.' });
+    }
+
+    const customer = await Customer.findById(customerId).select(
+      'name quotations quotationStatus quotationApprovedBy quotationApprovedAt'
+    );
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const quotationMeta = await formatCustomerQuotationMeta(customer);
+
+    if (quotationStatus) {
+      const status = quotationStatus.toString().trim().toLowerCase();
+      if (!['pending', 'approved'].includes(status)) {
+        return res.status(400).json({
+          message: 'Invalid quotationStatus. Allowed: pending, approved.',
+        });
+      }
+      if (quotationMeta.quotationStatus !== status) {
+        return res.status(200).json({
+          customerId,
+          ...quotationMeta,
+          quotations: [],
+          total: 0,
+        });
+      }
+    }
+
+    const quotations = (customer.quotations || []).filter((q) => q.source === 'uploaded');
+    const formattedQuotations = await formatQuotationsForResponse(quotations);
+
+    return res.status(200).json({
+      customerId,
+      ...quotationMeta,
+      quotations: formattedQuotations,
+      total: formattedQuotations.length,
+    });
+  } catch (error) {
+    console.error('List customer quotations error:', error);
+    return res.status(500).json({ message: 'Server error fetching quotations.' });
+  }
+};
+
+exports.approveQuotation = async (req, res) => {
+  try {
+    const customerId = req.params.customerId || req.params.id;
+    const approverId = req.user?.id;
+
+    if (!customerId || !mongoose.Types.ObjectId.isValid(customerId)) {
+      return res.status(400).json({ message: 'Valid customerId is required.' });
+    }
+    if (!approverId) {
+      return res.status(401).json({ message: 'User not authenticated.' });
+    }
+
+    const approver = await User.findById(approverId).select('userRole').lean();
+    if (!approver || !isSalesManagerRole(approver.userRole)) {
+      return res.status(403).json({
+        message: 'Only sales managers can approve quotations.',
+      });
+    }
+
+    const customer = await Customer.findById(customerId).populate('user_id', 'fullName');
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const access = await assertSalesManagerCanAccessCustomer(approverId, customer);
+    if (!access.ok) {
+      return res.status(403).json({ message: access.message });
+    }
+
+    const uploadedQuotations = (customer.quotations || []).filter((q) => q.source === 'uploaded');
+    if (!uploadedQuotations.length) {
+      return res.status(400).json({ message: 'No uploaded quotation files to approve.' });
+    }
+
+    if (customer.quotationStatus === 'approved') {
+      return res.status(400).json({ message: 'Quotation is already approved.' });
+    }
+
+    customer.quotationStatus = 'approved';
+    customer.quotationApprovedBy = approverId;
+    customer.quotationApprovedAt = new Date();
+    await customer.save();
+
+    await recordQuotationCustomerActivity(
+      customer._id,
+      approverId,
+      'Quotation Approved',
+      `Approved ${uploadedQuotations.length} uploaded quotation file(s).`
+    );
+
+    await createLog(
+      'Quotation Approved',
+      approverId,
+      getCustomerDisplayName(customer),
+      'Customer',
+      customer._id
+    );
+
+    const quotationMeta = await formatCustomerQuotationMeta(customer);
+    const formattedQuotations = await formatQuotationsForResponse(uploadedQuotations);
+
+    return res.status(200).json({
+      message: 'Quotation approved successfully.',
+      ...quotationMeta,
+      quotations: formattedQuotations,
+    });
+  } catch (error) {
+    console.error('Approve quotation error:', error);
+    return res.status(500).json({ message: 'Server error approving quotation.' });
   }
 };

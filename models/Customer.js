@@ -10,27 +10,7 @@ const customerSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Lead',
   },
-  lead_id: {
-    type: String,
-    trim: true,
-    default: '',
-  },
-  leadName: {
-    type: String,
-    trim: true,
-    default: '',
-  },
-  dba: {
-    type: String,
-    trim: true,
-    default: '',
-  },
   legalName: {
-    type: String,
-    trim: true,
-    default: '',
-  },
-  electricCompany: {
     type: String,
     trim: true,
     default: '',
@@ -60,22 +40,6 @@ const customerSchema = new mongoose.Schema({
       createdAt: { type: Date, default: Date.now },
     },
   ],
-  createdByName: {
-    type: String,
-    trim: true,
-    default: '',
-  },
-  createdByEmail: {
-    type: String,
-    trim: true,
-    lowercase: true,
-    default: '',
-  },
-  createdByRole: {
-    type: String,
-    trim: true,
-    default: '',
-  },
   user_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -179,17 +143,6 @@ const customerSchema = new mongoose.Schema({
     state: { type: String, trim: true, default: '' },
     zip: { type: String, trim: true, default: '' },
   },
-  activityLog: [
-    {
-      activityType: { type: String, trim: true, required: true },
-      date: { type: Date, default: Date.now },
-      nextFollowUpDate: { type: Date },
-      outcome: { type: String, trim: true, default: '' },
-      notes: { type: String, trim: true },
-      followUpDate: { type: Date },
-      createdAt: { type: Date, default: Date.now }
-    },
-  ],
   notes: [
     {
       title: { type: String, trim: true, default: '' },
@@ -232,16 +185,32 @@ const customerSchema = new mongoose.Schema({
       timestamp: { type: Date, default: Date.now },
     },
   ],
+  quotationStatus: {
+    type: String,
+    enum: ['pending', 'approved'],
+    default: 'pending',
+  },
+  quotationApprovedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  },
+  quotationApprovedAt: { type: Date },
   quotations: [
     {
       url: { type: String, trim: true, default: '' },
       filename: { type: String, trim: true, default: '' },
+      pdfName: { type: String, trim: true, default: '' },
       mimeType: { type: String, trim: true, default: '' },
       source: {
         type: String,
         enum: ['generated', 'uploaded'],
         default: 'generated',
       },
+      uploadedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+      uploadedByName: { type: String, trim: true, default: '' },
       surveyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Survey' },
       subtotal: { type: Number, default: 0 },
       taxAmount: { type: Number, default: 0 },

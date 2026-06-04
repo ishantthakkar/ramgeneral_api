@@ -23,6 +23,8 @@ const customerActivitySchema = new mongoose.Schema({
       'Follow-up',
       'Schedule a Meeting',
       'Schedule Site Visit',
+      'Quotation Approved',
+      'Quotation Uploaded',
     ],
     trim: true,
   },

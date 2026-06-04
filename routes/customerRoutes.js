@@ -106,6 +106,7 @@ router.get('/customers/inspections', verifyToken, customerController.listInspect
 router.get('/customers/commission-list', verifyToken, customerController.customerCommissionList);
 router.get('/installation-list', verifyToken, customerController.installationListByUser);
 router.get('/inspection-list-user', verifyToken, customerController.inspectionListByUser);
+router.get('/quotations-approval', verifyToken, quotationController.listQuotationsForManagerApproval);
 router.get('/:id', verifyToken, customerController.getCustomer);
 router.post('/customers/reassign-salesperson', verifyToken, customerController.reassignSalesPerson);
 router.post(
@@ -134,6 +135,18 @@ router.post(
     verifyToken,
     uploadQuotation.array('quotations', 20),
     quotationController.uploadQuotation
+);
+router.get('/customers/:customerId/quotations', verifyToken, quotationController.listCustomerQuotations);
+router.get('/:customerId/quotations', verifyToken, quotationController.listCustomerQuotations);
+router.post(
+    '/customers/:customerId/quotation/approve',
+    verifyToken,
+    quotationController.approveQuotation
+);
+router.post(
+    '/:customerId/quotation/approve',
+    verifyToken,
+    quotationController.approveQuotation
 );
 router.post('/customers/:id/commissions', verifyToken, customerController.updateCustomerCommissions);
 router.get('/customers/:id/activities', verifyToken, customerController.getCustomerActivities);

@@ -119,9 +119,10 @@ function getDisplayAddressTitle(addr, customer) {
   if (titleKey && !GENERIC_ADDRESS_TITLES.has(titleKey)) {
     return addr.title;
   }
+  const lead = customer.leadId && typeof customer.leadId === 'object' ? customer.leadId : null;
   return (
-    customer.leadName ||
-    customer.dba ||
+    lead?.leadName ||
+    lead?.dba ||
     customer.legalName ||
     customer.name ||
     customer.company ||
