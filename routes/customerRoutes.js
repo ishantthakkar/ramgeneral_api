@@ -107,6 +107,7 @@ router.get('/customers/commission-list', verifyToken, customerController.custome
 router.get('/installation-list', verifyToken, customerController.installationListByUser);
 router.get('/inspection-list-user', verifyToken, customerController.inspectionListByUser);
 router.get('/quotations-list', verifyToken, quotationController.listQuotationsForManagerApproval);
+router.get('/quotations-admin', verifyToken, quotationController.listCustomerQuotationsForAdmin);
 router.get('/:id', verifyToken, customerController.getCustomer);
 router.post('/customers/reassign-salesperson', verifyToken, customerController.reassignSalesPerson);
 router.post(

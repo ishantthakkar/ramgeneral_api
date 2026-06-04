@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Customer = require('../models/Customer');
 const CustomerActivity = require('../models/CustomerActivity');
+const Admin = require('../models/Admin');
 const Survey = require('../models/Survey');
 const User = require('../models/User');
 const { createLog } = require('../utils/logger');
@@ -82,6 +83,18 @@ function mapUserFromId(id, userMap) {
   };
 }
 
+function formatQuotationsWithUserMap(quotations, userMap) {
+  return (quotations || []).map((q) => {
+    const plain = q?.toObject ? q.toObject() : { ...q };
+    const uploader = mapUserFromId(plain.uploadedBy, userMap);
+    return {
+      ...plain,
+      uploadedByName: plain.uploadedByName || uploader?.fullName || '',
+      uploadedByUser: uploader,
+    };
+  });
+}
+
 async function formatQuotationsForResponse(quotations) {
   const list = quotations || [];
   const userIds = new Set();
@@ -92,16 +105,41 @@ async function formatQuotationsForResponse(quotations) {
   }
 
   const userMap = await loadUsersMap(userIds);
+  return formatQuotationsWithUserMap(list, userMap);
+}
 
-  return list.map((q) => {
-    const plain = q?.toObject ? q.toObject() : { ...q };
-    const uploader = mapUserFromId(plain.uploadedBy, userMap);
-    return {
-      ...plain,
-      uploadedByName: plain.uploadedByName || uploader?.fullName || '',
-      uploadedByUser: uploader,
-    };
-  });
+function collectQuotationRelatedUserIds(customers) {
+  const userIds = new Set();
+  for (const customer of customers) {
+    if (customer.user_id) {
+      const salesId = customer.user_id._id || customer.user_id;
+      userIds.add(salesId.toString());
+    }
+    if (customer.quotationApprovedBy) {
+      userIds.add(customer.quotationApprovedBy.toString());
+    }
+    for (const q of customer.quotations || []) {
+      if (q.uploadedBy) userIds.add(q.uploadedBy.toString());
+    }
+  }
+  return userIds;
+}
+
+async function buildAdminCustomerQuotationsList(customers) {
+  const userMap = await loadUsersMap(collectQuotationRelatedUserIds(customers));
+
+  return customers.map((customer) => ({
+    customerId: customer._id,
+    customerName: getCustomerDisplayName(customer),
+    accountNumber: customer.accountNumber || '',
+    company: customer.company || '',
+    quotationStatus: customer.quotationStatus || 'pending',
+    quotationApprovedAt: customer.quotationApprovedAt || null,
+    quotationApprovedBy: customer.quotationApprovedBy || null,
+    quotationApprovedByUser: mapUserFromId(customer.quotationApprovedBy, userMap),
+    salesPerson: mapUploadedByUserForApproval(mapUserFromId(customer.user_id, userMap)),
+    quotations: formatQuotationsWithUserMap(customer.quotations || [], userMap),
+  }));
 }
 
 function mapUploadedByUserForApproval(user) {
@@ -319,10 +357,7 @@ exports.createQuotation = async (req, res) => {
       });
     }
 
-    const subtotal = lineItems.reduce((sum, row) => sum + row.total, 0);
-    const taxRate = Number(process.env.QUOTATION_TAX_RATE || 0.1);
-    const taxAmount = subtotal * taxRate;
-    const grandTotal = subtotal + taxAmount;
+    const grandTotal = lineItems.reduce((sum, row) => sum + row.total, 0);
 
     const primaryContact = (customer.contactInfo || [])[0] || {};
     const salesPerson = customer.user_id || {};
@@ -344,9 +379,6 @@ exports.createQuotation = async (req, res) => {
         email: primaryContact.email || customer.email || '',
       },
       lineItems,
-      subtotal,
-      taxRate,
-      taxAmount,
       grandTotal,
     };
 
@@ -388,7 +420,6 @@ exports.createQuotation = async (req, res) => {
     return res.status(201).json({
       message: 'Quotation generated successfully.',
       pdfUrl,
-      quotation: formatted,
     });
   } catch (error) {
     console.error('Create quotation error:', error);
@@ -558,6 +589,61 @@ exports.listQuotationsForManagerApproval = async (req, res) => {
   } catch (error) {
     console.error('List quotations for manager approval error:', error);
     return res.status(500).json({ message: 'Server error fetching quotation approval list.' });
+  }
+};
+
+exports.listCustomerQuotationsForAdmin = async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.user?.id).select('email').lean();
+    if (!admin) {
+      return res.status(403).json({ message: 'Only admins can access customer quotations.' });
+    }
+
+    const { quotationStatus, salesPersonId, salesPerson, hasQuotations } = req.query;
+    const filterSalesPersonId = salesPersonId || salesPerson;
+    const statusFilter = quotationStatus
+      ? quotationStatus.toString().trim().toLowerCase()
+      : 'all';
+
+    if (!['pending', 'approved', 'all'].includes(statusFilter)) {
+      return res.status(400).json({
+        message: 'Invalid quotationStatus. Allowed: pending, approved, all.',
+      });
+    }
+
+    const customerFilter = {};
+
+    if (hasQuotations === 'true') {
+      customerFilter.quotations = { $exists: true, $not: { $size: 0 } };
+    }
+
+    if (filterSalesPersonId) {
+      if (!mongoose.Types.ObjectId.isValid(filterSalesPersonId)) {
+        return res.status(400).json({ message: 'Invalid salesPersonId.' });
+      }
+      customerFilter.user_id = filterSalesPersonId;
+    }
+
+    applyQuotationStatusFilter(customerFilter, statusFilter);
+
+    const customers = await Customer.find(customerFilter)
+      .select(
+        'name company accountNumber quotations quotationStatus quotationApprovedBy quotationApprovedAt user_id leadId'
+      )
+      .populate('user_id', 'fullName email mobileNumber userRole')
+      .populate('leadId', 'leadName name')
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    const customerQuotations = await buildAdminCustomerQuotationsList(customers);
+
+    return res.status(200).json({
+      customers: customerQuotations,
+      total: customerQuotations.length,
+    });
+  } catch (error) {
+    console.error('List customer quotations for admin error:', error);
+    return res.status(500).json({ message: 'Server error fetching customer quotations.' });
   }
 };
 

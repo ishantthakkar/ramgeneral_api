@@ -1,10 +1,67 @@
 const PDFDocument = require('pdfkit');
 const path = require('path');
 const fs = require('fs');
+const sharp = require('sharp');
 
 const ORANGE = '#E67E22';
 const LIGHT_GRAY = '#E8E8E8';
 const TEXT_DARK = '#333333';
+const LOGO_DISPLAY_WIDTH = Number(process.env.QUOTATION_LOGO_WIDTH || 280);
+const LOGO_RENDER_SCALE = 3;
+const ASSETS_DIR = path.join(__dirname, '../assets');
+
+function isSvgMarkup(filePath) {
+  try {
+    const head = fs.readFileSync(filePath, { encoding: 'utf8', flag: 'r' }).slice(0, 256);
+    return /^\s*<(?:\?xml|svg)/i.test(head);
+  } catch {
+    return false;
+  }
+}
+
+function resolveCompanyLogoSvgPath() {
+  const customPath = process.env.QUOTATION_LOGO_PATH;
+  if (customPath) {
+    return customPath;
+  }
+  return path.join(ASSETS_DIR, 'company-logo.svg');
+}
+
+async function loadCompanyLogoBuffer() {
+  const filePath = resolveCompanyLogoSvgPath();
+
+  if (!fs.existsSync(filePath)) {
+    console.warn(`Quotation logo SVG not found: ${filePath}`);
+    return null;
+  }
+
+  if (!filePath.toLowerCase().endsWith('.svg')) {
+    console.warn('Quotation logo must be an SVG file (.svg).');
+    return null;
+  }
+
+  if (!isSvgMarkup(filePath)) {
+    console.warn(`Quotation logo is not valid SVG markup: ${filePath}`);
+    return null;
+  }
+
+  try {
+    const renderWidth = Math.round(LOGO_DISPLAY_WIDTH * LOGO_RENDER_SCALE);
+    const { data, info } = await sharp(filePath, { density: 300 })
+      .resize({ width: renderWidth })
+      .png()
+      .toBuffer({ resolveWithObject: true });
+
+    return {
+      buffer: data,
+      width: info.width,
+      height: info.height,
+    };
+  } catch (error) {
+    console.warn(`Quotation logo SVG render failed (${filePath}):`, error.message);
+    return null;
+  }
+}
 
 function formatMoney(amount) {
   const num = Number(amount) || 0;
@@ -179,7 +236,9 @@ function groupLineItemsByArea(lineItems) {
   return groups;
 }
 
-function generatePdfBuffer(data) {
+async function generatePdfBuffer(data) {
+  const logoBuffer = await loadCompanyLogoBuffer();
+
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'LETTER', margin: 40 });
     const chunks = [];
@@ -192,24 +251,39 @@ function generatePdfBuffer(data) {
     const contentWidth = pageWidth - 80;
     const rightX = pageWidth - 40;
 
-    // Header - company (left)
-    doc.fillColor(ORANGE).fontSize(14).font('Helvetica-Bold').text(data.company.name, 40, 40);
+    const headerTop = 40;
+    let logoDisplayHeight = 0;
+
+    if (logoBuffer?.buffer) {
+      logoDisplayHeight = (logoBuffer.height / logoBuffer.width) * LOGO_DISPLAY_WIDTH;
+      doc.image(logoBuffer.buffer, 40, headerTop, {
+        width: LOGO_DISPLAY_WIDTH,
+        height: logoDisplayHeight,
+      });
+    } else {
+      doc.fillColor(ORANGE).fontSize(14).font('Helvetica-Bold').text(data.company.name, 40, headerTop);
+      logoDisplayHeight = 18;
+    }
+
+    const companyTextY = headerTop + logoDisplayHeight + 14;
     doc.fillColor(TEXT_DARK).fontSize(9).font('Helvetica');
-    doc.text(data.company.address, 40, 58);
-    doc.text(`Phone: ${data.company.phone}`, 40, 70);
-    doc.text(`Email: ${data.company.email}`, 40, 82);
+    doc.text(data.company.address, 40, companyTextY);
+    doc.text(`Phone: ${data.company.phone}`, 40, companyTextY + 12);
+    doc.text(`Email: ${data.company.email}`, 40, companyTextY + 24);
 
-    // Header - title (right)
-    doc.fillColor(TEXT_DARK).fontSize(18).font('Helvetica-Bold').text('LIGHTING QUOTATION', 0, 40, {
+    const leftHeaderBottom = companyTextY + 36;
+    const titleY = headerTop + Math.max(0, (logoDisplayHeight - 36) / 2);
+
+    doc.fillColor(TEXT_DARK).fontSize(18).font('Helvetica-Bold').text('LIGHTING QUOTATION', 0, titleY, {
       width: pageWidth - 40,
       align: 'right',
     });
-    doc.fontSize(10).font('Helvetica').text(formatDate(data.generatedDate), 0, 62, {
+    doc.fontSize(10).font('Helvetica').text(formatDate(data.generatedDate), 0, titleY + 22, {
       width: pageWidth - 40,
       align: 'right',
     });
 
-    let y = 110;
+    let y = Math.max(130, leftHeaderBottom + 16);
 
     function drawLabelBox(x, boxWidth, label, lines) {
       doc.fillColor(ORANGE).fontSize(8).font('Helvetica-Bold').text(label, x, y);
@@ -371,24 +445,14 @@ function generatePdfBuffer(data) {
 
     const totalsBoxWidth = 200;
     const totalsX = rightX - totalsBoxWidth;
+    const grandTotal =
+      data.grandTotal ??
+      (data.lineItems || []).reduce((sum, row) => sum + (Number(row.total) || 0), 0);
 
-    doc.rect(totalsX, y, totalsBoxWidth, 56).fill(LIGHT_GRAY);
-    doc.fillColor(TEXT_DARK).fontSize(10).font('Helvetica');
-    doc.text('Subtotal:', totalsX + 12, y + 12);
-    doc.text(formatMoney(data.subtotal), totalsX + 12, y + 12, { width: totalsBoxWidth - 24, align: 'right' });
-
-    if (data.taxAmount > 0) {
-      doc.text(`Tax (${Math.round(data.taxRate * 100)}%):`, totalsX + 12, y + 28);
-      doc.text(formatMoney(data.taxAmount), totalsX + 12, y + 28, {
-        width: totalsBoxWidth - 24,
-        align: 'right',
-      });
-    }
-
+    doc.rect(totalsX, y, totalsBoxWidth, 32).fill(LIGHT_GRAY);
     doc.fillColor(ORANGE).font('Helvetica-Bold').fontSize(11);
-    const totalY = data.taxAmount > 0 ? y + 44 : y + 32;
-    doc.text('TOTAL PRICE:', totalsX + 12, totalY);
-    doc.text(formatMoney(data.grandTotal), totalsX + 12, totalY, {
+    doc.text('TOTAL PRICE:', totalsX + 12, y + 10);
+    doc.text(formatMoney(grandTotal), totalsX + 12, y + 10, {
       width: totalsBoxWidth - 24,
       align: 'right',
     });

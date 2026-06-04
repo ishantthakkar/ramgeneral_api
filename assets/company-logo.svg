@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 96" role="img" aria-label="RAM GENERAL SUPPLY">
+  <g fill="#1e6b6b">
+    <text
+      x="0"
+      y="52"
+      font-family="Arial Black, Helvetica Neue, Helvetica, sans-serif"
+      font-size="50"
+      font-weight="900"
+      letter-spacing="-1"
+    >RAM</text>
+    <text
+      x="2"
+      y="80"
+      font-family="Consolas, Monaco, Courier New, monospace"
+      font-size="14"
+      font-weight="700"
+      letter-spacing="3.5"
+    >GENERAL SUPPLY</text>
+  </g>
+</svg>
