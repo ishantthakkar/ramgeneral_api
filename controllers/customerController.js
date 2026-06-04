@@ -20,6 +20,55 @@ const {
   syncLeadFieldsFromBody,
   stripCustomerLogFields,
 } = require('../utils/customerLeadHelpers');
+const { isSalesManagerRole } = require('../constants/userRoles');
+const { enrichAreasWithProducts } = require('../utils/surveyProductUtils');
+const { applySurveySiteUpdates } = require('../utils/surveySiteUpdate');
+
+async function formatSurveysForResponse(surveys, surveyBaseUrl) {
+  return Promise.all(
+    surveys.map(async (survey) => {
+      const surveyObj = survey.toObject ? survey.toObject() : survey;
+      surveyObj.areas = await enrichAreasWithProducts(surveyObj.areas || []);
+      surveyObj.areas = (surveyObj.areas || []).map((area) => ({
+        ...area,
+        images: (area.images || []).map((img) => {
+          const filename = String(img || '').replace(/^\//, '');
+          if (!filename) return img;
+          if (filename.startsWith('http')) return filename;
+          return `${surveyBaseUrl}${filename}`;
+        }),
+      }));
+      if (Array.isArray(surveyObj.images)) {
+        surveyObj.images = surveyObj.images.map((img) => {
+          const filename = String(img || '').replace(/^\//, '');
+          if (!filename) return img;
+          if (filename.startsWith('http')) return filename;
+          return `${surveyBaseUrl}${filename}`;
+        });
+      }
+      return surveyObj;
+    })
+  );
+}
+
+const flattenPopulatedLead = (leadId, customer) => {
+  const lead = leadId && typeof leadId === 'object' ? leadId : null;
+  return {
+    lead_id: lead?.lead_id || '',
+    leadName: lead?.leadName || lead?.name || customer?.name || '',
+    dba: lead?.dba || '',
+  };
+};
+
+const resolveSalesManagerName = (salesUser) => {
+  if (!salesUser || typeof salesUser !== 'object') return '';
+  const supervisor = salesUser.reportsTo;
+  if (!supervisor || typeof supervisor !== 'object') return '';
+  if (isSalesManagerRole(supervisor.userRole)) {
+    return supervisor.fullName || '';
+  }
+  return '';
+};
 
 const CUSTOMER_STATUSES = [
   'New',
@@ -123,14 +172,23 @@ exports.listConvertedCustomers = async (req, res) => {
     const customers = await Customer.find(filter)
       .populate('leadId', LEAD_FIELDS_FOR_POPULATE)
       .populate('assignToContractor', 'fullName email')
-      .populate('user_id', 'fullName email userRole')
+      .populate({
+        path: 'user_id',
+        select: 'fullName email userRole',
+        populate: { path: 'reportsTo', select: 'fullName userRole' },
+      })
       .sort({ convertedDate: -1 });
 
     const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
 
-    const customerSummaries = customers.map((customer) => ({
+    const customerSummaries = customers.map((customer) => {
+      const leadFields = flattenPopulatedLead(customer.leadId, customer);
+      return {
       id: customer._id,
-      leadId: customer.leadId || null,
+      leadId: customer.leadId?._id || customer.leadId || null,
+      lead_id: leadFields.lead_id,
+      leadName: leadFields.leadName,
+      dba: leadFields.dba,
       legalName: customer.legalName,
       uploadElectricityBill: normalizeBillFilenames(customer.uploadElectricityBill),
       addresses: customer.addresses,
@@ -150,12 +208,14 @@ exports.listConvertedCustomers = async (req, res) => {
       assignedTo: customer.assignedTo ?? null,
       verifyStatus: customer.verifyStatus,
       salesPersonName: customer.user_id?.fullName || customer.user_id?.name || '',
+      salesManagerName: resolveSalesManagerName(customer.user_id),
       material: (customer.material || []).map(m => {
         const materialObj = m.toObject();
         materialObj.images = (materialObj.images || []).map(img => `${materialBaseUrl}${img}`);
         return materialObj;
       })
-    }));
+    };
+    });
 
     return res.status(200).json({
       message: 'Converted customers retrieved successfully.',
@@ -273,12 +333,7 @@ exports.getCustomer = async (req, res) => {
     const surveyBaseUrl = "https://ramgeneral-api.onrender.com/uploads/surveys/";
     const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
 
-    // ✅ Convert survey images to full URLs
-    const surveysWithFullUrls = surveys.map(survey => {
-      const surveyObj = survey.toObject();
-      surveyObj.images = (surveyObj.images || []).map(img => `${surveyBaseUrl}${img}`);
-      return surveyObj;
-    });
+    const surveysWithFullUrls = await formatSurveysForResponse(surveys, surveyBaseUrl);
 
     // ✅ Convert material image to full URLs
     const updatedCustomer = stripCustomerLogFields(customer.toObject());
@@ -450,6 +505,10 @@ exports.updateCustomer = async (req, res) => {
 
     await customer.save({ validateModifiedOnly: true });
 
+    if (body.surveys !== undefined) {
+      await applySurveySiteUpdates(id, body.surveys);
+    }
+
     if (customer.leadId && body.status && LEAD_CREATE_STATUSES.includes(body.status)) {
       await Lead.findByIdAndUpdate(customer.leadId, {
         status: body.status,
@@ -461,11 +520,10 @@ exports.updateCustomer = async (req, res) => {
     const surveyBaseUrl = 'https://ramgeneral-api.onrender.com/uploads/surveys/';
     const billBaseUrl = 'https://ramgeneral-api.onrender.com/uploads/leads/bills/';
 
-    const surveysWithFullUrls = updatedSurveys.map((survey) => {
-      const surveyObj = survey.toObject();
-      surveyObj.images = (surveyObj.images || []).map((img) => `${surveyBaseUrl}${img}`);
-      return surveyObj;
-    });
+    const surveysWithFullUrls = await formatSurveysForResponse(
+      updatedSurveys,
+      surveyBaseUrl
+    );
 
     const customerResponse = customer.toObject();
     customerResponse.uploadElectricityBill = normalizeBillFilenames(
