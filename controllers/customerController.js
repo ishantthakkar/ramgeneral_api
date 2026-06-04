@@ -1,6 +1,8 @@
+const mongoose = require('mongoose');
 const Customer = require('../models/Customer');
 const Lead = require('../models/Lead');
 const Survey = require('../models/Survey');
+const User = require('../models/User');
 const CustomerActivity = require('../models/CustomerActivity');
 const { createLog } = require('../utils/logger');
 const { resolveLeadSourceCode } = require('../constants/leadSources');
@@ -21,6 +23,18 @@ const {
   stripCustomerLogFields,
 } = require('../utils/customerLeadHelpers');
 const { isSalesManagerRole } = require('../constants/userRoles');
+
+function mapUserSummary(user) {
+  if (!user) return null;
+  const id = user._id || user;
+  return {
+    id,
+    fullName: user.fullName || '',
+    email: user.email || '',
+    mobileNumber: user.mobileNumber || '',
+    userRole: user.userRole || '',
+  };
+}
 const { enrichAreasWithProducts } = require('../utils/surveyProductUtils');
 const { applySurveySiteUpdates } = require('../utils/surveySiteUpdate');
 
@@ -740,34 +754,93 @@ exports.getCustomersByUser = async (req, res) => {
       });
     }
 
-    // Fetch customers
-    const customers = await Customer.find({
-      user_id: userId,
-    }).sort({ createdAt: -1 });
+    const user = await User.findById(userId).select('userRole fullName email').lean();
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid authenticated user.' });
+    }
 
-    // Fetch all surveys for these customers
-    const customerIds = customers.map(customer => customer._id);
+    const { salesPersonId, salesPerson } = req.query;
+    const filterSalesPersonId = salesPersonId || salesPerson;
+    const customerFilter = {};
 
-    const surveys = await Survey.find({
-      customer_id: { $in: customerIds },
-    });
+    if (isSalesManagerRole(user.userRole)) {
+      const teamMembers = await User.find({ reportsTo: userId }).select('_id').lean();
+      const teamIds = teamMembers.map((member) => member._id);
 
-    // Attach surveys to customers
-    const customersWithSurveys = customers.map(customer => {
+      if (!teamIds.length) {
+        return res.status(200).json({ customers: [], total: 0 });
+      }
+
+      customerFilter.user_id = { $in: teamIds };
+
+      if (filterSalesPersonId) {
+        if (!mongoose.Types.ObjectId.isValid(filterSalesPersonId)) {
+          return res.status(400).json({ message: 'Invalid salesPersonId.' });
+        }
+        const isOnTeam = teamIds.some(
+          (id) => id.toString() === filterSalesPersonId.toString()
+        );
+        if (!isOnTeam) {
+          return res.status(403).json({ message: 'Sales person is not on your team.' });
+        }
+        customerFilter.user_id = filterSalesPersonId;
+      }
+    } else {
+      customerFilter.user_id = userId;
+    }
+
+    const customers = await Customer.find(customerFilter)
+      .populate({
+        path: 'user_id',
+        select: 'fullName email mobileNumber userRole reportsTo',
+        populate: { path: 'reportsTo', select: 'fullName email mobileNumber userRole' },
+      })
+      .populate({
+        path: 'leadId',
+        select: 'lead_id leadName name status assignedBy assignedAt user_id convertedToCustomer',
+        populate: { path: 'assignedBy', select: 'fullName email mobileNumber userRole' },
+      })
+      .sort({ createdAt: -1 });
+
+    const customerIds = customers.map((customer) => customer._id);
+    const surveys = customerIds.length
+      ? await Survey.find({ customer_id: { $in: customerIds } })
+      : [];
+
+    const customersWithSurveys = customers.map((customer) => {
       const customerObj = customer.toObject();
+      const lead = customerObj.leadId && typeof customerObj.leadId === 'object' ? customerObj.leadId : null;
+      const salesPersonUser = customerObj.user_id;
+      const salesManagerFromLead = lead?.assignedBy;
+      const salesManagerFromReportsTo =
+        salesPersonUser?.reportsTo && typeof salesPersonUser.reportsTo === 'object'
+          ? salesPersonUser.reportsTo
+          : null;
 
       customerObj.surveys = surveys.filter(
-        survey =>
-          survey.customer_id.toString() === customer._id.toString()
+        (survey) => survey.customer_id.toString() === customer._id.toString()
       );
+      customerObj.salesPerson = mapUserSummary(salesPersonUser);
+      customerObj.salesPersonName = customerObj.salesPerson?.fullName || '';
+      customerObj.salesManager = mapUserSummary(salesManagerFromLead || salesManagerFromReportsTo);
+      customerObj.leadAssignment = lead
+        ? {
+            leadId: lead._id,
+            lead_id: lead.lead_id || '',
+            leadName: lead.leadName || lead.name || '',
+            assignedBy: mapUserSummary(lead.assignedBy),
+            assignedAt: lead.assignedAt || null,
+            convertedToCustomer: lead.convertedToCustomer ?? true,
+          }
+        : null;
 
       return customerObj;
     });
 
     return res.status(200).json({
       customers: customersWithSurveys,
+      total: customersWithSurveys.length,
     });
-
   } catch (error) {
     console.error('Get customers by user error:', error);
 
