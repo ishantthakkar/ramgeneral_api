@@ -23,6 +23,7 @@ const {
   stripCustomerLogFields,
 } = require('../utils/customerLeadHelpers');
 const { isSalesManagerRole } = require('../constants/userRoles');
+const { attachQuotationFieldsToCustomer } = require('../utils/quotationHelpers');
 
 function mapUserSummary(user) {
   if (!user) return null;
@@ -807,35 +808,41 @@ exports.getCustomersByUser = async (req, res) => {
       ? await Survey.find({ customer_id: { $in: customerIds } })
       : [];
 
-    const customersWithSurveys = customers.map((customer) => {
-      const customerObj = customer.toObject();
-      const lead = customerObj.leadId && typeof customerObj.leadId === 'object' ? customerObj.leadId : null;
-      const salesPersonUser = customerObj.user_id;
-      const salesManagerFromLead = lead?.assignedBy;
-      const salesManagerFromReportsTo =
-        salesPersonUser?.reportsTo && typeof salesPersonUser.reportsTo === 'object'
-          ? salesPersonUser.reportsTo
+    const customersWithSurveys = await Promise.all(
+      customers.map(async (customer) => {
+        const customerObj = customer.toObject();
+        const lead =
+          customerObj.leadId && typeof customerObj.leadId === 'object' ? customerObj.leadId : null;
+        const salesPersonUser = customerObj.user_id;
+        const salesManagerFromLead = lead?.assignedBy;
+        const salesManagerFromReportsTo =
+          salesPersonUser?.reportsTo && typeof salesPersonUser.reportsTo === 'object'
+            ? salesPersonUser.reportsTo
+            : null;
+
+        customerObj.surveys = surveys.filter(
+          (survey) => survey.customer_id.toString() === customer._id.toString()
+        );
+        customerObj.salesPerson = mapUserSummary(salesPersonUser);
+        customerObj.salesPersonName = customerObj.salesPerson?.fullName || '';
+        customerObj.salesManager = mapUserSummary(salesManagerFromLead || salesManagerFromReportsTo);
+        customerObj.leadAssignment = lead
+          ? {
+              leadId: lead._id,
+              lead_id: lead.lead_id || '',
+              leadName: lead.leadName || lead.name || '',
+              assignedBy: mapUserSummary(lead.assignedBy),
+              assignedAt: lead.assignedAt || null,
+              convertedToCustomer: lead.convertedToCustomer ?? true,
+            }
           : null;
 
-      customerObj.surveys = surveys.filter(
-        (survey) => survey.customer_id.toString() === customer._id.toString()
-      );
-      customerObj.salesPerson = mapUserSummary(salesPersonUser);
-      customerObj.salesPersonName = customerObj.salesPerson?.fullName || '';
-      customerObj.salesManager = mapUserSummary(salesManagerFromLead || salesManagerFromReportsTo);
-      customerObj.leadAssignment = lead
-        ? {
-            leadId: lead._id,
-            lead_id: lead.lead_id || '',
-            leadName: lead.leadName || lead.name || '',
-            assignedBy: mapUserSummary(lead.assignedBy),
-            assignedAt: lead.assignedAt || null,
-            convertedToCustomer: lead.convertedToCustomer ?? true,
-          }
-        : null;
+        const quotationFields = await attachQuotationFieldsToCustomer(customerObj);
+        Object.assign(customerObj, quotationFields);
 
-      return customerObj;
-    });
+        return customerObj;
+      })
+    );
 
     return res.status(200).json({
       customers: customersWithSurveys,

@@ -12,6 +12,18 @@ const {
   generatePdfBuffer,
   saveQuotationPdf,
 } = require('../utils/quotationPdf');
+const {
+  buildGenerateQuotationRecord,
+  buildUploadSignedQuotationRecord,
+  getGenerateQuotations,
+  getUploadSignedQuotations,
+  hasUploadSignedQuotation,
+  formatQuotationListForResponse,
+  formatQuotationListWithUserMap,
+  loadUsersMap,
+  mapUserFromId,
+  uploadSignedQuotationFilter,
+} = require('../utils/quotationHelpers');
 
 const API_BASE_URL = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
 
@@ -29,85 +41,6 @@ function getCompanyInfo() {
   };
 }
 
-function buildQuotationRecord({
-  url,
-  filename,
-  pdfName,
-  mimeType,
-  source,
-  surveyId,
-  subtotal,
-  taxAmount,
-  grandTotal,
-  uploadedBy,
-  uploadedByName,
-}) {
-  return {
-    url,
-    filename,
-    pdfName: pdfName || filename || '',
-    mimeType: mimeType || '',
-    source: source || 'uploaded',
-    uploadedBy: uploadedBy || null,
-    uploadedByName: uploadedByName || '',
-    surveyId: surveyId || null,
-    subtotal: subtotal ?? 0,
-    taxAmount: taxAmount ?? 0,
-    grandTotal: grandTotal ?? 0,
-    createdAt: new Date(),
-  };
-}
-
-async function loadUsersMap(userIds) {
-  const ids = [...userIds].filter(Boolean);
-  if (!ids.length) return new Map();
-
-  const users = await User.find({ _id: { $in: ids } })
-    .select('fullName email mobileNumber userRole')
-    .lean();
-
-  return new Map(users.map((u) => [u._id.toString(), u]));
-}
-
-function mapUserFromId(id, userMap) {
-  if (!id) return null;
-  const key = id.toString?.() || String(id);
-  const user = userMap.get(key);
-  if (!user) return { _id: key };
-  return {
-    _id: user._id,
-    fullName: user.fullName,
-    email: user.email,
-    mobileNumber: user.mobileNumber,
-    userRole: user.userRole,
-  };
-}
-
-function formatQuotationsWithUserMap(quotations, userMap) {
-  return (quotations || []).map((q) => {
-    const plain = q?.toObject ? q.toObject() : { ...q };
-    const uploader = mapUserFromId(plain.uploadedBy, userMap);
-    return {
-      ...plain,
-      uploadedByName: plain.uploadedByName || uploader?.fullName || '',
-      uploadedByUser: uploader,
-    };
-  });
-}
-
-async function formatQuotationsForResponse(quotations) {
-  const list = quotations || [];
-  const userIds = new Set();
-
-  for (const q of list) {
-    const plain = q?.toObject ? q.toObject() : q;
-    if (plain.uploadedBy) userIds.add(plain.uploadedBy.toString());
-  }
-
-  const userMap = await loadUsersMap(userIds);
-  return formatQuotationsWithUserMap(list, userMap);
-}
-
 function collectQuotationRelatedUserIds(customers) {
   const userIds = new Set();
   for (const customer of customers) {
@@ -118,7 +51,10 @@ function collectQuotationRelatedUserIds(customers) {
     if (customer.quotationApprovedBy) {
       userIds.add(customer.quotationApprovedBy.toString());
     }
-    for (const q of customer.quotations || []) {
+    for (const q of [
+      ...getGenerateQuotations(customer),
+      ...getUploadSignedQuotations(customer),
+    ]) {
       if (q.uploadedBy) userIds.add(q.uploadedBy.toString());
     }
   }
@@ -138,7 +74,14 @@ async function buildAdminCustomerQuotationsList(customers) {
     quotationApprovedBy: customer.quotationApprovedBy || null,
     quotationApprovedByUser: mapUserFromId(customer.quotationApprovedBy, userMap),
     salesPerson: mapUploadedByUserForApproval(mapUserFromId(customer.user_id, userMap)),
-    quotations: formatQuotationsWithUserMap(customer.quotations || [], userMap),
+    generateQuotation: formatQuotationListWithUserMap(
+      getGenerateQuotations(customer),
+      userMap
+    ),
+    uploadSignedQuotation: formatQuotationListWithUserMap(
+      getUploadSignedQuotations(customer),
+      userMap
+    ),
   }));
 }
 
@@ -154,7 +97,7 @@ function mapUploadedByUserForApproval(user) {
 }
 
 function mapCustomerQuotationApprovalItem(customer, userMap) {
-  const uploaded = (customer.quotations || []).filter((q) => q.source === 'uploaded');
+  const uploaded = getUploadSignedQuotations(customer);
   const quotations = uploaded.map((q) => {
     const plain = q?.toObject ? q.toObject() : { ...q };
     return {
@@ -176,10 +119,8 @@ function mapCustomerQuotationApprovalItem(customer, userMap) {
 async function buildManagerApprovalQuotationsList(customers) {
   const userIds = new Set();
   for (const customer of customers) {
-    for (const q of customer.quotations || []) {
-      if (q.source === 'uploaded' && q.uploadedBy) {
-        userIds.add(q.uploadedBy.toString());
-      }
+    for (const q of getUploadSignedQuotations(customer)) {
+      if (q.uploadedBy) userIds.add(q.uploadedBy.toString());
     }
   }
 
@@ -390,17 +331,18 @@ exports.createQuotation = async (req, res) => {
       ? await User.findById(req.user.id).select('fullName email').lean()
       : null;
 
-    const quotationRecord = buildQuotationRecord({
+    const quotationRecord = buildGenerateQuotationRecord({
       url: pdfUrl,
       filename,
       surveyId: surveys[0]._id,
+      grandTotal,
       uploadedBy: req.user?.id,
       uploadedByName: generator?.fullName || '',
     });
 
     const updatedCustomer = await Customer.findByIdAndUpdate(
       customerId,
-      { $push: { quotations: quotationRecord } },
+      { $push: { generateQuotation: quotationRecord } },
       { new: true }
     );
 
@@ -414,12 +356,14 @@ exports.createQuotation = async (req, res) => {
       );
     }
 
-    const savedQuotation = updatedCustomer.quotations[updatedCustomer.quotations.length - 1];
-    const formatted = (await formatQuotationsForResponse([savedQuotation]))[0];
+    const savedQuotation =
+      updatedCustomer.generateQuotation[updatedCustomer.generateQuotation.length - 1];
+    const formatted = (await formatQuotationListForResponse([savedQuotation]))[0];
 
     return res.status(201).json({
       message: 'Quotation generated successfully.',
       pdfUrl,
+      generateQuotation: formatted,
     });
   } catch (error) {
     console.error('Create quotation error:', error);
@@ -455,22 +399,21 @@ exports.uploadQuotation = async (req, res) => {
     const quotationRecords = files.map((file) => {
       const relativePath = `uploads/quotations/${file.filename}`;
       const pdfName = file.originalname || file.filename;
-      return buildQuotationRecord({
+      return buildUploadSignedQuotationRecord({
         url: `${API_BASE_URL}/${relativePath}`,
         filename: file.filename,
         pdfName,
         mimeType: file.mimetype,
-        source: 'uploaded',
         uploadedBy: req.user?.id,
         uploadedByName,
       });
     });
 
-    customer.quotations.push(...quotationRecords);
+    customer.uploadSignedQuotation.push(...quotationRecords);
     customer.quotationStatus = 'pending';
     customer.quotationApprovedBy = null;
     customer.quotationApprovedAt = null;
-    customer.markModified('quotations');
+    customer.markModified('uploadSignedQuotation');
     await customer.save();
 
     const updatedCustomer = await Customer.findById(customerId);
@@ -491,17 +434,17 @@ exports.uploadQuotation = async (req, res) => {
       );
     }
 
-    const savedQuotations = updatedCustomer.quotations
-      .filter((q) => q.source === 'uploaded')
-      .slice(-quotationRecords.length);
-    const formattedQuotations = await formatQuotationsForResponse(savedQuotations);
+    const savedQuotations = updatedCustomer.uploadSignedQuotation.slice(
+      -quotationRecords.length
+    );
+    const formattedQuotations = await formatQuotationListForResponse(savedQuotations);
     const quotationMeta = await formatCustomerQuotationMeta(updatedCustomer);
 
     return res.status(201).json({
       message: 'Quotation received successfully.',
       ...quotationMeta,
       pdfUrls: formattedQuotations.map((q) => q.url),
-      quotations: formattedQuotations,
+      uploadSignedQuotation: formattedQuotations,
     });
   } catch (error) {
     console.error('Upload quotation error:', error);
@@ -546,7 +489,7 @@ exports.listQuotationsForManagerApproval = async (req, res) => {
 
     const customerFilter = {
       user_id: { $exists: true, $ne: null },
-      quotations: { $elemMatch: { source: 'uploaded' } },
+      ...uploadSignedQuotationFilter(),
     };
 
     if (teamIds.length) {
@@ -574,7 +517,9 @@ exports.listQuotationsForManagerApproval = async (req, res) => {
     applyQuotationStatusFilter(customerFilter, statusFilter);
 
     const customers = await Customer.find(customerFilter)
-      .select('name quotations quotationStatus quotationApprovedAt user_id leadId')
+      .select(
+        'name generateQuotation uploadSignedQuotation quotations quotationStatus quotationApprovedAt user_id leadId'
+      )
       .populate('user_id', 'fullName email mobileNumber')
       .populate('leadId', 'leadName name')
       .sort({ updatedAt: -1 })
@@ -614,7 +559,7 @@ exports.listCustomerQuotationsForAdmin = async (req, res) => {
     const customerFilter = {};
 
     if (hasQuotations === 'true') {
-      customerFilter.quotations = { $exists: true, $not: { $size: 0 } };
+      Object.assign(customerFilter, uploadSignedQuotationFilter());
     }
 
     if (filterSalesPersonId) {
@@ -628,7 +573,7 @@ exports.listCustomerQuotationsForAdmin = async (req, res) => {
 
     const customers = await Customer.find(customerFilter)
       .select(
-        'name company accountNumber quotations quotationStatus quotationApprovedBy quotationApprovedAt user_id leadId'
+        'name company accountNumber generateQuotation uploadSignedQuotation quotations quotationStatus quotationApprovedBy quotationApprovedAt user_id leadId'
       )
       .populate('user_id', 'fullName email mobileNumber userRole')
       .populate('leadId', 'leadName name')
@@ -657,7 +602,7 @@ exports.listCustomerQuotations = async (req, res) => {
     }
 
     const customer = await Customer.findById(customerId).select(
-      'name quotations quotationStatus quotationApprovedBy quotationApprovedAt'
+      'name generateQuotation uploadSignedQuotation quotations quotationStatus quotationApprovedBy quotationApprovedAt'
     );
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
@@ -676,19 +621,19 @@ exports.listCustomerQuotations = async (req, res) => {
         return res.status(200).json({
           customerId,
           ...quotationMeta,
-          quotations: [],
+          uploadSignedQuotation: [],
           total: 0,
         });
       }
     }
 
-    const quotations = (customer.quotations || []).filter((q) => q.source === 'uploaded');
-    const formattedQuotations = await formatQuotationsForResponse(quotations);
+    const quotations = getUploadSignedQuotations(customer);
+    const formattedQuotations = await formatQuotationListForResponse(quotations);
 
     return res.status(200).json({
       customerId,
       ...quotationMeta,
-      quotations: formattedQuotations,
+      uploadSignedQuotation: formattedQuotations,
       total: formattedQuotations.length,
     });
   } catch (error) {
@@ -726,8 +671,8 @@ exports.approveQuotation = async (req, res) => {
       return res.status(403).json({ message: access.message });
     }
 
-    const uploadedQuotations = (customer.quotations || []).filter((q) => q.source === 'uploaded');
-    if (!uploadedQuotations.length) {
+    const uploadedQuotations = getUploadSignedQuotations(customer);
+    if (!hasUploadSignedQuotation(customer)) {
       return res.status(400).json({ message: 'No uploaded quotation files to approve.' });
     }
 
@@ -756,12 +701,12 @@ exports.approveQuotation = async (req, res) => {
     );
 
     const quotationMeta = await formatCustomerQuotationMeta(customer);
-    const formattedQuotations = await formatQuotationsForResponse(uploadedQuotations);
+    const formattedQuotations = await formatQuotationListForResponse(uploadedQuotations);
 
     return res.status(200).json({
       message: 'Quotation approved successfully.',
       ...quotationMeta,
-      quotations: formattedQuotations,
+      uploadSignedQuotation: formattedQuotations,
     });
   } catch (error) {
     console.error('Approve quotation error:', error);

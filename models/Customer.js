@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { quotationFileFields } = require('../utils/quotationHelpers');
 
 const customerSchema = new mongoose.Schema({
   accountNumber: {
@@ -195,6 +196,8 @@ const customerSchema = new mongoose.Schema({
     ref: 'User',
   },
   quotationApprovedAt: { type: Date },
+  generateQuotation: [quotationFileFields],
+  uploadSignedQuotation: [quotationFileFields],
   quotations: [
     {
       url: { type: String, trim: true, default: '' },
