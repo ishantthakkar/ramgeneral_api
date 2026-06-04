@@ -12,6 +12,7 @@ const dashboardRoutes = require('./routes/dashboardRoutes');
 const serviceRoutes = require('./routes/serviceRoutes');
 const activityRoutes = require('./routes/activityRoutes');
 const productRoutes = require('./routes/productRoutes');
+const usaStatesRoutes = require('./routes/usaStatesRoutes');
 const cors = require('cors');
 
 const app = express();
@@ -51,6 +52,7 @@ app.use('/api/admin/dashboard', dashboardRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/activities', activityRoutes);
 app.use('/api/products', productRoutes);
+app.use('/api/usa-states', usaStatesRoutes);
 
 // Health check
 app.get('/', (req, res) => {
