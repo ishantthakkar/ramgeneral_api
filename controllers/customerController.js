@@ -20,6 +20,26 @@ const {
   syncLeadFieldsFromBody,
   stripCustomerLogFields,
 } = require('../utils/customerLeadHelpers');
+const { isSalesManagerRole } = require('../constants/userRoles');
+
+const flattenPopulatedLead = (leadId, customer) => {
+  const lead = leadId && typeof leadId === 'object' ? leadId : null;
+  return {
+    lead_id: lead?.lead_id || '',
+    leadName: lead?.leadName || lead?.name || customer?.name || '',
+    dba: lead?.dba || '',
+  };
+};
+
+const resolveSalesManagerName = (salesUser) => {
+  if (!salesUser || typeof salesUser !== 'object') return '';
+  const supervisor = salesUser.reportsTo;
+  if (!supervisor || typeof supervisor !== 'object') return '';
+  if (isSalesManagerRole(supervisor.userRole)) {
+    return supervisor.fullName || '';
+  }
+  return '';
+};
 
 const CUSTOMER_STATUSES = [
   'New',
@@ -123,14 +143,23 @@ exports.listConvertedCustomers = async (req, res) => {
     const customers = await Customer.find(filter)
       .populate('leadId', LEAD_FIELDS_FOR_POPULATE)
       .populate('assignToContractor', 'fullName email')
-      .populate('user_id', 'fullName email userRole')
+      .populate({
+        path: 'user_id',
+        select: 'fullName email userRole',
+        populate: { path: 'reportsTo', select: 'fullName userRole' },
+      })
       .sort({ convertedDate: -1 });
 
     const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
 
-    const customerSummaries = customers.map((customer) => ({
+    const customerSummaries = customers.map((customer) => {
+      const leadFields = flattenPopulatedLead(customer.leadId, customer);
+      return {
       id: customer._id,
-      leadId: customer.leadId || null,
+      leadId: customer.leadId?._id || customer.leadId || null,
+      lead_id: leadFields.lead_id,
+      leadName: leadFields.leadName,
+      dba: leadFields.dba,
       legalName: customer.legalName,
       uploadElectricityBill: normalizeBillFilenames(customer.uploadElectricityBill),
       addresses: customer.addresses,
@@ -150,12 +179,14 @@ exports.listConvertedCustomers = async (req, res) => {
       assignedTo: customer.assignedTo ?? null,
       verifyStatus: customer.verifyStatus,
       salesPersonName: customer.user_id?.fullName || customer.user_id?.name || '',
+      salesManagerName: resolveSalesManagerName(customer.user_id),
       material: (customer.material || []).map(m => {
         const materialObj = m.toObject();
         materialObj.images = (materialObj.images || []).map(img => `${materialBaseUrl}${img}`);
         return materialObj;
       })
-    }));
+    };
+    });
 
     return res.status(200).json({
       message: 'Converted customers retrieved successfully.',
