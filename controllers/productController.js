@@ -24,6 +24,67 @@ function parseMoney(value, fieldName) {
   return { value: num };
 }
 
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildSkuFilter(sku) {
+  const trimmedSku = sku.trim();
+  return { sku: { $regex: new RegExp(`^${escapeRegex(trimmedSku)}$`, 'i') } };
+}
+
+function parseProductPayload(body) {
+  const { sku, name, salesPrice, commission, installationCost, price } = body;
+
+  if (!sku || !name) {
+    return { error: 'SKU and name are required.' };
+  }
+
+  const salesPriceResult = parseMoney(
+    salesPrice !== undefined ? salesPrice : price,
+    'Sales price'
+  );
+  if (salesPriceResult.error) {
+    return { error: salesPriceResult.error };
+  }
+
+  const commissionResult = parseMoney(commission ?? 0, 'Commission');
+  if (commissionResult.error) {
+    return { error: commissionResult.error };
+  }
+
+  const installationCostResult = parseMoney(installationCost ?? 0, 'Installation cost');
+  if (installationCostResult.error) {
+    return { error: installationCostResult.error };
+  }
+
+  return {
+    value: {
+      sku: sku.trim(),
+      name: name.trim(),
+      salesPrice: salesPriceResult.value,
+      commission: commissionResult.value,
+      installationCost: installationCostResult.value,
+    },
+  };
+}
+
+async function findProductBySku(sku, excludeId = null) {
+  const filter = buildSkuFilter(sku);
+  if (excludeId) {
+    filter._id = { $ne: excludeId };
+  }
+  return Product.findOne(filter);
+}
+
+function applyProductFields(product, payload) {
+  product.sku = payload.sku;
+  product.name = payload.name;
+  product.salesPrice = payload.salesPrice;
+  product.commission = payload.commission;
+  product.installationCost = payload.installationCost;
+}
+
 exports.listProducts = async (req, res) => {
   try {
     const { type, category } = req.query;
@@ -61,42 +122,13 @@ exports.listProducts = async (req, res) => {
 
 exports.createProduct = async (req, res) => {
   try {
-    const { sku, name, salesPrice, commission, installationCost, price } = req.body;
+    const parsed = parseProductPayload(req.body);
 
-    if (!sku || !name) {
-      return res.status(400).json({ message: 'SKU and name are required.' });
+    if (parsed.error) {
+      return res.status(400).json({ message: parsed.error });
     }
 
-    const salesPriceResult = parseMoney(
-      salesPrice !== undefined ? salesPrice : price,
-      'Sales price'
-    );
-    if (salesPriceResult.error) {
-      return res.status(400).json({ message: salesPriceResult.error });
-    }
-
-    const commissionResult = parseMoney(commission ?? 0, 'Commission');
-    if (commissionResult.error) {
-      return res.status(400).json({ message: commissionResult.error });
-    }
-
-    const installationCostResult = parseMoney(installationCost ?? 0, 'Installation cost');
-    if (installationCostResult.error) {
-      return res.status(400).json({ message: installationCostResult.error });
-    }
-
-    const existingSku = await Product.findOne({ sku: sku.trim() });
-    if (existingSku) {
-      return res.status(400).json({ message: 'A product with this SKU already exists.' });
-    }
-
-    const product = await Product.create({
-      sku: sku.trim(),
-      name: name.trim(),
-      salesPrice: salesPriceResult.value,
-      commission: commissionResult.value,
-      installationCost: installationCostResult.value,
-    });
+    const product = await Product.create(parsed.value);
 
     if (req.user?.id) {
       await createLog('Product Created', req.user.id, product.name, 'Product', product._id);
@@ -105,10 +137,14 @@ exports.createProduct = async (req, res) => {
     return res.status(201).json({
       message: 'Product created successfully.',
       product: formatProduct(product),
+      action: 'created',
     });
   } catch (error) {
     if (error.code === 11000) {
-      return res.status(400).json({ message: 'A product with this SKU already exists.' });
+      return res.status(400).json({
+        message:
+          'Could not create product because SKU is still unique in the database. Restart the API server to apply the latest product index settings.',
+      });
     }
     console.error('Create product error:', error);
     return res.status(500).json({ message: 'Server error creating product.' });
@@ -118,10 +154,10 @@ exports.createProduct = async (req, res) => {
 exports.updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    const { sku, name, salesPrice, commission, installationCost, price } = req.body;
+    const parsed = parseProductPayload(req.body);
 
-    if (!sku || !name) {
-      return res.status(400).json({ message: 'SKU and name are required.' });
+    if (parsed.error) {
+      return res.status(400).json({ message: parsed.error });
     }
 
     const product = await Product.findById(id);
@@ -129,35 +165,12 @@ exports.updateProduct = async (req, res) => {
       return res.status(404).json({ message: 'Product not found.' });
     }
 
-    const salesPriceResult = parseMoney(
-      salesPrice !== undefined ? salesPrice : price,
-      'Sales price'
-    );
-    if (salesPriceResult.error) {
-      return res.status(400).json({ message: salesPriceResult.error });
-    }
-
-    const commissionResult = parseMoney(commission ?? 0, 'Commission');
-    if (commissionResult.error) {
-      return res.status(400).json({ message: commissionResult.error });
-    }
-
-    const installationCostResult = parseMoney(installationCost ?? 0, 'Installation cost');
-    if (installationCostResult.error) {
-      return res.status(400).json({ message: installationCostResult.error });
-    }
-
-    const trimmedSku = sku.trim();
-    const existingSku = await Product.findOne({ sku: trimmedSku, _id: { $ne: id } });
+    const existingSku = await findProductBySku(parsed.value.sku, id);
     if (existingSku) {
       return res.status(400).json({ message: 'A product with this SKU already exists.' });
     }
 
-    product.sku = trimmedSku;
-    product.name = name.trim();
-    product.salesPrice = salesPriceResult.value;
-    product.commission = commissionResult.value;
-    product.installationCost = installationCostResult.value;
+    applyProductFields(product, parsed.value);
     await product.save();
 
     if (req.user?.id) {
@@ -167,6 +180,7 @@ exports.updateProduct = async (req, res) => {
     return res.status(200).json({
       message: 'Product updated successfully.',
       product: formatProduct(product),
+      action: 'updated',
     });
   } catch (error) {
     if (error.code === 11000) {
