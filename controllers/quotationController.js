@@ -654,21 +654,22 @@ exports.approveQuotation = async (req, res) => {
       return res.status(401).json({ message: 'User not authenticated.' });
     }
 
-    const approver = await User.findById(approverId).select('userRole').lean();
-    if (!approver || !isSalesManagerRole(approver.userRole)) {
-      return res.status(403).json({
-        message: 'Only sales managers can approve quotations.',
-      });
-    }
+    const admin = await Admin.findById(approverId).select('_id').lean();
+    const approver = admin
+      ? null
+      : await User.findById(approverId).select('userRole').lean();
+
 
     const customer = await Customer.findById(customerId).populate('user_id', 'fullName');
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
     }
 
-    const access = await assertSalesManagerCanAccessCustomer(approverId, customer);
-    if (!access.ok) {
-      return res.status(403).json({ message: access.message });
+    if (!admin) {
+      const access = await assertSalesManagerCanAccessCustomer(approverId, customer);
+      if (!access.ok) {
+        return res.status(403).json({ message: access.message });
+      }
     }
 
     const uploadedQuotations = getUploadSignedQuotations(customer);
