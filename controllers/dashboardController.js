@@ -2,9 +2,53 @@ const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
 const Admin = require('../models/Admin');
 const User = require('../models/User');
+const Survey = require('../models/Survey');
 const ActivityLog = require('../models/ActivityLog');
+const { isSalesManagerRole, isSalesPersonRole } = require('../constants/userRoles');
+const { surveyQuotationDataFilter } = require('../utils/quotationHelpers');
 
 const WORKFLOW_SURVEY_STATUSES = ['completed', 'reopened', 'reopen', 'pending_edit_approval'];
+
+async function countScopedSurveyQuotations(userId, admin) {
+  const surveyFilter = surveyQuotationDataFilter();
+
+  if (admin) {
+    return Survey.countDocuments(surveyFilter);
+  }
+
+  const user = await User.findById(userId).select('userRole').lean();
+  if (!user) {
+    return 0;
+  }
+
+  if (isSalesManagerRole(user.userRole)) {
+    const teamMembers = await User.find({ reportsTo: userId }).select('_id').lean();
+    const teamIds = teamMembers.map((member) => member._id);
+    if (!teamIds.length) {
+      return 0;
+    }
+
+    const customers = await Customer.find({ user_id: { $in: teamIds } }).select('_id').lean();
+    const customerIds = customers.map((customer) => customer._id);
+    if (!customerIds.length) {
+      return 0;
+    }
+
+    return Survey.countDocuments({ ...surveyFilter, customer_id: { $in: customerIds } });
+  }
+
+  if (isSalesPersonRole(user.userRole)) {
+    const customers = await Customer.find({ user_id: userId }).select('_id').lean();
+    const customerIds = customers.map((customer) => customer._id);
+    if (!customerIds.length) {
+      return 0;
+    }
+
+    return Survey.countDocuments({ ...surveyFilter, customer_id: { $in: customerIds } });
+  }
+
+  return 0;
+}
 
 exports.getAdminDashboardStats = async (req, res) => {
   try {
@@ -65,10 +109,7 @@ exports.getWorkflowStats = async (req, res) => {
       }),
     ]);
 
-    let totalQuotations = 0;
-    if (admin) {
-      totalQuotations = await Customer.countDocuments({});
-    }
+    const totalQuotations = await countScopedSurveyQuotations(userId, !!admin);
 
     return res.status(200).json({
       totalSurveys,
