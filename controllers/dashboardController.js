@@ -1,7 +1,10 @@
 const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
-const Survey = require('../models/Survey');
+const Admin = require('../models/Admin');
+const User = require('../models/User');
 const ActivityLog = require('../models/ActivityLog');
+
+const WORKFLOW_SURVEY_STATUSES = ['completed', 'reopened', 'reopen', 'pending_edit_approval'];
 
 exports.getAdminDashboardStats = async (req, res) => {
   try {
@@ -33,5 +36,48 @@ exports.getAdminDashboardStats = async (req, res) => {
   } catch (error) {
     console.error('Admin dashboard stats error:', error);
     return res.status(500).json({ message: 'Server error fetching dashboard statistics.' });
+  }
+};
+
+exports.getWorkflowStats = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const admin = await Admin.findById(userId).select('_id').lean();
+
+    const surveyFilter = {
+      leadId: { $ne: null },
+      status: { $in: WORKFLOW_SURVEY_STATUSES },
+    };
+
+    if (!admin) {
+      const user = await User.findById(userId).select('userRole').lean();
+      if (user?.userRole === 'Project Manager') {
+        surveyFilter.assignedTo = userId;
+      }
+    }
+
+    const [totalSurveys, totalInstallations, totalInspections] = await Promise.all([
+      Customer.countDocuments(surveyFilter),
+      Customer.countDocuments({ verifyStatus: 'verified' }),
+      Customer.countDocuments({
+        material: { $exists: true, $not: { $size: 0 } },
+        installationStatus: 'completed',
+      }),
+    ]);
+
+    let totalQuotations = 0;
+    if (admin) {
+      totalQuotations = await Customer.countDocuments({});
+    }
+
+    return res.status(200).json({
+      totalSurveys,
+      totalQuotations,
+      totalInstallations,
+      totalInspections,
+    });
+  } catch (error) {
+    console.error('Workflow stats error:', error);
+    return res.status(500).json({ message: 'Server error fetching workflow statistics.' });
   }
 };
