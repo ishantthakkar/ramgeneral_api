@@ -150,7 +150,7 @@ const processUploadedImages = async (files) => {
 exports.createSurvey = async (req, res) => {
     try {
         const user_id = req.user.id;
-        const { id, customer_id, areaName, note, notes, status, surveyDate, areas, markAsCompleted, MarkasCompleted } = req.body;
+        const { id, customer_id, surveyName, areaName, note, notes, status, surveyDate, areas, markAsCompleted, MarkasCompleted } = req.body;
         const completionFlag = markAsCompleted !== undefined ? markAsCompleted : MarkasCompleted !== undefined ? MarkasCompleted : false;
 
         const user = await User.findById(user_id);
@@ -184,6 +184,7 @@ exports.createSurvey = async (req, res) => {
 
             const updateData = {
                 status: status || survey.status,
+                surveyName: surveyName !== undefined ? surveyName : survey.surveyName,
                 areaName: areaName !== undefined ? areaName : survey.areaName,
                 note: note !== undefined ? note : survey.note,
                 notes: notes !== undefined ? notes : survey.notes,
@@ -226,6 +227,7 @@ exports.createSurvey = async (req, res) => {
             const survey = await Survey.create({
                 customer_id,
                 user_id,
+                surveyName: surveyName || '',
                 areaName: areaName || '',
                 note: note || '',
                 areas: processedAreas !== null ? processedAreas : [],
@@ -383,9 +385,10 @@ exports.getSurvey = async (req, res) => {
 exports.updateSurvey = async (req, res) => {
     try {
         const { id } = req.params;
-        const { areaName, note, notes, status, surveyDate, markAsCompleted, MarkasCompleted } = req.body;
+        const { surveyName, areaName, note, notes, status, surveyDate, markAsCompleted, MarkasCompleted } = req.body;
         const updateData = {};
 
+        if (surveyName !== undefined) updateData.surveyName = surveyName;
         if (areaName !== undefined) updateData.areaName = areaName;
         if (note !== undefined) updateData.note = note;
         if (notes !== undefined) updateData.notes = notes;

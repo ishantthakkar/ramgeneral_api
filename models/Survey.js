@@ -26,6 +26,7 @@ const surveySchema = new mongoose.Schema({
     enum: ['Draft', 'In Progress', 'Completed', 'draft', 'in_progress', 'completed', 'submitted'],
     default: 'Draft',
   },
+  surveyName: { type: String, trim: true, default: '' },
   areaName: { type: String, trim: true, default: '' },
   note: { type: String, trim: true, default: '' },
   areas: [
