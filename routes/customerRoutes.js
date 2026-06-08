@@ -108,7 +108,6 @@ router.get('/installation-list', verifyToken, customerController.installationLis
 router.get('/inspection-list-user', verifyToken, customerController.inspectionListByUser);
 router.get('/survey-quotations-list', verifyToken, quotationController.listSurveyQuotationsByUser);
 router.get('/quotations-list', verifyToken, quotationController.listSurveyQuotationsByUser);
-router.get('/quotations-admin', verifyToken, quotationController.listSurveyQuotationsByUser);
 router.post('/quotation/approve', verifyToken, quotationController.approveQuotation);
 router.post('/quotation', verifyToken, quotationController.createQuotation);
 router.post(
