@@ -32,6 +32,10 @@ const {
   getInstallDate,
   getPaymentTotals,
   syncPayablesForCustomer,
+  addPaymentToCommission,
+  normalizePayableFor,
+  sumCommissionPayments,
+  findCommissionRecord,
 } = require('../utils/payablesUtils');
 
 function mapUserSummary(user) {
@@ -1279,6 +1283,130 @@ exports.getCustomerActivities = async (req, res) => {
   } catch (error) {
     console.error('Get customer activities error:', error);
     return res.status(500).json({ message: 'Server error fetching activities.' });
+  }
+};
+
+exports.getCustomerPayableDetails = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { surveyId, for: payableFor } = req.query;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const customer = await Customer.findById(id).populate('leadId', LEAD_FIELDS_FOR_POPULATE);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    let survey = null;
+    if (surveyId && mongoose.Types.ObjectId.isValid(surveyId)) {
+      survey = await Survey.findOne({ _id: surveyId, customer_id: id });
+    }
+    if (!survey) {
+      survey = await Survey.findOne({ customer_id: id }).sort({ createdAt: -1 });
+    }
+
+    const type = normalizePayableFor(payableFor);
+    const before = JSON.stringify(customer.commissions || []);
+    await syncPayablesForCustomer(customer);
+    if (before !== JSON.stringify(customer.commissions || [])) {
+      await customer.save();
+    }
+
+    const leadFields = flattenPopulatedLead(customer.leadId, customer);
+    let payables = null;
+    let dynamicCommission = 0;
+    let quotationNumber = '';
+    let quotationAmount = 0;
+
+    if (survey) {
+      payables = await calculateSurveyPayables(survey, customer);
+      dynamicCommission =
+        type === 'Installation' ? payables.contractorCommission : payables.salesCommission;
+      quotationNumber = payables.quotationNumber || '';
+      quotationAmount = payables.quotationAmount || 0;
+    }
+
+    const record = survey ? findCommissionRecord(customer, survey._id, type) : null;
+    const paid = sumCommissionPayments(record);
+    const pending = Math.max(0, dynamicCommission - paid);
+
+    return res.status(200).json({
+      message: 'Payable details retrieved successfully.',
+      details: {
+        customerId: customer._id,
+        surveyId: survey?._id || null,
+        commissionId: record?._id || null,
+        legalName: customer.legalName || customer.name || '',
+        commission: dynamicCommission,
+        paid,
+        pending,
+        leadId: leadFields.lead_id || '',
+        leadSource: customer.leadSource || '',
+        quotationNumber: quotationNumber || '—',
+        quotationAmount,
+        payments: (record?.payments || []).map((payment) =>
+          payment?.toObject ? payment.toObject() : payment
+        ),
+      },
+    });
+  } catch (error) {
+    console.error('Get customer payable details error:', error);
+    return res.status(500).json({ message: 'Server error retrieving payable details.' });
+  }
+};
+
+exports.addCommissionPayment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { surveyId, for: payableFor, amount, paymentMethod, paymentDate } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+    if (!surveyId || !mongoose.Types.ObjectId.isValid(surveyId)) {
+      return res.status(400).json({ message: 'Valid surveyId is required.' });
+    }
+
+    const customer = await Customer.findById(id);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const result = await addPaymentToCommission(customer, {
+      surveyId,
+      payableFor,
+      amount,
+      paymentMethod,
+      paymentDate,
+    });
+
+    await customer.save();
+    await createLog('Commission Payment Added', req.user.id, customer.name, 'Customer', customer._id);
+
+    return res.status(200).json({
+      message: 'Commission payment added successfully.',
+      details: {
+        customerId: customer._id,
+        surveyId,
+        commission: result.dynamicAmount,
+        paid: result.paid,
+        pending: result.pending,
+        quotationNumber: result.quotationNumber || '—',
+        quotationAmount: result.quotationAmount || 0,
+        payments: (result.commission.payments || []).map((payment) =>
+          payment?.toObject ? payment.toObject() : payment
+        ),
+      },
+    });
+  } catch (error) {
+    console.error('Add commission payment error:', error);
+    const statusCode = error.statusCode || 500;
+    return res.status(statusCode).json({
+      message: error.message || 'Server error adding commission payment.',
+    });
   }
 };
 
