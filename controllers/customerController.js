@@ -213,38 +213,38 @@ exports.listConvertedCustomers = async (req, res) => {
     const customerSummaries = customers.map((customer) => {
       const leadFields = flattenPopulatedLead(customer.leadId, customer);
       return {
-      id: customer._id,
-      customerCode: customer.customerCode || '',
-      leadId: customer.leadId?._id || customer.leadId || null,
-      lead_id: leadFields.lead_id,
-      leadName: leadFields.leadName,
-      dba: leadFields.dba,
-      legalName: customer.legalName,
-      uploadElectricityBill: normalizeBillFilenames(customer.uploadElectricityBill),
-      addresses: customer.addresses,
-      contactInfo: customer.contactInfo,
-      notes: customer.notes,
-      accountNumber: customer.accountNumber,
-      name: customer.name,
-      company: customer.company,
-      email: customer.email,
-      mobileNumber: customer.mobileNumber,
-      leadSource: customer.leadSource,
-      createdDate: customer.createdAt,
-      convertedDate: customer.convertedDate,
-      contractor: customer.assignToContractor?.fullName || '',
-      status: customer.status,
-      lastActivity: customer.lastActivity,
-      assignedTo: customer.assignedTo ?? null,
-      verifyStatus: customer.verifyStatus,
-      salesPersonName: customer.user_id?.fullName || customer.user_id?.name || '',
-      salesManagerName: resolveSalesManagerName(customer.user_id),
-      material: (customer.material || []).map(m => {
-        const materialObj = m.toObject();
-        materialObj.images = (materialObj.images || []).map(img => `${materialBaseUrl}${img}`);
-        return materialObj;
-      })
-    };
+        id: customer._id,
+        customerCode: customer.customerCode || '',
+        leadId: customer.leadId?._id || customer.leadId || null,
+        lead_id: leadFields.lead_id,
+        leadName: leadFields.leadName,
+        dba: leadFields.dba,
+        legalName: customer.legalName,
+        uploadElectricityBill: normalizeBillFilenames(customer.uploadElectricityBill),
+        addresses: customer.addresses,
+        contactInfo: customer.contactInfo,
+        notes: customer.notes,
+        accountNumber: customer.accountNumber,
+        name: customer.name,
+        company: customer.company,
+        email: customer.email,
+        mobileNumber: customer.mobileNumber,
+        leadSource: customer.leadSource,
+        createdDate: customer.createdAt,
+        convertedDate: customer.convertedDate,
+        contractor: customer.assignToContractor?.fullName || '',
+        status: customer.status,
+        lastActivity: customer.lastActivity,
+        assignedTo: customer.assignedTo ?? null,
+        verifyStatus: customer.verifyStatus,
+        salesPersonName: customer.user_id?.fullName || customer.user_id?.name || '',
+        salesManagerName: resolveSalesManagerName(customer.user_id),
+        material: (customer.material || []).map(m => {
+          const materialObj = m.toObject();
+          materialObj.images = (materialObj.images || []).map(img => `${materialBaseUrl}${img}`);
+          return materialObj;
+        })
+      };
     });
 
     return res.status(200).json({
@@ -734,10 +734,10 @@ exports.assignCustomer = async (req, res) => {
 
 exports.updateCustomerSurveyStatus = async (req, res) => {
   try {
-    const { customerId, status } = req.params;
+    const { surveyId, status } = req.params;
 
     // ✅ Validate allowed statuses
-    const allowedStatuses = ['in_progress', 'draft', 'completed'];
+    const allowedStatuses = ['in_progress', 'draft', 'completed', 'submitted'];
 
     if (!allowedStatuses.includes(status)) {
       return res.status(400).json({
@@ -745,25 +745,25 @@ exports.updateCustomerSurveyStatus = async (req, res) => {
       });
     }
 
-    // ✅ Check customer exists
-    const customer = await Customer.findById(customerId);
-    if (!customer) {
-      return res.status(404).json({ message: 'Customer not found.' });
+    // ✅ Check survey exists
+    const survey = await Survey.findById(surveyId);
+    if (!survey) {
+      return res.status(404).json({ message: 'Survey not found.' });
     }
 
     // ✅ Update status
-    customer.status = status;
-    await customer.save();
+    survey.status = status;
+    await survey.save();
 
     return res.status(200).json({
-      message: `Customer survey status updated to '${status}' successfully.`,
-      customer,
+      message: `Survey status updated to '${status}' successfully.`,
+      survey,
     });
 
   } catch (error) {
-    console.error('Update customer survey status error:', error);
+    console.error('Update survey status error:', error);
     return res.status(500).json({
-      message: 'Server error updating customer survey status.',
+      message: 'Server error updating survey status.',
     });
   }
 };
@@ -852,13 +852,13 @@ exports.getCustomersByUser = async (req, res) => {
         customerObj.salesManager = mapUserSummary(salesManagerFromLead || salesManagerFromReportsTo);
         customerObj.leadAssignment = lead
           ? {
-              leadId: lead._id,
-              lead_id: lead.lead_id || '',
-              leadName: lead.leadName || lead.name || '',
-              assignedBy: mapUserSummary(lead.assignedBy),
-              assignedAt: lead.assignedAt || null,
-              convertedToCustomer: lead.convertedToCustomer ?? true,
-            }
+            leadId: lead._id,
+            lead_id: lead.lead_id || '',
+            leadName: lead.leadName || lead.name || '',
+            assignedBy: mapUserSummary(lead.assignedBy),
+            assignedAt: lead.assignedAt || null,
+            convertedToCustomer: lead.convertedToCustomer ?? true,
+          }
           : null;
 
         stripCustomerQuotationFields(customerObj);
@@ -1531,40 +1531,40 @@ exports.customerCommissionList = async (req, res) => {
         );
 
         salesPersons.push({
-            id: `${customerKey}-${surveyId}`,
-            customerId: customerKey,
-            surveyId,
-            legalName,
-            salesPerson: salesPersonName,
-            surveyName: payables.surveyName,
-            surveyDate: survey.surveyDate || survey.createdAt,
-            quotationNumber: payables.quotationNumber || '—',
-            confirmed: payables.confirmedDate || '',
-            quotationAmount: payables.quotationAmount,
-            commission: salesPayments.amount,
-            paid: salesPayments.paid,
-            pending: salesPayments.pending,
-          });
+          id: `${customerKey}-${surveyId}`,
+          customerId: customerKey,
+          surveyId,
+          legalName,
+          salesPerson: salesPersonName,
+          surveyName: payables.surveyName,
+          surveyDate: survey.surveyDate || survey.createdAt,
+          quotationNumber: payables.quotationNumber || '—',
+          confirmed: payables.confirmedDate || '',
+          quotationAmount: payables.quotationAmount,
+          commission: salesPayments.amount,
+          paid: salesPayments.paid,
+          pending: salesPayments.pending,
+        });
 
         salesTotalCommission += salesPayments.amount;
         salesTotalPaid += salesPayments.paid;
         salesTotalPending += salesPayments.pending;
 
         contractors.push({
-            id: `${customerKey}-${surveyId}`,
-            customerId: customerKey,
-            surveyId,
-            legalName,
-            dba,
-            contractor: contractorName,
-            jobNo: jobNo || '—',
-            surveyName: payables.surveyName,
-            installDate: installDate || '',
-            totalCharges: payables.quotationAmount,
-            commission: contractorPayments.amount,
-            paid: contractorPayments.paid,
-            pending: contractorPayments.pending,
-          });
+          id: `${customerKey}-${surveyId}`,
+          customerId: customerKey,
+          surveyId,
+          legalName,
+          dba,
+          contractor: contractorName,
+          jobNo: jobNo || '—',
+          surveyName: payables.surveyName,
+          installDate: installDate || '',
+          totalCharges: payables.quotationAmount,
+          commission: contractorPayments.amount,
+          paid: contractorPayments.paid,
+          pending: contractorPayments.pending,
+        });
 
         contractorTotalCommission += contractorPayments.amount;
         contractorTotalPaid += contractorPayments.paid;
