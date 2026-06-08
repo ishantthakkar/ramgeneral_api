@@ -50,6 +50,9 @@ const leadSchema = new mongoose.Schema({
     type: [String],
     default: [],
   },
+  billDate: {
+    type: Date,
+  },
   mobileNumber: {
     type: String,
     required: false,

@@ -88,6 +88,12 @@ const normalizeBillFilenames = (value) => {
   return [];
 };
 
+const parseBillDate = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
 const formatLeadResponse = (leadObj) => {
   leadObj.uploadElectricityBill = normalizeBillFilenames(leadObj.uploadElectricityBill);
   if (leadObj.leadSource) {
@@ -252,6 +258,7 @@ exports.createLead = async (req, res) => {
       electricCompany,
       upload_electricity_bill,
       uploadElectricityBill,
+      billDate,
       mobileNumber,
       mobile,
       email,
@@ -357,6 +364,9 @@ exports.createLead = async (req, res) => {
       if (newBillFilenames.length > 0) {
         const existingBills = normalizeBillFilenames(lead.uploadElectricityBill);
         lead.uploadElectricityBill = [...existingBills, ...newBillFilenames];
+      }
+      if (billDate !== undefined) {
+        lead.billDate = parseBillDate(billDate);
       }
 
       if (mobileNumber !== undefined) lead.mobileNumber = mobileNumber;
@@ -484,6 +494,7 @@ exports.createLead = async (req, res) => {
         accountNumber: accountNumber || '',
         electricCompany: electricCompany || electric_company || '',
         uploadElectricityBill: newBillFilenames,
+        billDate: parseBillDate(billDate),
         mobileNumber: mobileNumber || mobile || '',
         email: email ? email.toLowerCase() : '',
         leadSource: leadSourceCode,
@@ -664,6 +675,7 @@ const mapLeadToSummary = (lead) => ({
   accountNumber: lead.accountNumber,
   electricCompany: lead.electricCompany,
   uploadElectricityBill: normalizeBillFilenames(lead.uploadElectricityBill),
+  billDate: lead.billDate || null,
   mobileNumber: lead.mobileNumber,
   email: lead.email,
   leadSource: lead.leadSource,
