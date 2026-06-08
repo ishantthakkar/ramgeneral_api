@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
 const { quotationFileFields } = require('../utils/quotationHelpers');
-const { generateUniqueCustomerCode } = require('../utils/customerCode');
 
 const customerSchema = new mongoose.Schema({
   customerCode: {
@@ -233,17 +232,10 @@ const customerSchema = new mongoose.Schema({
 });
 
 customerSchema.pre('validate', async function (next) {
-  try {
-    if (!this.accountNumber) {
-      this.accountNumber = Math.floor(1000 + Math.random() * 9000).toString();
-    }
-    if (!this.customerCode) {
-      this.customerCode = await generateUniqueCustomerCode();
-    }
-    next();
-  } catch (error) {
-    next(error);
+  if (!this.accountNumber) {
+    this.accountNumber = Math.floor(1000 + Math.random() * 9000).toString();
   }
+  next();
 });
 
 const Customer = mongoose.model('Customer', customerSchema);

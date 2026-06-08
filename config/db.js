@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
 const Product = require('../models/Product');
-const { backfillMissingCustomerCodes } = require('../utils/customerCode');
 
 const MONGO_URL = process.env.MONGO_URL || 'mongodb://127.0.0.1:27017/ramgeneral';
 
@@ -28,7 +27,6 @@ const connectDB = async () => {
     });
     console.log('MongoDB connected');
     await syncProductSkuIndexes();
-    await backfillMissingCustomerCodes();
   } catch (error) {
     console.error('MongoDB connection error:', error.message);
     process.exit(1);
