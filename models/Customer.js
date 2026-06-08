@@ -97,7 +97,7 @@ const customerSchema = new mongoose.Schema({
   },
   verifyStatus: {
     type: String,
-    enum: ['pending', 'verified'],
+    enum: ['pending', 'verified', 'completed', 'submitted'],
     default: 'pending',
     trim: true,
   },
