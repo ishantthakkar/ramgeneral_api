@@ -27,6 +27,12 @@ const {
   attachSurveysWithQuotations,
   stripCustomerQuotationFields,
 } = require('../utils/quotationHelpers');
+const {
+  calculateSurveyPayables,
+  getInstallDate,
+  getPaymentTotals,
+  syncPayablesForCustomer,
+} = require('../utils/payablesUtils');
 
 function mapUserSummary(user) {
   if (!user) return null;
@@ -1190,15 +1196,19 @@ exports.verifyCustomer = async (req, res) => {
       }
     }
 
-    const customer = await Customer.findByIdAndUpdate(
-      id,
-      { verifyStatus: status },
-      { new: true, runValidators: true }
-    );
+    let customer = await Customer.findById(id);
 
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
     }
+
+    customer.verifyStatus = status;
+
+    if (status === 'verified') {
+      customer = await syncPayablesForCustomer(customer);
+    }
+
+    await customer.save();
 
     const { createLog } = require('../utils/logger');
     await createLog(`Customer Survey ${status}`, user_id, customer.name, 'Customer', customer._id);
@@ -1295,6 +1305,10 @@ exports.updateCustomerCommissions = async (req, res) => {
         paymentStatus: comm.payment_status || comm.paymentStatus || 'payment pending',
       };
 
+      if (comm.survey_id || comm.surveyId) {
+        formattedComm.surveyId = comm.survey_id || comm.surveyId;
+      }
+
       if (formattedComm.commissionType === 'Survey') {
         formattedComm.salesPerson = comm.sales_person || comm.salesPerson;
       } else if (formattedComm.commissionType === 'Installation') {
@@ -1325,88 +1339,131 @@ exports.customerCommissionList = async (req, res) => {
   try {
     const customers = await Customer.find({ verifyStatus: 'verified' })
       .populate('assignToContractor', 'fullName email')
-      .populate('user_id', 'id fullName')
-      .populate({
-        path: 'commissions.salesPerson',
-        model: 'User',
-        select: 'fullName email'
-      })
-      .populate({
-        path: 'commissions.contractor',
-        model: 'User',
-        select: 'fullName email'
-      })
+      .populate('user_id', 'fullName email name')
+      .populate('leadId', 'dba leadName')
       .sort({ createdAt: -1 });
 
-    let totalCommission = 0;
-    let totalPaid = 0;
-    let totalPending = 0;
+    for (const customer of customers) {
+      const before = JSON.stringify(customer.commissions || []);
+      await syncPayablesForCustomer(customer);
+      const after = JSON.stringify(customer.commissions || []);
+      if (before !== after) {
+        await customer.save();
+      }
+    }
 
-    const customerList = customers.map(customer => {
-      let customerTotal = 0;
-      let customerPaid = 0;
-      let customerPending = 0;
+    const customerIds = customers.map((customer) => customer._id);
+    const surveys = await Survey.find({ customer_id: { $in: customerIds } }).sort({ surveyDate: -1 });
+    const surveysByCustomer = new Map();
 
-      const commissions = (customer.commissions || []).map(comm => {
-        const amount = comm.amount || 0;
-        const paid = comm.paidAmount || 0;
-        const pending = amount - paid;
+    for (const survey of surveys) {
+      const key = survey.customer_id?.toString();
+      if (!key) continue;
+      if (!surveysByCustomer.has(key)) surveysByCustomer.set(key, []);
+      surveysByCustomer.get(key).push(survey);
+    }
 
-        customerTotal += amount;
-        customerPaid += paid;
-        customerPending += pending;
+    const salesPersons = [];
+    const contractors = [];
 
-        totalCommission += amount;
-        totalPaid += paid;
-        totalPending += pending;
+    let salesTotalCommission = 0;
+    let salesTotalPaid = 0;
+    let salesTotalPending = 0;
+    let contractorTotalCommission = 0;
+    let contractorTotalPaid = 0;
+    let contractorTotalPending = 0;
 
-        // Get the name of the person this commission is for
-        let paidTo = '';
-        if (comm.commissionType === 'Survey' && comm.salesPerson) {
-          paidTo = comm.salesPerson.fullName || '';
-        } else if (comm.commissionType === 'Installation' && comm.contractor) {
-          paidTo = comm.contractor.fullName || '';
-        } else if (comm.commissionType === 'Other') {
-          paidTo = comm.otherName || '';
-        }
+    for (const customer of customers) {
+      const customerKey = customer._id.toString();
+      const customerSurveys = surveysByCustomer.get(customerKey) || [];
+      const legalName = customer.legalName || customer.name || '';
+      const dba = customer.company || customer.leadId?.dba || '';
+      const salesPersonName =
+        customer.user_id?.fullName || customer.user_id?.name || 'Unassigned';
+      const contractorName = customer.assignToContractor?.fullName || 'Unassigned';
+      const jobNo = customer.accountNumber || customer.customerCode || '';
+      const installDate = getInstallDate(customer);
 
-        return {
-          ...comm.toObject(),
-          paidTo,
-          pending
-        };
-      });
+      for (const survey of customerSurveys) {
+        const payables = await calculateSurveyPayables(survey, customer);
+        const surveyId = survey._id.toString();
 
-      return {
-        id: customer._id,
-        name: customer.name,
-        company: customer.company,
-        salesPerson: customer.user_id?.fullName || '',
-        contractor: customer.assignToContractor?.fullName || '',
+        const salesPayments = getPaymentTotals(
+          customer,
+          surveyId,
+          'Survey',
+          payables.salesCommission
+        );
+        const contractorPayments = getPaymentTotals(
+          customer,
+          surveyId,
+          'Installation',
+          payables.contractorCommission
+        );
 
-        total_overall_amount: customerTotal,
-        total_paid_amount: customerPaid,
-        total_pending_amount: customerPending,
+        salesPersons.push({
+            id: `${customerKey}-${surveyId}`,
+            customerId: customerKey,
+            surveyId,
+            legalName,
+            salesPerson: salesPersonName,
+            surveyName: payables.surveyName,
+            surveyDate: survey.surveyDate || survey.createdAt,
+            quotationNumber: payables.quotationNumber || '—',
+            confirmed: payables.confirmedDate || '',
+            quotationAmount: payables.quotationAmount,
+            commission: salesPayments.amount,
+            paid: salesPayments.paid,
+            pending: salesPayments.pending,
+          });
 
-        commissions
-      };
-    });
+        salesTotalCommission += salesPayments.amount;
+        salesTotalPaid += salesPayments.paid;
+        salesTotalPending += salesPayments.pending;
+
+        contractors.push({
+            id: `${customerKey}-${surveyId}`,
+            customerId: customerKey,
+            surveyId,
+            legalName,
+            dba,
+            contractor: contractorName,
+            jobNo: jobNo || '—',
+            surveyName: payables.surveyName,
+            installDate: installDate || '',
+            totalCharges: payables.quotationAmount,
+            commission: contractorPayments.amount,
+            paid: contractorPayments.paid,
+            pending: contractorPayments.pending,
+          });
+
+        contractorTotalCommission += contractorPayments.amount;
+        contractorTotalPaid += contractorPayments.paid;
+        contractorTotalPending += contractorPayments.pending;
+      }
+    }
 
     return res.status(200).json({
-      message: 'Verified customer commission list retrieved successfully.',
-      total_customers: customerList.length,
-      customers: customerList,
+      message: 'Verified customer payables retrieved successfully.',
+      salesPersons,
+      contractors,
       overallSummary: {
-        totalCommission,
-        totalPaid,
-        totalPending
-      }
+        salesPersons: {
+          totalCommission: salesTotalCommission,
+          totalPaid: salesTotalPaid,
+          totalPending: salesTotalPending,
+        },
+        contractors: {
+          totalCommission: contractorTotalCommission,
+          totalPaid: contractorTotalPaid,
+          totalPending: contractorTotalPending,
+        },
+      },
     });
-
   } catch (error) {
     console.error('Customer commission list error:', error);
     return res.status(500).json({
-      message: 'Server error retrieving customer commission list.'
+      message: 'Server error retrieving customer payables.',
     });
   }
 };
