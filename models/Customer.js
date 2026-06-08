@@ -135,7 +135,7 @@ const customerSchema = new mongoose.Schema({
   status: {
     type: String,
     required: false,
-    enum: ['New', 'in_progress', 'draft', 'completed', 'reopen', 'pending_edit_approval'],
+    enum: ['New', 'in_progress', 'draft', 'completed', 'reopen', 'pending_edit_approval', 'submitted'],
     default: 'New',
     trim: true,
   },
