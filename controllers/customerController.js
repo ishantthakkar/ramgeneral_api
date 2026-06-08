@@ -23,7 +23,10 @@ const {
   stripCustomerLogFields,
 } = require('../utils/customerLeadHelpers');
 const { isSalesManagerRole } = require('../constants/userRoles');
-const { attachQuotationFieldsToCustomer } = require('../utils/quotationHelpers');
+const {
+  attachSurveysWithQuotations,
+  stripCustomerQuotationFields,
+} = require('../utils/quotationHelpers');
 
 function mapUserSummary(user) {
   if (!user) return null;
@@ -325,6 +328,10 @@ exports.listInspections = async (req, res) => {
 exports.getCustomer = async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
 
     // ✅ Get customer
     const customer = await Customer.findById(id)
@@ -820,9 +827,10 @@ exports.getCustomersByUser = async (req, res) => {
             ? salesPersonUser.reportsTo
             : null;
 
-        customerObj.surveys = surveys.filter(
+        const customerSurveys = surveys.filter(
           (survey) => survey.customer_id.toString() === customer._id.toString()
         );
+        customerObj.surveys = await attachSurveysWithQuotations(customerSurveys, customerObj);
         customerObj.salesPerson = mapUserSummary(salesPersonUser);
         customerObj.salesPersonName = customerObj.salesPerson?.fullName || '';
         customerObj.salesManager = mapUserSummary(salesManagerFromLead || salesManagerFromReportsTo);
@@ -837,8 +845,7 @@ exports.getCustomersByUser = async (req, res) => {
             }
           : null;
 
-        const quotationFields = await attachQuotationFieldsToCustomer(customerObj);
-        Object.assign(customerObj, quotationFields);
+        stripCustomerQuotationFields(customerObj);
 
         return customerObj;
       })

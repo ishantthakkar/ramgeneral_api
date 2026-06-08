@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 
 const quotationFileFields = {
+  customer_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
   url: { type: String, trim: true, default: '' },
   filename: { type: String, trim: true, default: '' },
   pdfName: { type: String, trim: true, default: '' },
@@ -16,6 +17,7 @@ const quotationFileFields = {
 };
 
 function buildGenerateQuotationRecord({
+  customer_id,
   url,
   filename,
   pdfName,
@@ -28,6 +30,7 @@ function buildGenerateQuotationRecord({
   uploadedByName,
 }) {
   return {
+    customer_id: customer_id || null,
     url,
     filename,
     pdfName: pdfName || filename || '',
@@ -43,6 +46,8 @@ function buildGenerateQuotationRecord({
 }
 
 function buildUploadSignedQuotationRecord({
+  customer_id,
+  surveyId,
   url,
   filename,
   pdfName,
@@ -51,6 +56,8 @@ function buildUploadSignedQuotationRecord({
   uploadedByName,
 }) {
   return {
+    customer_id: customer_id || null,
+    surveyId: surveyId || null,
     url,
     filename,
     pdfName: pdfName || filename || '',
@@ -77,30 +84,72 @@ function dedupeQuotationItems(items) {
   });
 }
 
-function getGenerateQuotations(customer) {
-  const plain = customer?.toObject ? customer.toObject() : customer;
-  const fromNew = plain?.generateQuotation || [];
-  const fromLegacy = (plain?.quotations || []).filter(isLegacyGeneratedQuotation);
-  return dedupeQuotationItems([...fromLegacy, ...fromNew]);
+function getSurveyIdString(survey) {
+  const plain = survey?.toObject ? survey.toObject() : survey;
+  return plain?._id?.toString?.() || String(plain?._id || '');
 }
 
-function getUploadSignedQuotations(customer) {
+function matchesSurveyId(item, surveyId) {
+  if (!surveyId) return false;
+  const itemSurveyId = item?.surveyId?.toString?.() || String(item?.surveyId || '');
+  return itemSurveyId === surveyId;
+}
+
+function getLegacyCustomerGenerateQuotations(customer, surveyId) {
   const plain = customer?.toObject ? customer.toObject() : customer;
-  const fromNew = plain?.uploadSignedQuotation || [];
+  const fromNew = (plain?.generateQuotation || []).filter((q) => matchesSurveyId(q, surveyId));
   const fromLegacy = (plain?.quotations || []).filter(
-    (q) => q.source === 'uploaded' && !isLegacyGeneratedQuotation(q)
+    (q) => isLegacyGeneratedQuotation(q) && matchesSurveyId(q, surveyId)
   );
   return dedupeQuotationItems([...fromLegacy, ...fromNew]);
 }
 
-function stripLegacyQuotationsField(customerObj) {
-  if (customerObj && typeof customerObj === 'object') {
-    delete customerObj.quotations;
+function getLegacyCustomerUploadQuotations(customer, surveyId) {
+  const plain = customer?.toObject ? customer.toObject() : customer;
+  const fromNew = (plain?.uploadSignedQuotation || []).filter((q) =>
+    matchesSurveyId(q, surveyId)
+  );
+  const fromLegacy = (plain?.quotations || []).filter(
+    (q) => q.source === 'uploaded' && !isLegacyGeneratedQuotation(q) && matchesSurveyId(q, surveyId)
+  );
+  return dedupeQuotationItems([...fromLegacy, ...fromNew]);
+}
+
+function getGenerateQuotationsForSurvey(survey, customer) {
+  const surveyPlain = survey?.toObject ? survey.toObject() : survey;
+  const surveyId = getSurveyIdString(surveyPlain);
+  const fromSurvey = surveyPlain?.generateQuotation || [];
+  if (fromSurvey.length) return fromSurvey;
+  return getLegacyCustomerGenerateQuotations(customer, surveyId);
+}
+
+function getUploadSignedQuotationsForSurvey(survey, customer) {
+  const surveyPlain = survey?.toObject ? survey.toObject() : survey;
+  const surveyId = getSurveyIdString(surveyPlain);
+  const fromSurvey = surveyPlain?.uploadSignedQuotation || [];
+  if (fromSurvey.length) return fromSurvey;
+  return getLegacyCustomerUploadQuotations(customer, surveyId);
+}
+
+function hasUploadSignedQuotationForSurvey(survey, customer) {
+  return getUploadSignedQuotationsForSurvey(survey, customer).length > 0;
+}
+
+function stripLegacyQuotationsField(target) {
+  if (target && typeof target === 'object') {
+    delete target.quotations;
   }
 }
 
-function hasUploadSignedQuotation(customer) {
-  return getUploadSignedQuotations(customer).length > 0;
+function stripCustomerQuotationFields(customerObj) {
+  if (!customerObj || typeof customerObj !== 'object') return;
+  stripLegacyQuotationsField(customerObj);
+  delete customerObj.generateQuotation;
+  delete customerObj.uploadSignedQuotation;
+  delete customerObj.quotationStatus;
+  delete customerObj.quotationApprovedBy;
+  delete customerObj.quotationApprovedAt;
+  delete customerObj.quotationApprovedByUser;
 }
 
 async function loadUsersMap(userIds) {
@@ -151,53 +200,92 @@ async function formatQuotationListForResponse(quotations) {
   return formatQuotationListWithUserMap(list, userMap);
 }
 
-async function attachQuotationFieldsToCustomer(customerObj) {
-  const generateQuotation = getGenerateQuotations(customerObj);
-  const uploadSignedQuotation = getUploadSignedQuotations(customerObj);
+async function attachQuotationFieldsToSurvey(surveyObj, customer) {
+  const surveyPlain = surveyObj?.toObject ? surveyObj.toObject() : surveyObj;
+  const generateQuotation = getGenerateQuotationsForSurvey(surveyPlain, customer);
+  const uploadSignedQuotation = getUploadSignedQuotationsForSurvey(surveyPlain, customer);
 
   const userIds = new Set();
-  if (customerObj.quotationApprovedBy) {
-    userIds.add(customerObj.quotationApprovedBy.toString());
+  if (surveyPlain.quotationApprovedBy) {
+    userIds.add(surveyPlain.quotationApprovedBy.toString());
   }
   for (const q of [...generateQuotation, ...uploadSignedQuotation]) {
     if (q.uploadedBy) userIds.add(q.uploadedBy.toString());
   }
 
   const userMap = await loadUsersMap(userIds);
-
-  stripLegacyQuotationsField(customerObj);
+  stripLegacyQuotationsField(surveyPlain);
 
   return {
-    quotationStatus: customerObj.quotationStatus || 'pending',
-    quotationApprovedAt: customerObj.quotationApprovedAt || null,
-    quotationApprovedBy: customerObj.quotationApprovedBy || null,
-    quotationApprovedByUser: mapUserFromId(customerObj.quotationApprovedBy, userMap),
+    customer_id: surveyPlain.customer_id || customer?._id || null,
+    quotationStatus: surveyPlain.quotationStatus || 'pending',
+    quotationApprovedAt: surveyPlain.quotationApprovedAt || null,
+    quotationApprovedBy: surveyPlain.quotationApprovedBy || null,
+    quotationApprovedByUser: mapUserFromId(surveyPlain.quotationApprovedBy, userMap),
     generateQuotation: formatQuotationListWithUserMap(generateQuotation, userMap),
     uploadSignedQuotation: formatQuotationListWithUserMap(uploadSignedQuotation, userMap),
   };
 }
 
-function uploadSignedQuotationFilter() {
+async function attachSurveysWithQuotations(surveys, customer) {
+  return Promise.all(
+    (surveys || []).map(async (survey) => {
+      const surveyObj = survey?.toObject ? survey.toObject() : { ...survey };
+      const quotationFields = await attachQuotationFieldsToSurvey(surveyObj, customer);
+      return { ...surveyObj, ...quotationFields };
+    })
+  );
+}
+
+function uploadSignedQuotationSurveyFilter() {
   return {
     $or: [
       { uploadSignedQuotation: { $exists: true, $not: { $size: 0 } } },
-      { quotations: { $elemMatch: { source: 'uploaded' } } },
     ],
   };
+}
+
+function surveyQuotationDataFilter() {
+  return {
+    $or: [
+      { generateQuotation: { $exists: true, $not: { $size: 0 } } },
+      { uploadSignedQuotation: { $exists: true, $not: { $size: 0 } } },
+    ],
+  };
+}
+
+function applySurveyQuotationStatusFilter(surveyFilter, statusFilter) {
+  if (statusFilter === 'all') return;
+
+  if (statusFilter === 'pending') {
+    surveyFilter.$or = [
+      { quotationStatus: 'pending' },
+      { quotationStatus: { $exists: false } },
+      { quotationStatus: null },
+    ];
+    return;
+  }
+
+  surveyFilter.quotationStatus = statusFilter;
 }
 
 module.exports = {
   quotationFileFields,
   buildGenerateQuotationRecord,
   buildUploadSignedQuotationRecord,
-  getGenerateQuotations,
-  getUploadSignedQuotations,
-  hasUploadSignedQuotation,
+  getGenerateQuotationsForSurvey,
+  getUploadSignedQuotationsForSurvey,
+  hasUploadSignedQuotationForSurvey,
   formatQuotationListForResponse,
   formatQuotationListWithUserMap,
   loadUsersMap,
   mapUserFromId,
-  attachQuotationFieldsToCustomer,
+  attachQuotationFieldsToSurvey,
+  attachSurveysWithQuotations,
+  stripCustomerQuotationFields,
   stripLegacyQuotationsField,
-  uploadSignedQuotationFilter,
+  uploadSignedQuotationSurveyFilter,
+  surveyQuotationDataFilter,
+  applySurveyQuotationStatusFilter,
+  getSurveyIdString,
 };

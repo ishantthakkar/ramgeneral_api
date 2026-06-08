@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { quotationFileFields } = require('../utils/quotationHelpers');
 
 const surveySchema = new mongoose.Schema({
   customer_id: {
@@ -51,6 +52,18 @@ const surveySchema = new mongoose.Schema({
   verifyQty: { type: Number, default: 0 },
   issueFound: { type: String, trim: true, enum: ['yes', 'no'], default: 'no' },
   verificationComments: { type: String, trim: true, default: '' },
+  quotationStatus: {
+    type: String,
+    enum: ['pending', 'approved'],
+    default: 'pending',
+  },
+  quotationApprovedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  },
+  quotationApprovedAt: { type: Date },
+  generateQuotation: [quotationFileFields],
+  uploadSignedQuotation: [quotationFileFields],
 }, {
   timestamps: true,
 });
