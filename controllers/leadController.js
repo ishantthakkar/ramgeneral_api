@@ -1060,31 +1060,27 @@ exports.getLeadsByUser = async (req, res) => {
 
     if (isSalesManagerRole(user.userRole)) {
       const teamMemberIds = await getTeamMemberIds(userId);
-
-      if (!teamMemberIds.length) {
-        return res.status(200).json({
-          leads: [],
-          total: 0,
-          message:
-            'No sales persons are assigned to you (reportsTo). Assign team members in user settings.',
-        });
-      }
+      const visibleUserIds = [
+        ...teamMemberIds,
+        new mongoose.Types.ObjectId(userId),
+      ];
 
       if (filterSalesPersonId) {
         if (!mongoose.Types.ObjectId.isValid(filterSalesPersonId)) {
           return res.status(400).json({ message: 'Invalid salesPersonId.' });
         }
+        const isSelf = filterSalesPersonId.toString() === userId.toString();
         const isOnTeam = teamMemberIds.some(
           (id) => id.toString() === filterSalesPersonId.toString()
         );
-        if (!isOnTeam) {
+        if (!isSelf && !isOnTeam) {
           return res.status(403).json({
             message: 'Sales person is not on your team.',
           });
         }
         leadFilter.user_id = filterSalesPersonId;
       } else {
-        leadFilter.user_id = { $in: teamMemberIds };
+        leadFilter.user_id = { $in: visibleUserIds };
       }
     } else {
       leadFilter.user_id = userId;
