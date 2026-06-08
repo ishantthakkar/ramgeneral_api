@@ -1177,7 +1177,7 @@ exports.verifyCustomer = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body; // 'verified' or 'pending'
 
-    if (!['verified', 'pending'].includes(status)) {
+    if (!['verified', 'completed', 'pending', 'submitted'].includes(status)) {
       return res.status(400).json({ message: "Invalid status. Use 'verified' or 'pending'." });
     }
 
