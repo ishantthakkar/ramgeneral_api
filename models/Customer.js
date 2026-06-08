@@ -103,6 +103,7 @@ const customerSchema = new mongoose.Schema({
   },
   commissions: [
     {
+      surveyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Survey' },
       commissionType: { type: String, enum: ['Survey', 'Installation', 'Other'], required: true },
       salesPerson: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       contractor: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
