@@ -137,6 +137,7 @@ exports.listCustomers = async (req, res) => {
 
     const customerSummaries = customers.map((customer) => ({
       id: customer._id,
+      customerCode: customer.customerCode || '',
       accountNumber: customer.accountNumber,
       name: customer.name,
       company: customer.company,
@@ -203,6 +204,7 @@ exports.listConvertedCustomers = async (req, res) => {
       const leadFields = flattenPopulatedLead(customer.leadId, customer);
       return {
       id: customer._id,
+      customerCode: customer.customerCode || '',
       leadId: customer.leadId?._id || customer.leadId || null,
       lead_id: leadFields.lead_id,
       leadName: leadFields.leadName,
@@ -399,6 +401,10 @@ exports.updateCustomer = async (req, res) => {
     setString('legalName');
     setString('accountNumber');
     setString('company');
+    setString('customerCode');
+    if (body.customer_code !== undefined && body.customerCode === undefined) {
+      customer.customerCode = body.customer_code === null ? '' : String(body.customer_code).trim();
+    }
 
     if (body.mobileNumber !== undefined) {
       customer.mobileNumber = body.mobileNumber || '';

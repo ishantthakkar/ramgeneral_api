@@ -2,6 +2,12 @@ const mongoose = require('mongoose');
 const { quotationFileFields } = require('../utils/quotationHelpers');
 
 const customerSchema = new mongoose.Schema({
+  customerCode: {
+    type: String,
+    trim: true,
+    unique: true,
+    sparse: true,
+  },
   accountNumber: {
     type: String,
     required: false,
