@@ -1208,8 +1208,8 @@ exports.verifyCustomer = async (req, res) => {
       customer,
     });
   } catch (error) {
-    console.error('Verify customer error:', error);
-    return res.status(500).json({ message: 'Server error verifying customer.' });
+    console.error('Verify customer error:', error,);
+    return res.status(500).json({ message: 'Server error verifying customer.', error: error.message });
   }
 };
 
