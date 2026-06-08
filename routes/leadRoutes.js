@@ -42,6 +42,10 @@ router.get('/lead-sources', verifyToken, leadController.getLeadSources);
 router.get('/leads/sales-persons', verifyToken, leadController.listSalesPersons);
 router.get('/leads', verifyToken, leadController.listLeads);
 router.get('/leads/:id', verifyToken, leadController.getLead);
+router.get('/leads/:id/notes', verifyToken, leadController.getLeadNotes);
+router.post('/leads/:id/notes', verifyToken, leadController.addLeadNote);
+router.get('/leads/:id/activities', verifyToken, leadController.getLeadActivities);
+router.post('/leads/:id/activities', verifyToken, leadController.addLeadActivity);
 router.post(
   '/leads-create',
   verifyToken,

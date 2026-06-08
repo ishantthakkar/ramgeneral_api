@@ -198,51 +198,32 @@ const normalizeContactInfo = (contactInfo) => {
     });
 };
 
-const buildNoteAuthor = (currentUser, is_admin) => ({
-  writtenByName: is_admin
-    ? 'Admin'
-    : (currentUser.fullName || currentUser.email || 'User').toString().trim(),
-  writtenByEmail: (currentUser.email || '').toString().trim().toLowerCase(),
-  writtenByRole: is_admin ? 'admin' : (currentUser.userRole || 'user').toString().trim(),
-});
-
-const attachAuthorToNotes = (notes, author) => {
-  if (!author || !Array.isArray(notes) || notes.length === 0) return notes;
-  return notes.map((n) => ({
-    ...n,
-    writtenByName: (n.writtenByName || '').trim() || author.writtenByName,
-    writtenByEmail: (n.writtenByEmail || '').trim() || author.writtenByEmail,
-    writtenByRole: (n.writtenByRole || '').trim() || author.writtenByRole,
-  }));
-};
-
-const normalizeNotes = (notes) => {
-  if (!notes) return [];
-  const parsed = tryParseJson(notes);
-  const mapNote = (n) => {
-    if (typeof n === 'string') {
-      return { title: '', note: n.trim(), createdAt: new Date() };
-    }
-    return {
-      title: (n.title ?? '').toString().trim(),
-      note: (n.note ?? '').toString().trim(),
-      writtenByName: (n.writtenByName ?? '').toString().trim(),
-      writtenByEmail: (n.writtenByEmail ?? '').toString().trim().toLowerCase(),
-      writtenByRole: (n.writtenByRole ?? '').toString().trim(),
-      createdAt: n.createdAt ? new Date(n.createdAt) : new Date(),
-    };
+function formatLeadNote(note) {
+  const plain = note?.toObject ? note.toObject() : { ...note };
+  return {
+    _id: plain._id,
+    title: plain.title || '',
+    note: plain.note || '',
+    createdAt: plain.createdAt,
   };
-  if (Array.isArray(parsed)) {
-    return parsed.filter(Boolean).map(mapNote);
+}
+
+async function resolveCurrentUser(userId) {
+  const Admin = require('../models/Admin');
+  let currentUser = await User.findById(userId);
+  let is_admin = false;
+
+  if (!currentUser) {
+    currentUser = await Admin.findById(userId);
+    is_admin = !!currentUser;
   }
-  if (typeof parsed === 'object' && parsed !== null) {
-    return [mapNote(parsed)];
+
+  if (!currentUser) {
+    return { error: 'Invalid token or user not found.' };
   }
-  if (typeof parsed === 'string' && parsed.trim()) {
-    return [{ title: '', note: parsed.trim(), createdAt: new Date() }];
-  }
-  return [];
-};
+
+  return { currentUser, is_admin };
+}
 
 exports.createLead = async (req, res) => {
   try {
@@ -272,66 +253,19 @@ exports.createLead = async (req, res) => {
       city,
       state,
       zip,
-      notes,
       lastActivity,
-      activityLog,
-      activityType,
-      activityDate,
-      outcome,
-      nextFollowUpDate,
-      followUpDate
     } = req.body;
 
-    const Admin = require('../models/Admin');
-    let currentUser = await User.findById(req.user.id);
-    let is_admin = false;
-
-    if (!currentUser) {
-      currentUser = await Admin.findById(req.user.id);
-      is_admin = !!currentUser;
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
     }
-
-    if (!currentUser) {
-      return res.status(401).json({ message: 'Invalid token or user not found.' });
-    }
+    const { currentUser, is_admin } = resolvedUser;
 
     if (status && !ALLOWED_STATUSES.includes(status)) {
       return res.status(400).json({
         message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
       });
-    }
-
-    const noteAuthor = buildNoteAuthor(currentUser, is_admin);
-    const processedNotes = attachAuthorToNotes(normalizeNotes(notes), noteAuthor);
-
-    // Process activity log
-    let processedActivityLog = [];
-    const parsedActivityLog = tryParseJson(activityLog);
-    const activityLogItems = Array.isArray(parsedActivityLog)
-      ? parsedActivityLog
-      : Array.isArray(activityLog)
-        ? activityLog
-        : null;
-    if (activityLogItems) {
-      processedActivityLog = activityLogItems.map(a => ({
-        activityType: a.activityType,
-        date: a.date ? new Date(a.date) : new Date(),
-        outcome: a.outcome || '',
-        notes: a.notes || '',
-        followUpDate: a.followUpDate ? new Date(a.followUpDate) : undefined,
-        nextFollowUpDate: a.nextFollowUpDate ? new Date(a.nextFollowUpDate) : undefined,
-        createdAt: new Date()
-      }));
-    } else if (activityType) {
-      processedActivityLog = [{
-        activityType,
-        date: activityDate ? new Date(activityDate) : new Date(),
-        outcome: outcome || '',
-        notes: typeof notes === 'string' ? notes : '',
-        followUpDate: followUpDate ? new Date(followUpDate) : undefined,
-        nextFollowUpDate: nextFollowUpDate ? new Date(nextFollowUpDate) : undefined,
-        createdAt: new Date()
-      }];
     }
 
     const hasAddressesField = addresses !== undefined || address !== undefined;
@@ -406,46 +340,6 @@ exports.createLead = async (req, res) => {
         lead.markModified('contactInfo');
       }
 
-      // Handle notes safely (force $set by reassigning the whole array)
-      let currentNotes = Array.isArray(lead.notes) ? lead.notes : [];
-      if (!Array.isArray(lead.notes) && typeof lead.notes === 'string' && lead.notes) {
-        currentNotes = [{ note: lead.notes, createdAt: lead.updatedAt || new Date() }];
-      }
-
-      // Repair logic: Fix cases where a string was accidentally stored as an object with numeric keys
-      currentNotes = currentNotes.map(n => {
-        if (n && typeof n === 'object' && !n.note && n[0] !== undefined) {
-          let reconstructedNote = '';
-          for (let i = 0; n[i] !== undefined; i++) {
-            reconstructedNote += n[i];
-          }
-          return { note: reconstructedNote, createdAt: n.createdAt || new Date() };
-        }
-        return n;
-      });
-
-      if (processedNotes.length > 0) {
-        lead.notes = [...currentNotes, ...processedNotes];
-        lead.markModified('notes');
-      } else {
-        lead.notes = currentNotes;
-      }
-
-      // Handle activity log safely (force $set by reassigning the whole array)
-      let currentActivityLog = Array.isArray(lead.activityLog) ? lead.activityLog : [];
-
-      if (processedActivityLog.length > 0) {
-        lead.activityLog = [...currentActivityLog, ...processedActivityLog];
-      } else {
-        lead.activityLog = [...currentActivityLog, {
-          activityType: 'Update',
-          date: new Date(),
-          outcome: 'Lead details updated',
-          createdAt: new Date()
-        }];
-      }
-      lead.markModified('activityLog');
-
       const updatedLead = await lead.save();
 
       await createLog(`Lead Updated`, req.user.id, name, 'Lead', updatedLead._id);
@@ -504,15 +398,8 @@ exports.createLead = async (req, res) => {
         city: city || '',
         state: state || '',
         zip: zip || '',
-        notes: processedNotes,
-        activityLog: processedActivityLog.length > 0 ? processedActivityLog : [{
-          activityType: 'Creation',
-          date: new Date(),
-          outcome: isAssigningToSalesPerson
-            ? `Lead created and assigned to ${assignedSalesPerson.fullName}`
-            : 'Lead Created',
-          createdAt: new Date()
-        }],
+        notes: [],
+        activityLog: [],
         user_id: assignedSalesPerson ? assignedSalesPerson._id : currentUser._id,
         ...(isAssigningToSalesPerson
           ? { assignedBy: currentUser._id, assignedAt: new Date() }
@@ -541,14 +428,182 @@ exports.createLead = async (req, res) => {
         return res.status(500).json({ message: 'Could not generate a unique lead_id.' });
       }
 
-      await createLog('Lead Created', req.user.id, name, 'Lead', lead._id);
-
       const leadObj = formatLeadResponse(lead.toObject());
       return res.status(201).json({ lead: leadObj, message: 'Lead created successfully.' });
     }
   } catch (error) {
     console.error('Save lead error:', error);
     return res.status(500).json({ message: 'Server error saving lead.', error: error.message });
+  }
+};
+
+exports.addLeadNote = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, note } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Valid lead id is required.' });
+    }
+
+    const noteText = (note ?? '').toString().trim();
+    if (!noteText) {
+      return res.status(400).json({ message: 'note is required.' });
+    }
+
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+
+    const lead = await Lead.findById(id);
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    const noteEntry = {
+      title: (title ?? '').toString().trim(),
+      note: noteText,
+      createdAt: new Date(),
+    };
+
+    lead.notes = [...(lead.notes || []), noteEntry];
+    lead.lastActivity = new Date();
+    lead.markModified('notes');
+    await lead.save();
+
+    const savedNote = lead.notes[lead.notes.length - 1];
+
+    await createLog('Lead Note Added', req.user.id, lead.name || lead.leadName || 'Lead', 'Lead', lead._id);
+
+    return res.status(201).json({
+      message: 'Lead note added successfully.',
+      note: formatLeadNote(savedNote),
+      notes: lead.notes.map(formatLeadNote),
+    });
+  } catch (error) {
+    console.error('Add lead note error:', error);
+    return res.status(500).json({ message: 'Server error adding lead note.' });
+  }
+};
+
+exports.getLeadNotes = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Valid lead id is required.' });
+    }
+
+    const lead = await Lead.findById(id).select('notes name leadName');
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    const notes = [...(lead.notes || [])]
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .map(formatLeadNote);
+
+    return res.status(200).json({
+      leadId: id,
+      notes,
+      total: notes.length,
+    });
+  } catch (error) {
+    console.error('Get lead notes error:', error);
+    return res.status(500).json({ message: 'Server error fetching lead notes.' });
+  }
+};
+
+exports.addLeadActivity = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      activityType,
+      date,
+      outcome,
+      notes,
+      followUpDate,
+      nextFollowUpDate,
+    } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Valid lead id is required.' });
+    }
+
+    if (!activityType) {
+      return res.status(400).json({ message: 'activityType is required.' });
+    }
+
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+
+    const lead = await Lead.findById(id);
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    const activityEntry = {
+      activityType: activityType.toString().trim(),
+      date: date ? new Date(date) : new Date(),
+      outcome: (outcome ?? '').toString().trim(),
+      notes: (notes ?? '').toString().trim(),
+      followUpDate: followUpDate ? new Date(followUpDate) : undefined,
+      nextFollowUpDate: nextFollowUpDate ? new Date(nextFollowUpDate) : undefined,
+      createdAt: new Date(),
+    };
+
+    lead.activityLog = [...(lead.activityLog || []), activityEntry];
+    lead.lastActivity = new Date();
+    lead.markModified('activityLog');
+    await lead.save();
+
+    await createLog(
+      `Lead Activity: ${activityEntry.activityType}`,
+      req.user.id,
+      lead.name || lead.leadName || 'Lead',
+      'Lead',
+      lead._id
+    );
+
+    return res.status(201).json({
+      message: 'Lead activity recorded successfully.',
+      activity: activityEntry,
+      activityLog: lead.activityLog,
+    });
+  } catch (error) {
+    console.error('Add lead activity error:', error);
+    return res.status(500).json({ message: 'Server error recording lead activity.' });
+  }
+};
+
+exports.getLeadActivities = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Valid lead id is required.' });
+    }
+
+    const lead = await Lead.findById(id).select('activityLog name leadName');
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    const activities = [...(lead.activityLog || [])].sort(
+      (a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt)
+    );
+
+    return res.status(200).json({
+      leadId: id,
+      activities,
+      total: activities.length,
+    });
+  } catch (error) {
+    console.error('Get lead activities error:', error);
+    return res.status(500).json({ message: 'Server error fetching lead activities.' });
   }
 };
 

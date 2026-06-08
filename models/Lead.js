@@ -112,9 +112,6 @@ const leadSchema = new mongoose.Schema({
   notes: [{
     title: { type: String, trim: true, default: '' },
     note: { type: String, trim: true, default: '' },
-    writtenByName: { type: String, trim: true, default: '' },
-    writtenByEmail: { type: String, trim: true, lowercase: true, default: '' },
-    writtenByRole: { type: String, trim: true, default: '' },
     createdAt: { type: Date, default: Date.now }
   }],
   activityLog: [{
