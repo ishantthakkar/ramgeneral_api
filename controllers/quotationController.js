@@ -14,6 +14,7 @@ const {
 } = require('../utils/quotationPdf');
 const {
   buildGenerateQuotationRecord,
+  generateUniqueQuotationNumber,
   buildUploadSignedQuotationRecord,
   getGenerateQuotationsForSurvey,
   getUploadSignedQuotationsForSurvey,
@@ -393,8 +394,11 @@ exports.createQuotation = async (req, res) => {
       ? await User.findById(req.user.id).select('fullName email').lean()
       : null;
 
+    const quotationNumber = await generateUniqueQuotationNumber();
+
     const quotationRecord = buildGenerateQuotationRecord({
       customer_id: customerId,
+      quotationNumber,
       url: pdfUrl,
       filename,
       surveyId: survey._id,
@@ -426,6 +430,8 @@ exports.createQuotation = async (req, res) => {
       message: 'Quotation generated successfully.',
       survey_id: updatedSurvey._id,
       customerId: updatedSurvey.customer_id,
+      quotationNumber: savedQuotation.quotationNumber,
+      pdfUrl: savedQuotation.url,
       generateQuotation: toQuotationPdfUrls([savedQuotation]),
     });
   } catch (error) {

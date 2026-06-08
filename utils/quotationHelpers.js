@@ -3,6 +3,7 @@ const User = require('../models/User');
 
 const quotationFileFields = {
   customer_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
+  quotationNumber: { type: String, trim: true, default: '' },
   url: { type: String, trim: true, default: '' },
   filename: { type: String, trim: true, default: '' },
   pdfName: { type: String, trim: true, default: '' },
@@ -16,8 +17,38 @@ const quotationFileFields = {
   createdAt: { type: Date, default: Date.now },
 };
 
+function randomFiveDigitQuotationNumber() {
+  return String(Math.floor(10000 + Math.random() * 90000));
+}
+
+async function generateUniqueQuotationNumber() {
+  const Survey = require('../models/Survey');
+  const Customer = require('../models/Customer');
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const quotationNumber = randomFiveDigitQuotationNumber();
+
+    const existsInSurvey = await Survey.exists({
+      'generateQuotation.quotationNumber': quotationNumber,
+    });
+    const existsInCustomer = await Customer.exists({
+      $or: [
+        { 'generateQuotation.quotationNumber': quotationNumber },
+        { 'quotations.quotationNumber': quotationNumber },
+      ],
+    });
+
+    if (!existsInSurvey && !existsInCustomer) {
+      return quotationNumber;
+    }
+  }
+
+  throw new Error('Could not generate a unique quotation number.');
+}
+
 function buildGenerateQuotationRecord({
   customer_id,
+  quotationNumber,
   url,
   filename,
   pdfName,
@@ -31,6 +62,7 @@ function buildGenerateQuotationRecord({
 }) {
   return {
     customer_id: customer_id || null,
+    quotationNumber: quotationNumber || '',
     url,
     filename,
     pdfName: pdfName || filename || '',
@@ -271,6 +303,7 @@ function applySurveyQuotationStatusFilter(surveyFilter, statusFilter) {
 
 module.exports = {
   quotationFileFields,
+  generateUniqueQuotationNumber,
   buildGenerateQuotationRecord,
   buildUploadSignedQuotationRecord,
   getGenerateQuotationsForSurvey,

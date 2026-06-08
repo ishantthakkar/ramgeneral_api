@@ -229,7 +229,7 @@ exports.createSurvey = async (req, res) => {
                 areaName: areaName || '',
                 note: note || '',
                 areas: processedAreas !== null ? processedAreas : [],
-                status: status || 'Draft',
+                status: status || 'submitted',
                 notes: notes || '',
                 surveyDate: surveyDate ? new Date(surveyDate) : undefined,
                 markAsCompleted: completionFlag,

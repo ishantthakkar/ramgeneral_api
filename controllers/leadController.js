@@ -208,6 +208,19 @@ function formatLeadNote(note) {
   };
 }
 
+function formatLeadActivity(activity) {
+  const plain = activity?.toObject ? activity.toObject() : { ...activity };
+  return {
+    _id: plain._id,
+    activityType: plain.activityType || '',
+    location: plain.location || '',
+    date: plain.date || plain.createdAt || null,
+    time: plain.time || plain.timeSlot || '',
+    note: plain.note || plain.notes || plain.outcome || '',
+    createdAt: plain.createdAt,
+  };
+}
+
 async function resolveCurrentUser(userId) {
   const Admin = require('../models/Admin');
   let currentUser = await User.findById(userId);
@@ -520,11 +533,12 @@ exports.addLeadActivity = async (req, res) => {
     const { id } = req.params;
     const {
       activityType,
+      location,
       date,
-      outcome,
+      time,
+      timeSlot,
+      note,
       notes,
-      followUpDate,
-      nextFollowUpDate,
     } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -547,11 +561,10 @@ exports.addLeadActivity = async (req, res) => {
 
     const activityEntry = {
       activityType: activityType.toString().trim(),
+      location: (location ?? '').toString().trim(),
       date: date ? new Date(date) : new Date(),
-      outcome: (outcome ?? '').toString().trim(),
-      notes: (notes ?? '').toString().trim(),
-      followUpDate: followUpDate ? new Date(followUpDate) : undefined,
-      nextFollowUpDate: nextFollowUpDate ? new Date(nextFollowUpDate) : undefined,
+      time: (time ?? timeSlot ?? '').toString().trim(),
+      note: (note ?? notes ?? '').toString().trim(),
       createdAt: new Date(),
     };
 
@@ -559,6 +572,8 @@ exports.addLeadActivity = async (req, res) => {
     lead.lastActivity = new Date();
     lead.markModified('activityLog');
     await lead.save();
+
+    const savedActivity = lead.activityLog[lead.activityLog.length - 1];
 
     await createLog(
       `Lead Activity: ${activityEntry.activityType}`,
@@ -570,8 +585,8 @@ exports.addLeadActivity = async (req, res) => {
 
     return res.status(201).json({
       message: 'Lead activity recorded successfully.',
-      activity: activityEntry,
-      activityLog: lead.activityLog,
+      activity: formatLeadActivity(savedActivity),
+      activities: lead.activityLog.map(formatLeadActivity),
     });
   } catch (error) {
     console.error('Add lead activity error:', error);
@@ -592,9 +607,9 @@ exports.getLeadActivities = async (req, res) => {
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    const activities = [...(lead.activityLog || [])].sort(
-      (a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt)
-    );
+    const activities = [...(lead.activityLog || [])]
+      .sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt))
+      .map(formatLeadActivity);
 
     return res.status(200).json({
       leadId: id,
@@ -689,8 +704,10 @@ exports.assignLeadToSalesPerson = async (req, res) => {
     lead.lastActivity = new Date();
     lead.activityLog.push({
       activityType: 'Assignment',
+      location: '',
       date: new Date(),
-      outcome: `Assigned to ${salesPerson.fullName} by ${assignerName}`,
+      time: '',
+      note: `Assigned to ${salesPerson.fullName} by ${assignerName}`,
       createdAt: new Date(),
     });
     lead.markModified('activityLog');
@@ -873,8 +890,11 @@ exports.convertToCustomer = async (req, res) => {
     lead.convertedToCustomer = true;
     lead.activityLog.push({
       activityType: 'Conversion',
-      outcome: 'Lead Converted to Customer',
-      createdAt: new Date()
+      location: '',
+      date: new Date(),
+      time: '',
+      note: 'Lead converted to customer',
+      createdAt: new Date(),
     });
     await lead.save();
 
@@ -912,9 +932,10 @@ exports.markLeadAsLost = async (req, res) => {
     lead.lastActivity = new Date();
     lead.activityLog.push({
       activityType: 'Lost Lead',
+      location: '',
       date: new Date(),
-      outcome: 'Lead marked as lost',
-      notes: reason,
+      time: '',
+      note: reason || 'Lead marked as lost',
       createdAt: new Date(),
     });
 
@@ -957,10 +978,13 @@ exports.updateLeadStatus = async (req, res) => {
         $push: {
           activityLog: {
             activityType: 'Status Update',
-            outcome: `Lead Status Updated to ${status}`,
-            createdAt: new Date()
-          }
-        }
+            location: '',
+            date: new Date(),
+            time: '',
+            note: `Lead status updated to ${status}`,
+            createdAt: new Date(),
+          },
+        },
       },
       { new: true, runValidators: true }
     );
@@ -1078,10 +1102,13 @@ exports.updateLeadStatusById = async (req, res) => {
         $push: {
           activityLog: {
             activityType: 'Status Update',
-            outcome: `Lead Status Updated to ${status}`,
-            createdAt: new Date()
-          }
-        }
+            location: '',
+            date: new Date(),
+            time: '',
+            note: `Lead status updated to ${status}`,
+            createdAt: new Date(),
+          },
+        },
       },
       { new: true, runValidators: true }
     );

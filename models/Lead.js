@@ -115,13 +115,12 @@ const leadSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
   }],
   activityLog: [{
-    activityType: { type: String, trim: true },
-    date: { type: Date },
-    outcome: { type: String, trim: true },
-    notes: { type: String, trim: true },
-    followUpDate: { type: Date },
-    nextFollowUpDate: { type: Date },
-    createdAt: { type: Date, default: Date.now }
+    activityType: { type: String, trim: true, required: true },
+    location: { type: String, trim: true, default: '' },
+    date: { type: Date, default: Date.now },
+    time: { type: String, trim: true, default: '' },
+    note: { type: String, trim: true, default: '' },
+    createdAt: { type: Date, default: Date.now },
   }],
   user_id: {
     type: mongoose.Schema.Types.ObjectId,
