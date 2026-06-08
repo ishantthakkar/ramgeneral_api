@@ -1,7 +1,14 @@
 const mongoose = require('mongoose');
 const { quotationFileFields } = require('../utils/quotationHelpers');
+const { generateUniqueCustomerCode } = require('../utils/customerCode');
 
 const customerSchema = new mongoose.Schema({
+  customerCode: {
+    type: String,
+    trim: true,
+    unique: true,
+    sparse: true,
+  },
   accountNumber: {
     type: String,
     required: false,
@@ -226,10 +233,17 @@ const customerSchema = new mongoose.Schema({
 });
 
 customerSchema.pre('validate', async function (next) {
-  if (!this.accountNumber) {
-    this.accountNumber = Math.floor(1000 + Math.random() * 9000).toString();
+  try {
+    if (!this.accountNumber) {
+      this.accountNumber = Math.floor(1000 + Math.random() * 9000).toString();
+    }
+    if (!this.customerCode) {
+      this.customerCode = await generateUniqueCustomerCode();
+    }
+    next();
+  } catch (error) {
+    next(error);
   }
-  next();
 });
 
 const Customer = mongoose.model('Customer', customerSchema);
