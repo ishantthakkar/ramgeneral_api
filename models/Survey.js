@@ -62,6 +62,7 @@ const surveySchema = new mongoose.Schema({
     ref: 'User',
   },
   quotationApprovedAt: { type: Date },
+  confirmDate: { type: Date },
   generateQuotation: [quotationFileFields],
   uploadSignedQuotation: [quotationFileFields],
 }, {

@@ -72,7 +72,8 @@ async function formatSurveyQuotationMeta(survey) {
     customer_id: plain.customer_id,
     quotationStatus: plain.quotationStatus || 'pending',
     quotationApprovedBy: plain.quotationApprovedBy || null,
-    quotationApprovedAt: plain.quotationApprovedAt || null,
+    quotationApprovedAt: plain.quotationApprovedAt || plain.confirmDate || null,
+    confirmDate: plain.confirmDate || plain.quotationApprovedAt || null,
     quotationApprovedByUser: mapUserFromId(plain.quotationApprovedBy, userMap),
   };
 }
@@ -289,7 +290,7 @@ async function fetchSurveyQuotationsList(req) {
 
   const surveys = await Survey.find(surveyFilter)
     .select(
-      'customer_id areaName status generateQuotation uploadSignedQuotation quotationStatus quotationApprovedBy quotationApprovedAt'
+      'customer_id areaName status generateQuotation uploadSignedQuotation quotationStatus quotationApprovedBy quotationApprovedAt confirmDate'
     )
     .sort({ updatedAt: -1 })
     .lean();
@@ -570,12 +571,15 @@ exports.approveQuotation = async (req, res) => {
       return res.status(400).json({ message: 'Quotation is already approved for this survey.' });
     }
 
+    const approvedAt = new Date();
+
     const updatedSurvey = await Survey.findByIdAndUpdate(
       survey._id,
       {
         quotationStatus: 'approved',
         quotationApprovedBy: approverId,
-        quotationApprovedAt: new Date(),
+        quotationApprovedAt: approvedAt,
+        confirmDate: approvedAt,
       },
       { new: true }
     );
@@ -603,6 +607,7 @@ exports.approveQuotation = async (req, res) => {
       customerId: updatedSurvey.customer_id,
       quotationStatus: quotationMeta.quotationStatus,
       quotationApprovedAt: quotationMeta.quotationApprovedAt,
+      confirmDate: quotationMeta.confirmDate,
       quotationApprovedBy: quotationMeta.quotationApprovedBy,
     });
   } catch (error) {

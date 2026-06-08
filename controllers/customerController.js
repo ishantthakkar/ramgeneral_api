@@ -1203,6 +1203,7 @@ exports.verifyCustomer = async (req, res) => {
     }
 
     customer.verifyStatus = status;
+    customer.status = 'completed';
 
     if (status === 'verified') {
       customer = await syncPayablesForCustomer(customer);

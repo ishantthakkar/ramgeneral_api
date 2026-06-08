@@ -251,7 +251,8 @@ async function attachQuotationFieldsToSurvey(surveyObj, customer) {
   return {
     customer_id: surveyPlain.customer_id || customer?._id || null,
     quotationStatus: surveyPlain.quotationStatus || 'pending',
-    quotationApprovedAt: surveyPlain.quotationApprovedAt || null,
+    quotationApprovedAt: surveyPlain.quotationApprovedAt || surveyPlain.confirmDate || null,
+    confirmDate: surveyPlain.confirmDate || surveyPlain.quotationApprovedAt || null,
     quotationApprovedBy: surveyPlain.quotationApprovedBy || null,
     quotationApprovedByUser: mapUserFromId(surveyPlain.quotationApprovedBy, userMap),
     generateQuotation: formatQuotationListWithUserMap(generateQuotation, userMap),
