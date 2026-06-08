@@ -58,6 +58,11 @@ const leadSchema = new mongoose.Schema({
     required: false,
     trim: true,
   },
+  phone: {
+    type: String,
+    trim: true,
+    default: '',
+  },
   email: {
     type: String,
     trim: true,

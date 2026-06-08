@@ -102,6 +102,39 @@ const formatLeadResponse = (leadObj) => {
   return leadObj;
 };
 
+function mapUserSummary(user) {
+  if (!user) return null;
+  const id = user._id || user;
+  return {
+    id,
+    fullName: user.fullName || '',
+    email: user.email || '',
+    mobileNumber: user.mobileNumber || '',
+    userRole: user.userRole || '',
+  };
+}
+
+function formatLeadForUserList(lead) {
+  const leadObj = formatLeadResponse(lead.toObject ? lead.toObject() : { ...lead });
+  const salesPersonUser =
+    leadObj.user_id && typeof leadObj.user_id === 'object' ? leadObj.user_id : null;
+  const assignedByUser =
+    leadObj.assignedBy && typeof leadObj.assignedBy === 'object' ? leadObj.assignedBy : null;
+
+  return {
+    ...leadObj,
+    salesPerson: mapUserSummary(salesPersonUser),
+    salesPersonName: salesPersonUser?.fullName || '',
+    assignedBy: mapUserSummary(assignedByUser),
+    assignedByName: assignedByUser?.fullName || '',
+  };
+}
+
+async function getTeamMemberIds(managerId) {
+  const teamMembers = await User.find({ reportsTo: managerId }).select('_id').lean();
+  return teamMembers.map((member) => member._id);
+}
+
 const resolveNewBillFilenames = (req, uploadElectricityBill, upload_electricity_bill) => {
   const fromFiles = (req.files && Array.isArray(req.files) ? req.files : []).map(
     (f) => f.filename
@@ -255,6 +288,7 @@ exports.createLead = async (req, res) => {
       billDate,
       mobileNumber,
       mobile,
+      phone,
       email,
       leadSource,
       status,
@@ -318,6 +352,7 @@ exports.createLead = async (req, res) => {
 
       if (mobileNumber !== undefined) lead.mobileNumber = mobileNumber;
       if (mobile !== undefined) lead.mobileNumber = mobile;
+      if (phone !== undefined) lead.phone = phone === null ? '' : String(phone).trim();
       if (email !== undefined) lead.email = email ? email.toLowerCase() : '';
       if (leadSource !== undefined) {
         const leadSourceCode = resolveLeadSourceCode(leadSource);
@@ -403,6 +438,7 @@ exports.createLead = async (req, res) => {
         uploadElectricityBill: newBillFilenames,
         billDate: parseBillDate(billDate),
         mobileNumber: mobileNumber || mobile || '',
+        phone: phone ? String(phone).trim() : '',
         email: email ? email.toLowerCase() : '',
         leadSource: leadSourceCode,
         addresses: processedAddresses || [],
@@ -749,6 +785,7 @@ const mapLeadToSummary = (lead) => ({
   uploadElectricityBill: normalizeBillFilenames(lead.uploadElectricityBill),
   billDate: lead.billDate || null,
   mobileNumber: lead.mobileNumber,
+  phone: lead.phone || '',
   email: lead.email,
   leadSource: lead.leadSource,
   leadSourceName: getLeadSourceName(lead.leadSource),
@@ -1022,26 +1059,22 @@ exports.getLeadsByUser = async (req, res) => {
     const leadFilter = {};
 
     if (isSalesManagerRole(user.userRole)) {
-      const salesPersons = await User.find({
-        reportsTo: userId,
-        userRole: { $in: SALES_PERSON_ROLE_VARIANTS },
-      })
-        .select('_id')
-        .lean();
+      const teamMemberIds = await getTeamMemberIds(userId);
 
-      const salesPersonIds = salesPersons.map((sp) => sp._id);
-
-      if (!salesPersonIds.length) {
-        return res.status(200).json({ leads: [] });
+      if (!teamMemberIds.length) {
+        return res.status(200).json({
+          leads: [],
+          total: 0,
+          message:
+            'No sales persons are assigned to you (reportsTo). Assign team members in user settings.',
+        });
       }
-
-      leadFilter.user_id = { $in: salesPersonIds };
 
       if (filterSalesPersonId) {
         if (!mongoose.Types.ObjectId.isValid(filterSalesPersonId)) {
           return res.status(400).json({ message: 'Invalid salesPersonId.' });
         }
-        const isOnTeam = salesPersonIds.some(
+        const isOnTeam = teamMemberIds.some(
           (id) => id.toString() === filterSalesPersonId.toString()
         );
         if (!isOnTeam) {
@@ -1050,6 +1083,8 @@ exports.getLeadsByUser = async (req, res) => {
           });
         }
         leadFilter.user_id = filterSalesPersonId;
+      } else {
+        leadFilter.user_id = { $in: teamMemberIds };
       }
     } else {
       leadFilter.user_id = userId;
@@ -1066,12 +1101,15 @@ exports.getLeadsByUser = async (req, res) => {
 
     const leads = await Lead.find(leadFilter)
       .sort({ createdAt: -1 })
-      .populate('user_id')
-      .populate('assignedBy');
+      .populate('user_id', 'fullName email mobileNumber userRole')
+      .populate('assignedBy', 'fullName email mobileNumber userRole');
 
-    const formattedLeads = leads.map((lead) => formatLeadResponse(lead.toObject()));
+    const formattedLeads = leads.map((lead) => formatLeadForUserList(lead));
 
-    return res.status(200).json({ leads: formattedLeads });
+    return res.status(200).json({
+      leads: formattedLeads,
+      total: formattedLeads.length,
+    });
   } catch (error) {
     console.error('Get leads by user error:', error);
     return res.status(500).json({ message: 'Server error fetching leads by user.' });
