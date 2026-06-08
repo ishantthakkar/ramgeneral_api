@@ -121,6 +121,18 @@ const customerSchema = new mongoose.Schema({
         enum: ['paid', 'payment pending'],
         default: 'payment pending'
       },
+      payments: [
+        {
+          amount: { type: Number, required: true, min: 0 },
+          paymentMethod: {
+            type: String,
+            enum: ['Cash', 'ACH Transfer', 'Wire Transfer', 'Check', 'Credit Card', 'Debit Card', 'PayPal', 'Stripe', 'Other'],
+            trim: true,
+          },
+          paymentDate: { type: Date, default: Date.now },
+          createdAt: { type: Date, default: Date.now },
+        },
+      ],
       date: { type: Date, default: Date.now },
     },
   ],

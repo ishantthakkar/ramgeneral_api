@@ -104,6 +104,8 @@ router.get('/customers-pm', verifyToken, customerController.getCustomersByPM);
 router.get('/customers/assigned', verifyToken, customerController.listAssignedCustomers);
 router.get('/customers/inspections', verifyToken, customerController.listInspections);
 router.get('/customers/commission-list', verifyToken, customerController.customerCommissionList);
+router.get('/customers/:id/payable-details', verifyToken, customerController.getCustomerPayableDetails);
+router.post('/customers/:id/commission-payments', verifyToken, customerController.addCommissionPayment);
 router.get('/installation-list', verifyToken, customerController.installationListByUser);
 router.get('/inspection-list-user', verifyToken, customerController.inspectionListByUser);
 router.get('/survey-quotations-list', verifyToken, quotationController.listSurveyQuotationsByUser);

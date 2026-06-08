@@ -109,13 +109,136 @@ function findCommissionRecord(customer, surveyId, commissionType) {
   });
 }
 
+function sumCommissionPayments(record) {
+  if (!record) return 0;
+  const fromPayments = (record.payments || []).reduce(
+    (total, payment) => total + (parseFloat(payment.amount) || 0),
+    0
+  );
+  if (fromPayments > 0) return roundMoney(fromPayments);
+  return roundMoney(record.paidAmount || 0);
+}
+
 function getPaymentTotals(customer, surveyId, commissionType, calculatedAmount) {
   const record = findCommissionRecord(customer, surveyId, commissionType);
   const amount = roundMoney(calculatedAmount);
-  const paid = roundMoney(record?.paidAmount || 0);
+  const paid = sumCommissionPayments(record);
   const pending = roundMoney(Math.max(0, amount - paid));
 
-  return { amount, paid, pending };
+  return { amount, paid, pending, record };
+}
+
+const VALID_PAYMENT_METHODS = [
+  'Cash',
+  'ACH Transfer',
+  'Wire Transfer',
+  'Check',
+  'Credit Card',
+  'Debit Card',
+  'PayPal',
+  'Stripe',
+  'Other',
+];
+
+function normalizePayableFor(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (
+    normalized === 'contractor' ||
+    normalized === 'contractors' ||
+    normalized === 'installation'
+  ) {
+    return 'Installation';
+  }
+  return 'Survey';
+}
+
+async function addPaymentToCommission(customer, { surveyId, payableFor, amount, paymentMethod, paymentDate }) {
+  const Survey = require('../models/Survey');
+  const survey = await Survey.findOne({ _id: surveyId, customer_id: customer._id });
+
+  if (!survey) {
+    const error = new Error('Survey not found for this customer.');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const type = normalizePayableFor(payableFor);
+  const payables = await calculateSurveyPayables(survey, customer);
+  const dynamicAmount =
+    type === 'Installation' ? payables.contractorCommission : payables.salesCommission;
+
+  await syncPayablesForCustomer(customer);
+
+  const commissionIndex = (customer.commissions || []).findIndex((entry) => {
+    const entrySurveyId = entry.surveyId?.toString?.() || String(entry.surveyId || '');
+    return entrySurveyId === survey._id.toString() && entry.commissionType === type;
+  });
+
+  if (commissionIndex < 0) {
+    const error = new Error('Commission record not found for this survey.');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const existing = customer.commissions[commissionIndex];
+  const plain = existing?.toObject?.() || { ...existing };
+  const paymentAmount = roundMoney(parseFloat(amount));
+
+  if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+    const error = new Error('Payment amount must be greater than 0.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!paymentMethod || !VALID_PAYMENT_METHODS.includes(paymentMethod)) {
+    const error = new Error('A valid payment method is required.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const paidSoFar = sumCommissionPayments(plain);
+  const pendingBefore = roundMoney(Math.max(0, dynamicAmount - paidSoFar));
+
+  if (paymentAmount > pendingBefore) {
+    const error = new Error(
+      `Payment exceeds pending commission. Maximum payable amount is ${pendingBefore}.`
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const nextPayment = {
+    amount: paymentAmount,
+    paymentMethod,
+    paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
+    createdAt: new Date(),
+  };
+
+  const payments = [...(plain.payments || []), nextPayment];
+  const paid = roundMoney(paidSoFar + paymentAmount);
+  const pending = roundMoney(Math.max(0, dynamicAmount - paid));
+
+  customer.commissions[commissionIndex] = {
+    ...plain,
+    surveyId: survey._id,
+    commissionType: type,
+    amount: dynamicAmount,
+    payments,
+    paidAmount: paid,
+    paymentMethod,
+    paymentDate: nextPayment.paymentDate,
+    paymentStatus: pending <= 0 ? 'paid' : 'payment pending',
+  };
+
+  return {
+    commission: customer.commissions[commissionIndex],
+    payment: nextPayment,
+    dynamicAmount,
+    paid,
+    pending,
+    quotationNumber: payables.quotationNumber,
+    quotationAmount: payables.quotationAmount,
+  };
 }
 
 function buildCommissionEntry({
@@ -132,7 +255,8 @@ function buildCommissionEntry({
     amount: roundMoney(amount),
     salesPerson: commissionType === 'Survey' ? salesPerson || existing?.salesPerson : undefined,
     contractor: commissionType === 'Installation' ? contractor || existing?.contractor : undefined,
-    paidAmount: existing?.paidAmount || 0,
+    paidAmount: existing ? sumCommissionPayments(existing) : 0,
+    payments: existing?.payments || [],
     paymentMethod: existing?.paymentMethod,
     paymentDate: existing?.paymentDate,
     paymentStatus: existing?.paymentStatus || 'payment pending',
@@ -202,5 +326,9 @@ module.exports = {
   getPaymentTotals,
   findCommissionRecord,
   syncPayablesForCustomer,
+  sumCommissionPayments,
+  addPaymentToCommission,
+  normalizePayableFor,
   roundMoney,
+  VALID_PAYMENT_METHODS,
 };
