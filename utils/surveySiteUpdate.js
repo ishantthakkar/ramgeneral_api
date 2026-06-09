@@ -69,9 +69,18 @@ function mapSiteRowToArea(row, existingArea = {}) {
         : existingArea
       : {};
 
-  const { heightFt, heightIn } = parseHeightDisplay(
-    row.heightInInches ?? row.height ?? row.heightFt
-  );
+  const hasSeparateHeight =
+    row.heightFt !== undefined ||
+    row.heightIn !== undefined ||
+    row.height_ft !== undefined ||
+    row.height_in !== undefined;
+
+  const { heightFt, heightIn } = hasSeparateHeight
+    ? {
+        heightFt: normalizeDisplayField(row.heightFt ?? row.height_ft),
+        heightIn: normalizeDisplayField(row.heightIn ?? row.height_in),
+      }
+    : parseHeightDisplay(row.heightInInches ?? row.height);
 
   const imagesFromRow = toStoredImageNames(row.images);
   const images =

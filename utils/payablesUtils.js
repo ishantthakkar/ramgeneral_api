@@ -82,7 +82,11 @@ async function calculateSurveyPayables(survey, customer) {
     ...totals,
     quotationAmount,
     quotationNumber: latestQuotation?.quotationNumber || '',
-    confirmedDate: survey.confirmDate || survey.quotationApprovedAt || null,
+    confirmedDate:
+      survey.confirmDate ||
+      survey.quotationApprovedAt ||
+      customer?.confirmDate ||
+      null,
     surveyName: resolveSurveyDisplayName(survey),
   };
 }
