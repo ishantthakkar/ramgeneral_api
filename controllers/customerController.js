@@ -761,13 +761,32 @@ exports.updateCustomerSurveyStatus = async (req, res) => {
       return res.status(404).json({ message: 'Survey not found.' });
     }
 
-    // ✅ Update status
     survey.status = status;
     await survey.save();
+
+    let customer = null;
+    if (status === 'submitted' && survey.customer_id) {
+      customer = await Customer.findById(survey.customer_id);
+      if (customer) {
+        customer.status = 'submitted';
+        customer.verifyStatus = 'submitted';
+        customer.lastActivity = new Date();
+        await customer.save();
+
+        await createLog(
+          'Survey Submitted',
+          req.user.id,
+          customer.name,
+          'Customer',
+          customer._id
+        );
+      }
+    }
 
     return res.status(200).json({
       message: `Survey status updated to '${status}' successfully.`,
       survey,
+      ...(customer && { customer }),
     });
 
   } catch (error) {
