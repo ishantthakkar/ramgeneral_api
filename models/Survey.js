@@ -1,6 +1,22 @@
 const mongoose = require('mongoose');
 const { quotationFileFields } = require('../utils/quotationHelpers');
 
+const fixtureSchema = {
+  product_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Product',
+  },
+  heightFt: { type: String, trim: true, default: '' },
+  heightIn: { type: String, trim: true, default: '' },
+  existingBulbs: { type: String, trim: true, default: '' },
+  existingFixtureType: { type: String, trim: true, default: '' },
+  note: { type: String, trim: true, default: '' },
+  existingQty: { type: String, trim: true, default: '' },
+  proposedQty: { type: String, trim: true, default: '' },
+  price: { type: String, trim: true, default: '' },
+  images: [{ type: String, trim: true }],
+};
+
 const surveySchema = new mongoose.Schema({
   customer_id: {
     type: mongoose.Schema.Types.ObjectId,
@@ -32,19 +48,9 @@ const surveySchema = new mongoose.Schema({
   areas: [
     {
       areaName: { type: String, trim: true, default: '' },
-      product_id: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Product',
-      },
-      heightFt: { type: String, trim: true, default: '' },
-      heightIn: { type: String, trim: true, default: '' },
-      existingBulbs: { type: String, trim: true, default: '' },
-      existingFixtureType: { type: String, trim: true, default: '' },
       note: { type: String, trim: true, default: '' },
-      existingQty: { type: String, trim: true, default: '' },
-      proposedQty: { type: String, trim: true, default: '' },
-      price: { type: String, trim: true, default: '' },
       images: [{ type: String, trim: true }],
+      fixtures: [fixtureSchema],
     },
   ],
   notes: { type: String, trim: true, default: '' },

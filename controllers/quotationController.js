@@ -96,33 +96,48 @@ function resolveAreaLabel(survey, area, index) {
   const itemAreaName = (area.areaName || '').trim();
   if (itemAreaName) return itemAreaName;
 
-  return area.existingFixtureType || area.note || `Area ${index + 1}`;
+  const firstFixture = area.fixtures?.[0];
+  return (
+    firstFixture?.existingFixtureType ||
+    firstFixture?.note ||
+    area.note ||
+    `Area ${index + 1}`
+  );
 }
 
 async function buildLineItemsFromSurvey(survey) {
   const areas = await enrichAreasWithProducts(survey.areas || []);
+  const lineItems = [];
 
-  return areas
-    .map((area, index) => {
-      const quantity = parseFloat(area.proposedQty) || 0;
+  areas.forEach((area, areaIndex) => {
+    const areaLabel = resolveAreaLabel(survey, area, areaIndex);
+    const fixtures = area.fixtures?.length ? area.fixtures : [area];
+
+    fixtures.forEach((fixture) => {
+      const quantity = parseFloat(fixture.proposedQty) || 0;
       const unitPrice =
-        parseFloat(area.price) ||
-        area.product?.salesPrice ||
-        area.product?.price ||
+        parseFloat(fixture.price) ||
+        fixture.product?.salesPrice ||
+        fixture.product?.price ||
         0;
       const total = quantity * unitPrice;
       const proposedFixture =
-        area.product?.name || area.existingFixtureType || area.existingBulbs || 'Fixture';
+        fixture.product?.name ||
+        fixture.existingFixtureType ||
+        fixture.existingBulbs ||
+        'Fixture';
 
-      return {
-        area: resolveAreaLabel(survey, area, index),
+      lineItems.push({
+        area: areaLabel,
         proposedFixture,
         quantity,
         unitPrice,
         total,
-      };
-    })
-    .filter((row) => row.quantity > 0 || row.unitPrice > 0);
+      });
+    });
+  });
+
+  return lineItems.filter((row) => row.quantity > 0 || row.unitPrice > 0);
 }
 
 async function getTeamSalesPersonIds(managerId) {

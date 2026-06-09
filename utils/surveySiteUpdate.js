@@ -86,32 +86,41 @@ function mapSiteRowToArea(row, existingArea = {}) {
   const images =
     imagesFromRow.length > 0 ? imagesFromRow : existing.images || [];
 
+  const existingFixtures = existing.fixtures || [];
+  const existingFixture = existingFixtures[0] || existing;
+
   return {
     areaName:
       normalizeDisplayField(row.area ?? row.areaName) ||
       existing.areaName ||
       '',
-    product_id: existing.product_id || existing.productId || null,
-    heightFt: heightFt || existing.heightFt || '',
-    heightIn: heightIn || existing.heightIn || '',
-    existingBulbs:
-      normalizeDisplayField(row.existingBulbs) || existing.existingBulbs || '',
-    existingFixtureType:
-      normalizeDisplayField(row.existingFixtureType) ||
-      existing.existingFixtureType ||
-      '',
-    note: (row.note ?? '').toString().trim(),
-    existingQty:
-      normalizeDisplayField(row.existingQuantity ?? row.existingQty) ||
-      existing.existingQty ||
-      '',
-    proposedQty:
-      normalizeDisplayField(row.proposedQuantity ?? row.proposedQty) ||
-      existing.proposedQty ||
-      '',
-    price:
-      normalizePrice(row.pricePerUnit ?? row.price) || existing.price || '',
-    images,
+    note: (row.areaNote ?? row.area_note ?? existing.note ?? '').toString().trim(),
+    images: existing.images || [],
+    fixtures: [
+      {
+        product_id: existingFixture.product_id || existingFixture.productId || null,
+        heightFt: heightFt || existingFixture.heightFt || '',
+        heightIn: heightIn || existingFixture.heightIn || '',
+        existingBulbs:
+          normalizeDisplayField(row.existingBulbs) || existingFixture.existingBulbs || '',
+        existingFixtureType:
+          normalizeDisplayField(row.existingFixtureType) ||
+          existingFixture.existingFixtureType ||
+          '',
+        note: (row.note ?? '').toString().trim(),
+        existingQty:
+          normalizeDisplayField(row.existingQuantity ?? row.existingQty) ||
+          existingFixture.existingQty ||
+          '',
+        proposedQty:
+          normalizeDisplayField(row.proposedQuantity ?? row.proposedQty) ||
+          existingFixture.proposedQty ||
+          '',
+        price:
+          normalizePrice(row.pricePerUnit ?? row.price) || existingFixture.price || '',
+        images,
+      },
+    ],
   };
 }
 

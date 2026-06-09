@@ -27,11 +27,28 @@ const toProductObjectId = (value) => {
   return new mongoose.Types.ObjectId(id);
 };
 
-const validateAreaProducts = async (areas, category) => {
-  for (const area of areas) {
-    if (!area.product_id) continue;
+const flattenAreaFixtures = (areas) => {
+  if (!Array.isArray(areas)) return [];
 
-    const product = await Product.findById(area.product_id);
+  return areas.flatMap((area) => {
+    const plain = area?.toObject ? area.toObject() : area;
+    if (Array.isArray(plain?.fixtures) && plain.fixtures.length > 0) {
+      return plain.fixtures;
+    }
+    if (plain?.product_id) {
+      return [plain];
+    }
+    return [];
+  });
+};
+
+const validateAreaProducts = async (areas, category) => {
+  const fixtures = flattenAreaFixtures(areas);
+
+  for (const fixture of fixtures) {
+    if (!fixture.product_id) continue;
+
+    const product = await Product.findById(fixture.product_id);
     if (!product) {
       return {
         valid: false,
@@ -42,11 +59,11 @@ const validateAreaProducts = async (areas, category) => {
   return { valid: true };
 };
 
-const enrichAreasWithProducts = async (areas) => {
-  if (!Array.isArray(areas) || areas.length === 0) return [];
+const enrichFixturesWithProducts = async (fixtures) => {
+  if (!Array.isArray(fixtures) || fixtures.length === 0) return [];
 
-  const productIds = areas
-    .map((a) => a.product_id)
+  const productIds = fixtures
+    .map((f) => f.product_id)
     .filter((id) => id && mongoose.Types.ObjectId.isValid(id.toString()));
 
   const products = productIds.length
@@ -55,8 +72,8 @@ const enrichAreasWithProducts = async (areas) => {
 
   const productMap = new Map(products.map((p) => [p._id.toString(), p]));
 
-  return areas.map((area) => {
-    const plain = area?.toObject ? area.toObject() : { ...area };
+  return fixtures.map((fixture) => {
+    const plain = fixture?.toObject ? fixture.toObject() : { ...fixture };
     const productId = plain.product_id?.toString?.() || plain.product_id || null;
 
     return {
@@ -66,6 +83,38 @@ const enrichAreasWithProducts = async (areas) => {
   });
 };
 
+const enrichAreasWithProducts = async (areas) => {
+  if (!Array.isArray(areas) || areas.length === 0) return [];
+
+  return Promise.all(
+    areas.map(async (area) => {
+      const plain = area?.toObject ? area.toObject() : { ...area };
+
+      if (Array.isArray(plain.fixtures)) {
+        return {
+          ...plain,
+          fixtures: await enrichFixturesWithProducts(plain.fixtures),
+        };
+      }
+
+      if (plain.product_id) {
+        const [enrichedFixture] = await enrichFixturesWithProducts([plain]);
+        return {
+          areaName: plain.areaName || '',
+          note: plain.note || '',
+          images: plain.images || [],
+          fixtures: [enrichedFixture],
+        };
+      }
+
+      return {
+        ...plain,
+        fixtures: plain.fixtures || [],
+      };
+    })
+  );
+};
+
 module.exports = {
   CATEGORIES,
   resolveProductCategory,
@@ -73,4 +122,6 @@ module.exports = {
   toProductObjectId,
   validateAreaProducts,
   enrichAreasWithProducts,
+  enrichFixturesWithProducts,
+  flattenAreaFixtures,
 };

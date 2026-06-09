@@ -36,6 +36,10 @@ const mapSurveyImageUrls = (surveyObj) => {
     surveyObj.areas = (surveyObj.areas || []).map((area) => ({
         ...area,
         images: (area.images || []).map(toSurveyImageUrl),
+        fixtures: (area.fixtures || []).map((fixture) => ({
+            ...fixture,
+            images: (fixture.images || []).map(toSurveyImageUrl),
+        })),
     }));
     surveyObj.verifyImages = (surveyObj.verifyImages || []).map(toSurveyImageUrl);
     return surveyObj;
@@ -47,37 +51,69 @@ const formatSurveyResponse = async (surveyObj) => {
     return surveyObj;
 };
 
+const parseFixtureInput = (item) => ({
+    _id: item?._id ?? item?.id ?? undefined,
+    product_id: toProductObjectId(item?.product_id ?? item?.productId),
+    heightFt: (item?.heightFt ?? item?.height_ft ?? '').toString().trim(),
+    heightIn: (item?.heightIn ?? item?.height_in ?? '').toString().trim(),
+    existingBulbs: (item?.existingBulbs ?? item?.existing_bulbs ?? '').toString().trim(),
+    existingFixtureType: (
+        item?.existingFixtureType ?? item?.existing_fixture_type ?? ''
+    )
+        .toString()
+        .trim(),
+    note: (item?.note ?? '').toString().trim(),
+    existingQty: (
+        item?.existingQty ??
+        item?.existing_qty ??
+        item?.existingQuantity ??
+        item?.qty ??
+        ''
+    )
+        .toString()
+        .trim(),
+    proposedQty: (item?.proposedQty ?? item?.proposed_qty ?? item?.proposedQuantity ?? '')
+        .toString()
+        .trim(),
+    price: item?.price !== undefined && item?.price !== null ? String(item.price).trim() : '',
+    images: [],
+});
+
 const parseAreasInput = (areas) => {
     if (areas === undefined || areas === null || areas === '') return [];
     const parsed = tryParseJson(areas);
     if (!Array.isArray(parsed)) return null;
-    return parsed.map((item) => ({
-        areaName: (item?.areaName ?? item?.area_name ?? '').toString().trim(),
-        product_id: toProductObjectId(item?.product_id ?? item?.productId),
-        heightFt: (item?.heightFt ?? item?.height_ft ?? '').toString().trim(),
-        heightIn: (item?.heightIn ?? item?.height_in ?? '').toString().trim(),
-        existingBulbs: (item?.existingBulbs ?? item?.existing_bulbs ?? '').toString().trim(),
-        existingFixtureType: (
-            item?.existingFixtureType ?? item?.existing_fixture_type ?? ''
-        )
-            .toString()
-            .trim(),
-        note: (item?.note ?? '').toString().trim(),
-        existingQty: (
-            item?.existingQty ??
-            item?.existing_qty ??
-            item?.existingQuantity ??
-            item?.qty ??
-            ''
-        )
-            .toString()
-            .trim(),
-        proposedQty: (item?.proposedQty ?? item?.proposed_qty ?? item?.proposedQuantity ?? '')
-            .toString()
-            .trim(),
-        price: item?.price !== undefined && item?.price !== null ? String(item.price).trim() : '',
-        images: [],
-    }));
+
+    return parsed.map((item) => {
+        const areaName = (item?.areaName ?? item?.area_name ?? '').toString().trim();
+        const areaNote = (item?.areaNote ?? item?.area_note ?? '').toString().trim();
+
+        if (Array.isArray(item?.fixtures)) {
+            return {
+                _id: item?._id ?? item?.id ?? undefined,
+                areaName,
+                note: areaNote,
+                images: [],
+                fixtures: item.fixtures.map(parseFixtureInput),
+            };
+        }
+
+        const hasFixtureFields =
+            item?.product_id ||
+            item?.productId ||
+            item?.existingFixtureType ||
+            item?.existing_fixture_type ||
+            item?.heightFt ||
+            item?.height_ft;
+
+        return {
+            _id: item?._id ?? item?.id ?? undefined,
+            areaName,
+            note: areaNote,
+            images: [],
+            fixtures: hasFixtureFields ? [parseFixtureInput(item)] : [],
+        };
+    });
 };
 
 const validateAreasForCustomer = async (areas, customerId) => {
@@ -93,18 +129,45 @@ const buildAreasWithImages = async (areasInput, files) => {
 
     const filesByField = {};
     for (const file of files || []) {
-        if (/^area_images_\d+$/.test(file.fieldname)) {
+        if (
+            /^area_images_\d+$/.test(file.fieldname) ||
+            /^area_\d+_fixture_images_\d+$/.test(file.fieldname)
+        ) {
             if (!filesByField[file.fieldname]) filesByField[file.fieldname] = [];
             filesByField[file.fieldname].push(file);
         }
     }
 
-    for (let i = 0; i < areas.length; i++) {
-        const fieldFiles = filesByField[`area_images_${i}`] || [];
-        areas[i].images = await processUploadedImages(fieldFiles);
+    for (let areaIdx = 0; areaIdx < areas.length; areaIdx++) {
+        const areaImageFiles = filesByField[`area_images_${areaIdx}`] || [];
+        areas[areaIdx].images = await processUploadedImages(areaImageFiles);
+
+        for (let fixtureIdx = 0; fixtureIdx < (areas[areaIdx].fixtures || []).length; fixtureIdx++) {
+            const fixtureImageFiles =
+                filesByField[`area_${areaIdx}_fixture_images_${fixtureIdx}`] || [];
+            areas[areaIdx].fixtures[fixtureIdx].images =
+                await processUploadedImages(fixtureImageFiles);
+        }
     }
 
     return areas;
+};
+
+const applyFixtureUpdates = (existingFixture, fixture) => {
+    if (fixture.product_id !== undefined) existingFixture.product_id = fixture.product_id;
+    if (fixture.heightFt !== undefined) existingFixture.heightFt = fixture.heightFt;
+    if (fixture.heightIn !== undefined) existingFixture.heightIn = fixture.heightIn;
+    if (fixture.existingBulbs !== undefined) existingFixture.existingBulbs = fixture.existingBulbs;
+    if (fixture.existingFixtureType !== undefined) {
+        existingFixture.existingFixtureType = fixture.existingFixtureType;
+    }
+    if (fixture.note !== undefined) existingFixture.note = fixture.note;
+    if (fixture.existingQty !== undefined) existingFixture.existingQty = fixture.existingQty;
+    if (fixture.proposedQty !== undefined) existingFixture.proposedQty = fixture.proposedQty;
+    if (fixture.price !== undefined) existingFixture.price = fixture.price;
+    if (fixture.images && fixture.images.length > 0) {
+        existingFixture.images = [...(existingFixture.images || []), ...fixture.images];
+    }
 };
 
 const ensureUploadDir = async () => {
@@ -194,7 +257,8 @@ exports.createSurvey = async (req, res) => {
         const processedAreas = areas !== undefined ? await buildAreasWithImages(areas, req.files) : null;
         if (processedAreas === null && areas !== undefined && areas !== '') {
             return res.status(400).json({
-                message: 'Invalid areas. Send a JSON array with product_id, heightFt, heightIn, existingBulbs, existingFixtureType, note, etc.',
+                message:
+                    'Invalid areas. Send a JSON array of area objects with areaName, note, and a fixtures array (product_id, heightFt, heightIn, existingBulbs, existingFixtureType, note, etc.).',
             });
         }
 
@@ -217,21 +281,48 @@ exports.createSurvey = async (req, res) => {
             }
         }
 
-        const updateData = {
-            status: status || survey.status,
-            surveyName: surveyName !== undefined ? surveyName : survey.surveyName,
-            areaName: areaName !== undefined ? areaName : survey.areaName,
-            note: note !== undefined ? note : survey.note,
-            notes: notes !== undefined ? notes : survey.notes,
-            surveyDate: surveyDate ? new Date(surveyDate) : survey.surveyDate,
-            markAsCompleted: completionFlag,
-        };
+        survey.status = status || survey.status;
+        if (surveyName !== undefined) survey.surveyName = surveyName;
+        if (areaName !== undefined) survey.areaName = areaName;
+        if (note !== undefined) survey.note = note;
+        if (notes !== undefined) survey.notes = notes;
+        if (surveyDate) survey.surveyDate = new Date(surveyDate);
+        survey.markAsCompleted = completionFlag;
 
         if (processedAreas !== null) {
-            updateData.areas = processedAreas;
+            for (const area of processedAreas) {
+                if (area._id) {
+                    const existingArea = survey.areas.id(area._id);
+                    if (existingArea) {
+                        if (area.areaName !== undefined) existingArea.areaName = area.areaName;
+                        if (area.note !== undefined) existingArea.note = area.note;
+                        if (area.images && area.images.length > 0) {
+                            existingArea.images = [...(existingArea.images || []), ...area.images];
+                        }
+
+                        for (const fixture of area.fixtures || []) {
+                            if (fixture._id) {
+                                const existingFixture = existingArea.fixtures.id(fixture._id);
+                                if (existingFixture) {
+                                    applyFixtureUpdates(existingFixture, fixture);
+                                }
+                            } else {
+                                delete fixture._id;
+                                existingArea.fixtures.push(fixture);
+                            }
+                        }
+                    }
+                } else {
+                    delete area._id;
+                    for (const fixture of area.fixtures || []) {
+                        delete fixture._id;
+                    }
+                    survey.areas.push(area);
+                }
+            }
         }
 
-        survey = await Survey.findByIdAndUpdate(survey_id, updateData, { new: true });
+        await survey.save();
 
         const customer = await Customer.findById(survey.customer_id);
         await createLog('Survey Updated', user_id, customer?.name || 'Unknown', 'Survey', survey._id);

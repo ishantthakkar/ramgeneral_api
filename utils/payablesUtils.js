@@ -1,4 +1,4 @@
-const { enrichAreasWithProducts } = require('./surveyProductUtils');
+const { enrichAreasWithProducts, flattenAreaFixtures } = require('./surveyProductUtils');
 const { getGenerateQuotationsForSurvey } = require('./quotationHelpers');
 
 function parseQuantity(value) {
@@ -19,7 +19,12 @@ function resolveSurveyDisplayName(survey) {
   if (surveyName) return surveyName;
 
   const areaNames = (survey.areas || [])
-    .map((area) => (area.areaName || area.existingFixtureType || '').trim())
+    .map((area) => {
+      const name = (area.areaName || '').trim();
+      if (name) return name;
+      const firstFixture = area.fixtures?.[0];
+      return (firstFixture?.existingFixtureType || '').trim();
+    })
     .filter(Boolean);
 
   if (areaNames.length === 1) return areaNames[0];
@@ -68,7 +73,7 @@ function roundMoney(value) {
 
 async function calculateSurveyPayables(survey, customer) {
   const enrichedAreas = await enrichAreasWithProducts(survey.areas || []);
-  const totals = calculatePayablesFromAreas(enrichedAreas);
+  const totals = calculatePayablesFromAreas(flattenAreaFixtures(enrichedAreas));
   const latestQuotation = getLatestQuotationForSurvey(survey, customer);
 
   const quotationAmount =

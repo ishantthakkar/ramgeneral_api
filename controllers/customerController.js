@@ -65,6 +65,15 @@ async function formatSurveysForResponse(surveys, surveyBaseUrl) {
           if (filename.startsWith('http')) return filename;
           return `${surveyBaseUrl}${filename}`;
         }),
+        fixtures: (area.fixtures || []).map((fixture) => ({
+          ...fixture,
+          images: (fixture.images || []).map((img) => {
+            const filename = String(img || '').replace(/^\//, '');
+            if (!filename) return img;
+            if (filename.startsWith('http')) return filename;
+            return `${surveyBaseUrl}${filename}`;
+          }),
+        })),
       }));
       if (Array.isArray(surveyObj.images)) {
         surveyObj.images = surveyObj.images.map((img) => {
