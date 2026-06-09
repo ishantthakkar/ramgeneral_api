@@ -34,6 +34,7 @@ const upload = multer({
   },
 });
 
+router.post('/create-surveys', verifyToken, surveyController.createNewSurvey);
 router.post('/add-area', verifyToken, upload.any(), surveyController.createSurvey);
 router.get('/surveys', verifyToken, surveyController.listSurveys);
 router.get('/surveys/products', verifyToken, surveyController.getSurveyProducts);

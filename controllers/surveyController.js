@@ -147,10 +147,43 @@ const processUploadedImages = async (files) => {
     return imageNames;
 };
 
+exports.createNewSurvey = async (req, res) => {
+    try {
+        const user_id = req.user.id;
+        const { customer_id, surveyName } = req.body;
+
+        if (!customer_id) {
+            return res.status(400).json({ message: 'customer_id is required.' });
+        }
+
+        const customer = await Customer.findById(customer_id);
+        if (!customer) {
+            return res.status(404).json({ message: 'Customer not found.' });
+        }
+
+        const survey = await Survey.create({
+            customer_id,
+            user_id,
+            surveyName: surveyName || '',
+            status: 'in_progress',
+            areas: []
+        });
+
+        await createLog('Survey Created', user_id, customer.name, 'Survey', survey._id);
+
+        const surveyResponse = await formatSurveyResponse(survey.toObject());
+        return res.status(201).json({ survey: surveyResponse, message: 'Survey created successfully.' });
+
+    } catch (error) {
+        console.error('Create new survey error:', error);
+        return res.status(500).json({ message: 'Server error creating survey.' });
+    }
+};
+
 exports.createSurvey = async (req, res) => {
     try {
         const user_id = req.user.id;
-        const { id, customer_id, surveyName, areaName, note, notes, status, surveyDate, areas, markAsCompleted, MarkasCompleted } = req.body;
+        const { survey_id, surveyName, areaName, note, notes, status, surveyDate, areas, markAsCompleted, MarkasCompleted } = req.body;
         const completionFlag = markAsCompleted !== undefined ? markAsCompleted : MarkasCompleted !== undefined ? MarkasCompleted : false;
 
         const user = await User.findById(user_id);
@@ -165,84 +198,47 @@ exports.createSurvey = async (req, res) => {
             });
         }
 
-        if (id) {
-            // Update existing record
-            let survey = await Survey.findById(id);
-            if (!survey) {
-                return res.status(404).json({ message: 'Survey not found.' });
-            }
-
-            if (processedAreas !== null) {
-                const areaValidation = await validateAreasForCustomer(
-                    processedAreas,
-                    customer_id || survey.customer_id
-                );
-                if (!areaValidation.valid) {
-                    return res.status(400).json({ message: areaValidation.message });
-                }
-            }
-
-            const updateData = {
-                status: status || survey.status,
-                surveyName: surveyName !== undefined ? surveyName : survey.surveyName,
-                areaName: areaName !== undefined ? areaName : survey.areaName,
-                note: note !== undefined ? note : survey.note,
-                notes: notes !== undefined ? notes : survey.notes,
-                surveyDate: surveyDate ? new Date(surveyDate) : survey.surveyDate,
-                markAsCompleted: completionFlag,
-            };
-
-            if (customer_id) updateData.customer_id = customer_id;
-
-            if (processedAreas !== null) {
-                updateData.areas = processedAreas;
-            }
-
-            survey = await Survey.findByIdAndUpdate(id, updateData, { new: true });
-
-            const customer = await Customer.findById(survey.customer_id);
-            await createLog('Survey Updated', user_id, customer?.name || 'Unknown', 'Survey', survey._id);
-
-            const surveyResponse = await formatSurveyResponse(survey.toObject());
-
-            return res.status(200).json({ survey: surveyResponse, message: 'Survey updated successfully.' });
-        } else {
-            // Create new record
-            if (!customer_id) {
-                return res.status(400).json({ message: 'customer_id is required.' });
-            }
-
-            const customer = await Customer.findById(customer_id);
-            if (!customer) {
-                return res.status(404).json({ message: 'Customer not found.' });
-            }
-
-            if (processedAreas !== null) {
-                const areaValidation = await validateAreasForCustomer(processedAreas, customer_id);
-                if (!areaValidation.valid) {
-                    return res.status(400).json({ message: areaValidation.message });
-                }
-            }
-
-            const survey = await Survey.create({
-                customer_id,
-                user_id,
-                surveyName: surveyName || '',
-                areaName: areaName || '',
-                note: note || '',
-                areas: processedAreas !== null ? processedAreas : [],
-                status: 'in_progress',
-                notes: notes || '',
-                surveyDate: surveyDate ? new Date(surveyDate) : undefined,
-                markAsCompleted: completionFlag,
-            });
-
-            await createLog('Survey Created', user_id, customer.name, 'Survey', survey._id);
-
-            const surveyResponse = await formatSurveyResponse(survey.toObject());
-
-            return res.status(201).json({ survey: surveyResponse, message: 'Survey stored successfully.' });
+        if (!survey_id) {
+            return res.status(400).json({ message: 'survey_id is required.' });
         }
+
+        let survey = await Survey.findById(survey_id);
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found.' });
+        }
+
+        if (processedAreas !== null) {
+            const areaValidation = await validateAreasForCustomer(
+                processedAreas,
+                survey.customer_id
+            );
+            if (!areaValidation.valid) {
+                return res.status(400).json({ message: areaValidation.message });
+            }
+        }
+
+        const updateData = {
+            status: status || survey.status,
+            surveyName: surveyName !== undefined ? surveyName : survey.surveyName,
+            areaName: areaName !== undefined ? areaName : survey.areaName,
+            note: note !== undefined ? note : survey.note,
+            notes: notes !== undefined ? notes : survey.notes,
+            surveyDate: surveyDate ? new Date(surveyDate) : survey.surveyDate,
+            markAsCompleted: completionFlag,
+        };
+
+        if (processedAreas !== null) {
+            updateData.areas = processedAreas;
+        }
+
+        survey = await Survey.findByIdAndUpdate(survey_id, updateData, { new: true });
+
+        const customer = await Customer.findById(survey.customer_id);
+        await createLog('Survey Updated', user_id, customer?.name || 'Unknown', 'Survey', survey._id);
+
+        const surveyResponse = await formatSurveyResponse(survey.toObject());
+
+        return res.status(200).json({ survey: surveyResponse, message: 'Survey updated successfully.' });
     } catch (error) {
         console.error('Process survey error:', error);
         return res.status(500).json({ message: 'Server error processing survey.' });
