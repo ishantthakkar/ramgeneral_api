@@ -237,6 +237,7 @@ exports.listConvertedCustomers = async (req, res) => {
         lastActivity: customer.lastActivity,
         assignedTo: customer.assignedTo ?? null,
         verifyStatus: customer.verifyStatus,
+        confirmDate: customer.confirmDate || null,
         salesPersonName: customer.user_id?.fullName || customer.user_id?.name || '',
         salesManagerName: resolveSalesManagerName(customer.user_id),
         material: (customer.material || []).map(m => {
@@ -1210,6 +1211,14 @@ exports.verifyCustomer = async (req, res) => {
     customer.status = 'completed';
 
     if (status === 'verified') {
+      const verifiedAt = new Date();
+      customer.confirmDate = verifiedAt;
+
+      await Survey.updateMany(
+        { customer_id: customer._id },
+        { $set: { confirmDate: verifiedAt } }
+      );
+
       customer = await syncPayablesForCustomer(customer);
     }
 
