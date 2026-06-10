@@ -577,10 +577,10 @@ exports.approveQuotation = async (req, res) => {
       }
     }
 
-    const uploadedQuotations = getUploadSignedQuotationsForSurvey(survey, customer);
-    if (!hasUploadSignedQuotationForSurvey(survey, customer)) {
-      return res.status(400).json({ message: 'No uploaded quotation files to approve for this survey.' });
-    }
+    // const uploadedQuotations = getUploadSignedQuotationsForSurvey(survey, customer);
+    // if (!hasUploadSignedQuotationForSurvey(survey, customer)) {
+    //   return res.status(400).json({ message: 'No uploaded quotation files to approve for this survey.' });
+    // }
 
     if (survey.quotationStatus === 'approved') {
       return res.status(400).json({ message: 'Quotation is already approved for this survey.' });
