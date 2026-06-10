@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const User = require('../models/User');
 const Role = require('../models/Role');
 const mongoose = require('mongoose');
@@ -6,6 +8,17 @@ const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
 const CustomerActivity = require('../models/CustomerActivity');
 const { generateAccessToken, generateRefreshToken } = require('../utils/token');
+
+const PROFILE_UPLOAD_DIR = path.join(__dirname, '../uploads/profiles');
+const PROFILE_IMAGE_BASE = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
+
+const toProfileImageUrl = (filename) => {
+    if (!filename) return '';
+    const value = String(filename).trim();
+    if (!value) return '';
+    if (value.startsWith('http')) return value;
+    return `${PROFILE_IMAGE_BASE}/uploads/profiles/${value.replace(/^\//, '')}`;
+};
 
 const { SALES_PERSON_ROLE_VARIANTS, isSalesPersonRole: isSalesPersonRoleFromConstants } = require('../constants/userRoles');
 
@@ -656,6 +669,46 @@ exports.listSalesPersons = async (req, res) => {
     }
 };
 
+exports.uploadProfileImage = async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        if (!req.file) {
+            return res.status(400).json({ message: 'Profile image file is required.' });
+        }
+
+        const user = await User.findById(userId);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+
+        const previousImage = user.profileImage;
+        const savedFilename = path.basename(req.file.path);
+
+        user.profileImage = savedFilename;
+        await user.save();
+
+        if (previousImage && previousImage !== savedFilename) {
+            const previousPath = path.join(PROFILE_UPLOAD_DIR, path.basename(previousImage));
+            fs.promises.unlink(previousPath).catch(() => {});
+        }
+
+        return res.status(200).json({
+            message: 'Profile image uploaded successfully.',
+            profileImage: toProfileImageUrl(savedFilename),
+            user: {
+                _id: user._id,
+                fullName: user.fullName,
+                email: user.email,
+                profileImage: toProfileImageUrl(savedFilename),
+            },
+        });
+    } catch (error) {
+        console.error('Upload profile image error:', error);
+        return res.status(500).json({ message: 'Server error uploading profile image.' });
+    }
+};
+
 exports.getProfile = async (req, res) => {
     try {
         const id = req.user.id;
@@ -727,6 +780,7 @@ exports.getProfile = async (req, res) => {
         return res.status(200).json({
             user: {
                 ...user,
+                profileImage: toProfileImageUrl(user.profileImage),
                 permissions: user.roleId ? user.roleId.permissions : {},
                 ...roleMetrics,
             },
