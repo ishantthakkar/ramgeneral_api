@@ -46,6 +46,7 @@ router.post('/surveys/:id/assign-contractor', verifyToken, surveyController.assi
 router.post('/surveys/notes', verifyToken, surveyController.updateSurveyNotes);
 router.post('/surveys/mark-completed', verifyToken, surveyController.markSurveyCompleted);
 router.post('/surveys/verify', verifyToken, upload.any(), surveyController.verifySurvey);
+router.post('/surveys/:id/confirm-verify', verifyToken, surveyController.confirmVerifySurvey);
 router.get('/installation', verifyToken, surveyController.installation);
 
 module.exports = router;

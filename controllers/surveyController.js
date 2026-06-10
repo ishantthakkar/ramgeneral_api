@@ -679,6 +679,73 @@ exports.verifySurvey = async (req, res) => {
     }
 };
 
+exports.confirmVerifySurvey = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const user_id = req.user.id;
+
+        const isAdmin = await Admin.findById(user_id);
+        if (!isAdmin) {
+            const user = await User.findById(user_id);
+            if (!user || user.userRole !== 'Project Manager') {
+                return res.status(403).json({ message: 'Only Admins or Project Managers can verify surveys.' });
+            }
+        }
+
+        const survey = await Survey.findById(id);
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found.' });
+        }
+
+        if (survey.confirmDate) {
+            return res.status(400).json({ message: 'Survey is already verified.' });
+        }
+
+        const verifiedAt = new Date();
+        survey.confirmDate = verifiedAt;
+        await survey.save();
+
+        let customer = null;
+        if (survey.customer_id) {
+            customer = await Customer.findById(survey.customer_id);
+            if (customer) {
+                const customerSurveys = await Survey.find({ customer_id: customer._id });
+                const allVerified = customerSurveys.length > 0
+                    && customerSurveys.every((item) => item.confirmDate);
+
+                if (allVerified) {
+                    customer.verifyStatus = 'verified';
+                    customer.status = 'completed';
+                    customer.confirmDate = verifiedAt;
+                }
+
+                const { syncPayablesForCustomer } = require('../utils/payablesUtils');
+                customer = await syncPayablesForCustomer(customer);
+                await customer.save();
+            }
+        }
+
+        const surveyResponse = await formatSurveyResponse(survey.toObject());
+
+        await createLog(
+            'Survey Confirmed',
+            user_id,
+            customer?.name || 'Unknown',
+            'Survey',
+            survey._id
+        );
+
+        return res.status(200).json({
+            message: 'Survey verified successfully.',
+            survey: surveyResponse,
+            customer,
+        });
+    } catch (error) {
+        console.error('Confirm verify survey error:', error);
+        return res.status(500).json({ message: 'Server error verifying survey.' });
+    }
+};
+
 exports.assignSurvey = async (req, res) => {
     try {
         const user_id = req.user.id;
