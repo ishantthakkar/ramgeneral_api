@@ -821,24 +821,24 @@ exports.getCustomersByUser = async (req, res) => {
     if (isSalesManagerRole(user.userRole)) {
       const teamMembers = await User.find({ reportsTo: userId }).select('_id').lean();
       const teamIds = teamMembers.map((member) => member._id);
-
-      if (!teamIds.length) {
-        return res.status(200).json({ customers: [], total: 0 });
-      }
-
-      customerFilter.user_id = { $in: teamIds };
+      const allowedUserIds = [
+        new mongoose.Types.ObjectId(userId),
+        ...teamIds,
+      ];
 
       if (filterSalesPersonId) {
         if (!mongoose.Types.ObjectId.isValid(filterSalesPersonId)) {
           return res.status(400).json({ message: 'Invalid salesPersonId.' });
         }
-        const isOnTeam = teamIds.some(
+        const isAllowed = allowedUserIds.some(
           (id) => id.toString() === filterSalesPersonId.toString()
         );
-        if (!isOnTeam) {
+        if (!isAllowed) {
           return res.status(403).json({ message: 'Sales person is not on your team.' });
         }
         customerFilter.user_id = filterSalesPersonId;
+      } else {
+        customerFilter.user_id = { $in: allowedUserIds };
       }
     } else {
       customerFilter.user_id = userId;
