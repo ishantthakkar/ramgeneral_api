@@ -1341,10 +1341,21 @@ exports.getCustomerPayableDetails = async (req, res) => {
 
     let survey = null;
     if (surveyId && mongoose.Types.ObjectId.isValid(surveyId)) {
-      survey = await Survey.findOne({ _id: surveyId, customer_id: id });
+      survey = await Survey.findOne({
+        _id: surveyId,
+        customer_id: id,
+        confirmDate: { $ne: null },
+      });
     }
     if (!survey) {
-      survey = await Survey.findOne({ customer_id: id }).sort({ createdAt: -1 });
+      survey = await Survey.findOne({
+        customer_id: id,
+        confirmDate: { $ne: null },
+      }).sort({ createdAt: -1 });
+    }
+
+    if (!survey) {
+      return res.status(404).json({ message: 'No verified survey found for this customer.' });
     }
 
     const type = normalizePayableFor(payableFor);
@@ -1505,7 +1516,30 @@ exports.updateCustomerCommissions = async (req, res) => {
 
 exports.customerCommissionList = async (req, res) => {
   try {
-    const customers = await Customer.find({ verifyStatus: 'verified' })
+    const verifiedSurveys = await Survey.find({ confirmDate: { $ne: null } }).sort({
+      surveyDate: -1,
+      createdAt: -1,
+    });
+
+    const customerIdSet = new Set(
+      verifiedSurveys
+        .map((survey) => survey.customer_id?.toString())
+        .filter(Boolean)
+    );
+
+    if (!customerIdSet.size) {
+      return res.status(200).json({
+        message: 'Verified survey payables retrieved successfully.',
+        salesPersons: [],
+        contractors: [],
+        overallSummary: {
+          salesPersons: { totalCommission: 0, totalPaid: 0, totalPending: 0 },
+          contractors: { totalCommission: 0, totalPaid: 0, totalPending: 0 },
+        },
+      });
+    }
+
+    const customers = await Customer.find({ _id: { $in: [...customerIdSet] } })
       .populate('assignToContractor', 'fullName email')
       .populate('user_id', 'fullName email name')
       .populate('leadId', 'dba leadName')
@@ -1520,11 +1554,9 @@ exports.customerCommissionList = async (req, res) => {
       }
     }
 
-    const customerIds = customers.map((customer) => customer._id);
-    const surveys = await Survey.find({ customer_id: { $in: customerIds } }).sort({ surveyDate: -1 });
     const surveysByCustomer = new Map();
 
-    for (const survey of surveys) {
+    for (const survey of verifiedSurveys) {
       const key = survey.customer_id?.toString();
       if (!key) continue;
       if (!surveysByCustomer.has(key)) surveysByCustomer.set(key, []);
@@ -1612,7 +1644,7 @@ exports.customerCommissionList = async (req, res) => {
     }
 
     return res.status(200).json({
-      message: 'Verified customer payables retrieved successfully.',
+      message: 'Verified survey payables retrieved successfully.',
       salesPersons,
       contractors,
       overallSummary: {

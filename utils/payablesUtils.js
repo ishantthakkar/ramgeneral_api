@@ -87,11 +87,7 @@ async function calculateSurveyPayables(survey, customer) {
     ...totals,
     quotationAmount,
     quotationNumber: latestQuotation?.quotationNumber || '',
-    confirmedDate:
-      survey.confirmDate ||
-      survey.quotationApprovedAt ||
-      customer?.confirmDate ||
-      null,
+    confirmedDate: survey.confirmDate || survey.quotationApprovedAt || null,
     surveyName: resolveSurveyDisplayName(survey),
   };
 }
@@ -168,6 +164,12 @@ async function addPaymentToCommission(customer, { surveyId, payableFor, amount, 
   if (!survey) {
     const error = new Error('Survey not found for this customer.');
     error.statusCode = 404;
+    throw error;
+  }
+
+  if (!isSurveyVerified(survey)) {
+    const error = new Error('Survey must be verified before recording payments.');
+    error.statusCode = 400;
     throw error;
   }
 
@@ -273,15 +275,29 @@ function buildCommissionEntry({
   };
 }
 
+function isSurveyVerified(survey) {
+  if (!survey?.confirmDate) return false;
+  const date = new Date(survey.confirmDate);
+  return !Number.isNaN(date.getTime());
+}
+
 async function syncPayablesForCustomer(customer) {
   const Survey = require('../models/Survey');
   const surveys = await Survey.find({ customer_id: customer._id }).sort({ createdAt: -1 });
 
   if (!surveys.length) return customer;
 
-  const nextCommissions = [...(customer.commissions || [])];
+  const verifiedSurveys = surveys.filter(isSurveyVerified);
+  const verifiedSurveyIds = new Set(
+    verifiedSurveys.map((survey) => survey._id.toString())
+  );
 
-  for (const survey of surveys) {
+  const nextCommissions = (customer.commissions || []).filter((entry) => {
+    const entrySurveyId = entry.surveyId?.toString?.() || String(entry.surveyId || '');
+    return verifiedSurveyIds.has(entrySurveyId);
+  });
+
+  for (const survey of verifiedSurveys) {
     const payables = await calculateSurveyPayables(survey, customer);
     const surveyId = survey._id;
 
@@ -334,6 +350,7 @@ module.exports = {
   getInstallDate,
   getPaymentTotals,
   findCommissionRecord,
+  isSurveyVerified,
   syncPayablesForCustomer,
   sumCommissionPayments,
   addPaymentToCommission,
