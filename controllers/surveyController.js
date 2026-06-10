@@ -8,6 +8,7 @@ const Admin = require('../models/Admin');
 const Product = require('../models/Product');
 const { createLog } = require('../utils/logger');
 const { normalizeNotes } = require('../utils/subdocumentHelpers');
+const { coerceSurveyNotes, sanitizeSurveyDocumentNotes } = require('../utils/surveyNotes');
 const {
     resolveProductCategory,
     getElectricCompanyForCustomer,
@@ -28,39 +29,6 @@ const tryParseJson = (value) => {
     } catch {
         return value;
     }
-};
-
-const coerceSurveyNotes = (notes) => {
-    if (notes === undefined || notes === null || notes === '') return [];
-
-    if (typeof notes === 'string') {
-        return normalizeNotes(notes).filter((item) => item.note);
-    }
-
-    if (Array.isArray(notes)) {
-        return notes
-            .map((item) => {
-                if (typeof item === 'string') {
-                    const noteText = item.trim();
-                    return noteText
-                        ? { title: '', note: noteText, createdAt: new Date() }
-                        : null;
-                }
-                if (item && typeof item === 'object') {
-                    const noteText = (item.note ?? '').toString().trim();
-                    if (!noteText) return null;
-                    return {
-                        title: (item.title ?? '').toString().trim(),
-                        note: noteText,
-                        createdAt: item.createdAt ? new Date(item.createdAt) : new Date(),
-                    };
-                }
-                return null;
-            })
-            .filter(Boolean);
-    }
-
-    return normalizeNotes(notes).filter((item) => item.note);
 };
 
 const toSurveyImageUrl = (filename) =>
@@ -684,14 +652,6 @@ exports.confirmVerifySurvey = async (req, res) => {
         const { id } = req.params;
         const user_id = req.user.id;
 
-        const isAdmin = await Admin.findById(user_id);
-        if (!isAdmin) {
-            const user = await User.findById(user_id);
-            if (!user || user.userRole !== 'Project Manager') {
-                return res.status(403).json({ message: 'Only Admins or Project Managers can verify surveys.' });
-            }
-        }
-
         const survey = await Survey.findById(id);
         if (!survey) {
             return res.status(404).json({ message: 'Survey not found.' });
@@ -703,22 +663,14 @@ exports.confirmVerifySurvey = async (req, res) => {
 
         const verifiedAt = new Date();
         survey.confirmDate = verifiedAt;
+        survey.status = 'completed';
+        sanitizeSurveyDocumentNotes(survey);
         await survey.save();
 
         let customer = null;
         if (survey.customer_id) {
             customer = await Customer.findById(survey.customer_id);
             if (customer) {
-                const customerSurveys = await Survey.find({ customer_id: customer._id });
-                const allVerified = customerSurveys.length > 0
-                    && customerSurveys.every((item) => item.confirmDate);
-
-                if (allVerified) {
-                    customer.verifyStatus = 'verified';
-                    customer.status = 'completed';
-                    customer.confirmDate = verifiedAt;
-                }
-
                 const { syncPayablesForCustomer } = require('../utils/payablesUtils');
                 customer = await syncPayablesForCustomer(customer);
                 await customer.save();
@@ -742,7 +694,7 @@ exports.confirmVerifySurvey = async (req, res) => {
         });
     } catch (error) {
         console.error('Confirm verify survey error:', error);
-        return res.status(500).json({ message: 'Server error verifying survey.' });
+        return res.status(500).json({ message: 'Server error verifying survey.', error: error.message });
     }
 };
 

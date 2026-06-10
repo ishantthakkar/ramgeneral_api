@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { quotationFileFields } = require('../utils/quotationHelpers');
+const { coerceSurveyNotes, getRawSurveyNotes } = require('../utils/surveyNotes');
 
 const fixtureSchema = {
   product_id: {
@@ -80,6 +81,11 @@ const surveySchema = new mongoose.Schema({
   uploadSignedQuotation: [quotationFileFields],
 }, {
   timestamps: true,
+});
+
+surveySchema.pre('validate', function normalizeLegacySurveyNotes(next) {
+  this.set('notes', coerceSurveyNotes(getRawSurveyNotes(this)));
+  next();
 });
 
 const Survey = mongoose.model('Survey', surveySchema);
