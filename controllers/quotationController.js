@@ -180,7 +180,7 @@ function buildSurveyQuotationsList(surveys, customerMap) {
       customerId: survey.customer_id,
       customerName: getCustomerDisplayName(customer),
       survey_id: survey._id,
-      surveyName: survey.surveyName || '',
+      surveyName: (survey.surveyName || survey.areaName || '').trim(),
       quotationStatus: survey.quotationStatus || 'pending',
       quotationApprovedAt: survey.quotationApprovedAt || null,
       quotationApprovedBy: survey.quotationApprovedBy || null,
@@ -304,7 +304,7 @@ async function fetchSurveyQuotationsList(req) {
 
   const surveys = await Survey.find(surveyFilter)
     .select(
-      'customer_id areaName status generateQuotation uploadSignedQuotation quotationStatus quotationApprovedBy quotationApprovedAt confirmDate'
+      'customer_id surveyName areaName status generateQuotation uploadSignedQuotation quotationStatus quotationApprovedBy quotationApprovedAt confirmDate'
     )
     .sort({ updatedAt: -1 })
     .lean();
@@ -318,7 +318,6 @@ async function fetchSurveyQuotationsList(req) {
       .lean();
     customerMap = new Map(customers.map((c) => [c._id.toString(), c]));
   }
-
   const surveyQuotations = buildSurveyQuotationsList(surveys, customerMap);
 
   return {
