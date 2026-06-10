@@ -125,30 +125,74 @@ const validateAreasForCustomer = async (areas, customerId) => {
     return validateAreaProducts(areas, category);
 };
 
+const parseSurveyUploadField = (fieldname) => {
+    const field = String(fieldname || '').trim();
+
+    const areaImagesMatch = field.match(/^area_images_(\d+)/i);
+    if (areaImagesMatch) {
+        return { type: 'area', areaIdx: Number(areaImagesMatch[1], 10) };
+    }
+
+    const areaFixtureMatch = field.match(/^area_(\d+)_fixture_(\d+)/i);
+    if (areaFixtureMatch) {
+        return {
+            type: 'fixture',
+            areaIdx: Number(areaFixtureMatch[1], 10),
+            fixtureIdx: Number(areaFixtureMatch[2], 10),
+        };
+    }
+
+    const legacyFixtureMatch = field.match(/^area_(\d+)_fixture_images_(\d+)/i);
+    if (legacyFixtureMatch) {
+        return {
+            type: 'fixture',
+            areaIdx: Number(legacyFixtureMatch[1], 10),
+            fixtureIdx: Number(legacyFixtureMatch[2], 10),
+        };
+    }
+
+    const simpleFixtureMatch = field.match(/^area_fixture_(\d+)/i);
+    if (simpleFixtureMatch) {
+        return {
+            type: 'fixture',
+            areaIdx: 0,
+            fixtureIdx: Number(simpleFixtureMatch[1], 10),
+        };
+    }
+
+    return null;
+};
+
 const buildAreasWithImages = async (areasInput, files) => {
     const areas = parseAreasInput(areasInput);
     if (areas === null) return null;
 
-    const filesByField = {};
+    const areaImagesByIdx = {};
+    const fixtureImagesByKey = {};
+
     for (const file of files || []) {
-        if (
-            /^area_images_\d+$/.test(file.fieldname) ||
-            /^area_\d+_fixture_images_\d+$/.test(file.fieldname)
-        ) {
-            if (!filesByField[file.fieldname]) filesByField[file.fieldname] = [];
-            filesByField[file.fieldname].push(file);
+        const parsed = parseSurveyUploadField(file.fieldname);
+        if (!parsed) continue;
+
+        if (parsed.type === 'area') {
+            if (!areaImagesByIdx[parsed.areaIdx]) areaImagesByIdx[parsed.areaIdx] = [];
+            areaImagesByIdx[parsed.areaIdx].push(file);
+            continue;
         }
+
+        const fixtureKey = `${parsed.areaIdx}_${parsed.fixtureIdx}`;
+        if (!fixtureImagesByKey[fixtureKey]) fixtureImagesByKey[fixtureKey] = [];
+        fixtureImagesByKey[fixtureKey].push(file);
     }
 
     for (let areaIdx = 0; areaIdx < areas.length; areaIdx++) {
-        const areaImageFiles = filesByField[`area_images_${areaIdx}`] || [];
-        areas[areaIdx].images = await processUploadedImages(areaImageFiles);
+        areas[areaIdx].images = await processUploadedImages(areaImagesByIdx[areaIdx] || []);
 
         for (let fixtureIdx = 0; fixtureIdx < (areas[areaIdx].fixtures || []).length; fixtureIdx++) {
-            const fixtureImageFiles =
-                filesByField[`area_${areaIdx}_fixture_images_${fixtureIdx}`] || [];
-            areas[areaIdx].fixtures[fixtureIdx].images =
-                await processUploadedImages(fixtureImageFiles);
+            const fixtureKey = `${areaIdx}_${fixtureIdx}`;
+            areas[areaIdx].fixtures[fixtureIdx].images = await processUploadedImages(
+                fixtureImagesByKey[fixtureKey] || []
+            );
         }
     }
 

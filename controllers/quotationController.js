@@ -18,7 +18,6 @@ const {
   buildUploadSignedQuotationRecord,
   getGenerateQuotationsForSurvey,
   getUploadSignedQuotationsForSurvey,
-  hasUploadSignedQuotationForSurvey,
   formatQuotationListForResponse,
   formatQuotationListWithUserMap,
   loadUsersMap,
@@ -383,10 +382,12 @@ exports.createQuotation = async (req, res) => {
     const primaryContact = (customer.contactInfo || [])[0] || {};
     const salesPerson = customer.user_id || {};
     const { serviceAddress, billingAddress } = getQuotationAddresses(customer);
+    const quotationNumber = await generateUniqueQuotationNumber();
 
     const pdfData = {
       company: getCompanyInfo(),
       generatedDate: new Date(),
+      quotationNumber,
       serviceAddress,
       billingAddress,
       salesPerson: {
@@ -409,8 +410,6 @@ exports.createQuotation = async (req, res) => {
     const generator = req.user?.id
       ? await User.findById(req.user.id).select('fullName email').lean()
       : null;
-
-    const quotationNumber = await generateUniqueQuotationNumber();
 
     const quotationRecord = buildGenerateQuotationRecord({
       customer_id: customerId,
@@ -577,10 +576,7 @@ exports.approveQuotation = async (req, res) => {
       }
     }
 
-    // const uploadedQuotations = getUploadSignedQuotationsForSurvey(survey, customer);
-    // if (!hasUploadSignedQuotationForSurvey(survey, customer)) {
-    //   return res.status(400).json({ message: 'No uploaded quotation files to approve for this survey.' });
-    // }
+    const uploadedQuotations = getUploadSignedQuotationsForSurvey(survey, customer);
 
     if (survey.quotationStatus === 'approved') {
       return res.status(400).json({ message: 'Quotation is already approved for this survey.' });
@@ -599,11 +595,16 @@ exports.approveQuotation = async (req, res) => {
       { new: true }
     );
 
+    const uploadNote =
+      uploadedQuotations.length > 0
+        ? `Approved ${uploadedQuotations.length} uploaded quotation file(s) for survey.`
+        : 'Quotation approved for survey.';
+
     await recordQuotationCustomerActivity(
       customer._id,
       approverId,
       'Quotation Approved',
-      `Approved ${uploadedQuotations.length} uploaded quotation file(s) for survey.`
+      uploadNote
     );
 
     await createLog(

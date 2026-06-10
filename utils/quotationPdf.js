@@ -282,8 +282,17 @@ async function generatePdfBuffer(data) {
       width: pageWidth - 40,
       align: 'right',
     });
+    if (data.quotationNumber) {
+      doc.fontSize(10).font('Helvetica-Bold').text(
+        `Quotation #: ${data.quotationNumber}`,
+        0,
+        titleY + 36,
+        { width: pageWidth - 40, align: 'right' }
+      );
+    }
 
-    let y = Math.max(130, leftHeaderBottom + 16);
+    const rightHeaderBottom = data.quotationNumber ? titleY + 50 : titleY + 34;
+    let y = Math.max(130, leftHeaderBottom + 16, rightHeaderBottom);
 
     function drawLabelBox(x, boxWidth, label, lines) {
       doc.fillColor(ORANGE).fontSize(8).font('Helvetica-Bold').text(label, x, y);
