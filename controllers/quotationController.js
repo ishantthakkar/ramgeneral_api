@@ -180,7 +180,7 @@ function buildSurveyQuotationsList(surveys, customerMap) {
       customerId: survey.customer_id,
       customerName: getCustomerDisplayName(customer),
       survey_id: survey._id,
-      surveyName: survey.areaName || '',
+      surveyName: survey.surveyName || '',
       quotationStatus: survey.quotationStatus || 'pending',
       quotationApprovedAt: survey.quotationApprovedAt || null,
       quotationApprovedBy: survey.quotationApprovedBy || null,
