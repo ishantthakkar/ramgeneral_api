@@ -53,7 +53,13 @@ const surveySchema = new mongoose.Schema({
       fixtures: [fixtureSchema],
     },
   ],
-  notes: { type: String, trim: true, default: '' },
+  notes: [
+    {
+      title: { type: String, trim: true, default: '' },
+      note: { type: String, trim: true, required: true },
+      createdAt: { type: Date, default: Date.now },
+    },
+  ],
   markAsCompleted: { type: Boolean, default: false },
   verifyImages: [{ type: String, trim: true }],
   verifyQty: { type: Number, default: 0 },

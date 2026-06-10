@@ -887,6 +887,8 @@ const buildCustomerPayloadFromLead = (lead, userId) => {
     company: leadObj.company || '',
     uploadElectricityBill: normalizeBillFilenames(leadObj.uploadElectricityBill),
     mobileNumber: leadObj.mobileNumber || '',
+    phone: leadObj.phone || '',
+    billDate: leadObj.billDate || null,
     email: leadObj.email || '',
     leadSource: leadObj.leadSource || '',
     address: {

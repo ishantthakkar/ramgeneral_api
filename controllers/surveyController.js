@@ -7,6 +7,7 @@ const User = require('../models/User');
 const Admin = require('../models/Admin');
 const Product = require('../models/Product');
 const { createLog } = require('../utils/logger');
+const { normalizeNotes } = require('../utils/subdocumentHelpers');
 const {
     resolveProductCategory,
     getElectricCompanyForCustomer,
@@ -27,6 +28,39 @@ const tryParseJson = (value) => {
     } catch {
         return value;
     }
+};
+
+const coerceSurveyNotes = (notes) => {
+    if (notes === undefined || notes === null || notes === '') return [];
+
+    if (typeof notes === 'string') {
+        return normalizeNotes(notes).filter((item) => item.note);
+    }
+
+    if (Array.isArray(notes)) {
+        return notes
+            .map((item) => {
+                if (typeof item === 'string') {
+                    const noteText = item.trim();
+                    return noteText
+                        ? { title: '', note: noteText, createdAt: new Date() }
+                        : null;
+                }
+                if (item && typeof item === 'object') {
+                    const noteText = (item.note ?? '').toString().trim();
+                    if (!noteText) return null;
+                    return {
+                        title: (item.title ?? '').toString().trim(),
+                        note: noteText,
+                        createdAt: item.createdAt ? new Date(item.createdAt) : new Date(),
+                    };
+                }
+                return null;
+            })
+            .filter(Boolean);
+    }
+
+    return normalizeNotes(notes).filter((item) => item.note);
 };
 
 const toSurveyImageUrl = (filename) =>
@@ -285,7 +319,13 @@ exports.createSurvey = async (req, res) => {
         if (surveyName !== undefined) survey.surveyName = surveyName;
         if (areaName !== undefined) survey.areaName = areaName;
         if (note !== undefined) survey.note = note;
-        if (notes !== undefined) survey.notes = notes;
+        if (notes !== undefined) {
+            const processedNotes = normalizeNotes(notes).filter((item) => item.note);
+            if (processedNotes.length) {
+                survey.notes = [...coerceSurveyNotes(survey.notes), ...processedNotes];
+                survey.markModified('notes');
+            }
+        }
         if (surveyDate) survey.surveyDate = new Date(surveyDate);
         survey.markAsCompleted = completionFlag;
 
@@ -473,25 +513,28 @@ exports.updateSurvey = async (req, res) => {
     try {
         const { id } = req.params;
         const { surveyName, areaName, note, notes, status, surveyDate, markAsCompleted, MarkasCompleted } = req.body;
-        const updateData = {};
 
-        if (surveyName !== undefined) updateData.surveyName = surveyName;
-        if (areaName !== undefined) updateData.areaName = areaName;
-        if (note !== undefined) updateData.note = note;
-        if (notes !== undefined) updateData.notes = notes;
-        if (status) updateData.status = status;
-        if (surveyDate) updateData.surveyDate = new Date(surveyDate);
-        if (markAsCompleted !== undefined) updateData.markAsCompleted = markAsCompleted;
-        if (MarkasCompleted !== undefined) updateData.markAsCompleted = MarkasCompleted;
-
-        const updatedSurvey = await Survey.findByIdAndUpdate(id, updateData, {
-            new: true,
-            runValidators: true,
-        });
-
-        if (!updatedSurvey) {
+        const survey = await Survey.findById(id);
+        if (!survey) {
             return res.status(404).json({ message: 'Survey not found.' });
         }
+
+        if (surveyName !== undefined) survey.surveyName = surveyName;
+        if (areaName !== undefined) survey.areaName = areaName;
+        if (note !== undefined) survey.note = note;
+        if (notes !== undefined) {
+            const processedNotes = normalizeNotes(notes).filter((item) => item.note);
+            if (processedNotes.length) {
+                survey.notes = [...coerceSurveyNotes(survey.notes), ...processedNotes];
+                survey.markModified('notes');
+            }
+        }
+        if (status) survey.status = status;
+        if (surveyDate) survey.surveyDate = new Date(surveyDate);
+        if (markAsCompleted !== undefined) survey.markAsCompleted = markAsCompleted;
+        if (MarkasCompleted !== undefined) survey.markAsCompleted = MarkasCompleted;
+
+        const updatedSurvey = await survey.save();
 
         const surveyResponse = await formatSurveyResponse(updatedSurvey.toObject());
 
@@ -501,6 +544,65 @@ exports.updateSurvey = async (req, res) => {
     } catch (error) {
         console.error('Update survey error:', error);
         return res.status(500).json({ message: 'Server error updating survey.' });
+    }
+};
+
+exports.updateSurveyNotes = async (req, res) => {
+    try {
+        const { survey_id, title, note, notes } = req.body;
+
+        if (!survey_id) {
+            return res.status(400).json({ message: 'survey_id is required.' });
+        }
+
+        let processedNotes = [];
+        if (note !== undefined && note !== null) {
+            const noteText = String(note).trim();
+            if (!noteText) {
+                return res.status(400).json({ message: 'note is required.' });
+            }
+            processedNotes = [
+                {
+                    title: (title ?? '').toString().trim(),
+                    note: noteText,
+                    createdAt: new Date(),
+                },
+            ];
+        } else if (notes !== undefined && notes !== null) {
+            processedNotes = normalizeNotes(notes).filter((item) => item.note);
+            if (!processedNotes.length) {
+                return res.status(400).json({ message: 'note is required.' });
+            }
+        } else {
+            return res.status(400).json({ message: 'note is required.' });
+        }
+
+        const survey = await Survey.findById(survey_id);
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found.' });
+        }
+
+        survey.notes = [...coerceSurveyNotes(survey.notes), ...processedNotes];
+        survey.markModified('notes');
+        await survey.save();
+
+        const surveyResponse = await formatSurveyResponse(survey.toObject());
+
+        await createLog(
+            'Survey Notes Updated',
+            req.user.id,
+            (await Customer.findById(survey.customer_id))?.name || 'Unknown',
+            'Survey',
+            survey._id
+        );
+
+        return res.status(200).json({
+            survey: surveyResponse,
+            message: 'Survey notes updated successfully.',
+        });
+    } catch (error) {
+        console.error('Update survey notes error:', error);
+        return res.status(500).json({ message: 'Server error updating survey notes.' });
     }
 };
 

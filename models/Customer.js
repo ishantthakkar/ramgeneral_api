@@ -66,6 +66,14 @@ const customerSchema = new mongoose.Schema({
     required: false,
     trim: true,
   },
+  phone: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  billDate: {
+    type: Date,
+  },
   email: {
     type: String,
     trim: true,

@@ -238,6 +238,8 @@ exports.listConvertedCustomers = async (req, res) => {
         company: customer.company,
         email: customer.email,
         mobileNumber: customer.mobileNumber,
+        phone: customer.phone || '',
+        billDate: customer.billDate || null,
         leadSource: customer.leadSource,
         createdDate: customer.createdAt,
         convertedDate: customer.convertedDate,
