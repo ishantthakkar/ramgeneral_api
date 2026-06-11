@@ -1,6 +1,6 @@
 const Product = require('../models/Product');
 const { createLog } = require('../utils/logger');
-const { CATEGORIES } = require('../models/Product');
+const { CATEGORIES, FIXTURE_TYPES } = require('../models/Product');
 
 function formatProduct(doc) {
   const p = doc.toObject ? doc.toObject() : doc;
@@ -11,9 +11,33 @@ function formatProduct(doc) {
     salesPrice: p.salesPrice ?? p.price ?? 0,
     commission: p.commission ?? 0,
     installationCost: p.installationCost ?? 0,
+    productType: p.productType || 'Proposed Fixture',
+    category: p.category || null,
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   };
+}
+
+function resolveFixtureType(value) {
+  const requested = (value ?? '').toString().trim();
+  if (!requested) return null;
+  return (
+    FIXTURE_TYPES.find((type) => type.toLowerCase() === requested.toLowerCase()) || null
+  );
+}
+
+function buildFixtureTypeFilter(fixtureType) {
+  if (fixtureType === 'Proposed Fixture') {
+    return {
+      $or: [
+        { productType: 'Proposed Fixture' },
+        { productType: { $exists: false } },
+        { productType: null },
+        { productType: '' },
+      ],
+    };
+  }
+  return { productType: fixtureType };
 }
 
 function parseMoney(value, fieldName) {
@@ -28,16 +52,25 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function buildSkuFilter(sku) {
+function buildSkuFilter(sku, productType = null) {
   const trimmedSku = sku.trim();
-  return { sku: { $regex: new RegExp(`^${escapeRegex(trimmedSku)}$`, 'i') } };
+  const skuFilter = { sku: { $regex: new RegExp(`^${escapeRegex(trimmedSku)}$`, 'i') } };
+  if (!productType) return skuFilter;
+  return { $and: [skuFilter, buildFixtureTypeFilter(productType)] };
 }
 
 function parseProductPayload(body) {
-  const { sku, name, salesPrice, commission, installationCost, price } = body;
+  const { sku, name, salesPrice, commission, installationCost, price, productType } = body;
 
   if (!sku || !name) {
     return { error: 'SKU and name are required.' };
+  }
+
+  const resolvedFixtureType = resolveFixtureType(productType);
+  if (!resolvedFixtureType) {
+    return {
+      error: 'Valid productType is required. Use "Proposed Fixture" or "Existing Fixture".',
+    };
   }
 
   const salesPriceResult = parseMoney(
@@ -65,12 +98,13 @@ function parseProductPayload(body) {
       salesPrice: salesPriceResult.value,
       commission: commissionResult.value,
       installationCost: installationCostResult.value,
+      productType: resolvedFixtureType,
     },
   };
 }
 
-async function findProductBySku(sku, excludeId = null) {
-  const filter = buildSkuFilter(sku);
+async function findProductBySku(sku, excludeId = null, productType = null) {
+  const filter = buildSkuFilter(sku, productType);
   if (excludeId) {
     filter._id = { $ne: excludeId };
   }
@@ -87,20 +121,34 @@ function applyProductFields(product, payload) {
 
 exports.listProducts = async (req, res) => {
   try {
-    const { type, category } = req.query;
+    const { productType, type, category } = req.query;
 
     const filter = {};
-    const requestedType = (type ?? category ?? '').toString().trim();
+    const requestedFixtureType = resolveFixtureType(productType);
 
-    if (requestedType) {
+    if (productType !== undefined && productType !== null && String(productType).trim() !== '') {
+      if (!requestedFixtureType) {
+        return res.status(400).json({
+          message: 'Invalid productType.',
+          allowedTypes: FIXTURE_TYPES,
+        });
+      }
+      Object.assign(filter, buildFixtureTypeFilter(requestedFixtureType));
+    }
+
+    const requestedCategory = (category ?? (requestedFixtureType ? '' : type) ?? '')
+      .toString()
+      .trim();
+
+    if (requestedCategory) {
       const matchedCategory =
-        CATEGORIES.find((c) => c.toLowerCase() === requestedType.toLowerCase()) ||
+        CATEGORIES.find((c) => c.toLowerCase() === requestedCategory.toLowerCase()) ||
         null;
 
       if (!matchedCategory) {
         return res.status(400).json({
-          message: 'Invalid product type.',
-          allowedTypes: CATEGORIES,
+          message: 'Invalid product category.',
+          allowedCategories: CATEGORIES,
         });
       }
 
@@ -128,6 +176,17 @@ exports.createProduct = async (req, res) => {
       return res.status(400).json({ message: parsed.error });
     }
 
+    const existingSku = await findProductBySku(
+      parsed.value.sku,
+      null,
+      parsed.value.productType
+    );
+    if (existingSku) {
+      return res.status(400).json({
+        message: 'A product with this SKU already exists for this fixture type.',
+      });
+    }
+
     const product = await Product.create(parsed.value);
 
     if (req.user?.id) {
@@ -142,8 +201,7 @@ exports.createProduct = async (req, res) => {
   } catch (error) {
     if (error.code === 11000) {
       return res.status(400).json({
-        message:
-          'Could not create product because SKU is still unique in the database. Restart the API server to apply the latest product index settings.',
+        message: 'A product with this SKU already exists for this fixture type.',
       });
     }
     console.error('Create product error:', error);
@@ -165,7 +223,11 @@ exports.updateProduct = async (req, res) => {
       return res.status(404).json({ message: 'Product not found.' });
     }
 
-    const existingSku = await findProductBySku(parsed.value.sku, id);
+    const existingSku = await findProductBySku(
+      parsed.value.sku,
+      id,
+      product.productType || parsed.value.productType
+    );
     if (existingSku) {
       return res.status(400).json({ message: 'A product with this SKU already exists.' });
     }

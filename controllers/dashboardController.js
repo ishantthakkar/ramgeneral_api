@@ -7,7 +7,13 @@ const ActivityLog = require('../models/ActivityLog');
 const { isSalesManagerRole, isSalesPersonRole } = require('../constants/userRoles');
 const { surveyQuotationDataFilter } = require('../utils/quotationHelpers');
 
-const WORKFLOW_SURVEY_STATUSES = ['completed', 'reopened', 'reopen', 'pending_edit_approval'];
+const WORKFLOW_SURVEY_STATUSES = [
+  'submitted',
+  'completed',
+  'reopened',
+  'reopen',
+  'pending_edit_approval',
+];
 
 async function countScopedSurveyQuotations(userId, admin) {
   const surveyFilter = surveyQuotationDataFilter();
@@ -90,7 +96,10 @@ exports.getWorkflowStats = async (req, res) => {
 
     const surveyFilter = {
       leadId: { $ne: null },
-      status: { $in: WORKFLOW_SURVEY_STATUSES },
+      $or: [
+        { verifyStatus: 'verified' },
+        { status: { $in: WORKFLOW_SURVEY_STATUSES } },
+      ],
     };
 
     if (!admin) {
