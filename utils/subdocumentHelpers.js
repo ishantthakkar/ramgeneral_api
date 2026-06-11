@@ -1,3 +1,32 @@
+const API_BASE_URL = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
+
+const toBusinessCardUrl = (filename) => {
+  if (!filename) return '';
+  const value = String(filename).trim();
+  if (!value) return '';
+  if (value.startsWith('http')) return value;
+  return `${API_BASE_URL}/uploads/leads/business-cards/${value.replace(/^\//, '')}`;
+};
+
+const formatContactForResponse = (contact) => {
+  const plain = contact?.toObject ? contact.toObject() : { ...contact };
+  const businessCardFilenames = normalizeBusinessCardFilenames(
+    plain.businessCard ?? plain.bussinessCard
+  );
+
+  return {
+    _id: plain._id,
+    position: plain.position || '',
+    department: plain.department || '',
+    name: plain.name || '',
+    phone: plain.phone || '',
+    mobile: plain.mobile || '',
+    email: plain.email || '',
+    businessCard: businessCardFilenames.map(toBusinessCardUrl).filter(Boolean),
+    createdAt: plain.createdAt,
+  };
+};
+
 const tryParseJson = (value) => {
   if (typeof value !== 'string') return value;
   const trimmed = value.trim();
@@ -230,6 +259,8 @@ const upsertLeadContacts = (
   return { contactInfo: result, saved };
 };
 
+const upsertContactInfo = upsertLeadContacts;
+
 const attachBusinessCardsToContactInfo = (contactInfo, uploadsByIdx = {}) => {
   if (!Array.isArray(contactInfo)) return contactInfo;
   return contactInfo.map((contact, idx) => {
@@ -354,5 +385,8 @@ module.exports = {
   attachBusinessCardsToContactInfo,
   appendBusinessCardsToContactInfo,
   upsertLeadContacts,
+  upsertContactInfo,
+  toBusinessCardUrl,
+  formatContactForResponse,
   resolveNewBillFilenames,
 };

@@ -49,6 +49,34 @@ const billStorage = multer.diskStorage({
     },
 });
 
+const contactBusinessCardStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const uploadPath = path.join(__dirname, '../uploads/leads/business-cards');
+        fs.mkdirSync(uploadPath, { recursive: true });
+        cb(null, uploadPath);
+    },
+    filename: (req, file, cb) => {
+        const timestamp = Date.now();
+        const unique = Math.round(Math.random() * 1e9);
+        const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+        cb(null, `${timestamp}-${unique}-${safeName}`);
+    },
+});
+
+const uploadContactBusinessCards = multer({
+    storage: contactBusinessCardStorage,
+    fileFilter: (req, file, cb) => {
+        if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+            return cb(new Error('Contact business card uploads must be image files.'), false);
+        }
+        cb(null, true);
+    },
+    limits: {
+        fileSize: 10 * 1024 * 1024,
+        files: 20,
+    },
+});
+
 const uploadElectricityBill = multer({
     storage: billStorage,
     fileFilter: (req, file, cb) => {
@@ -121,6 +149,13 @@ router.post(
     quotationController.uploadQuotation
 );
 router.post('/customers/reassign-salesperson', verifyToken, customerController.reassignSalesPerson);
+router.get('/customers/:id/contacts', verifyToken, customerController.getCustomerContacts);
+router.post(
+    '/customers/:id/contacts',
+    verifyToken,
+    uploadContactBusinessCards.any(),
+    customerController.saveCustomerContacts
+);
 router.post(
     '/customers/:id',
     verifyToken,

@@ -17,25 +17,16 @@ const {
 } = require('../constants/leadSources');
 const {
   normalizeNotes,
-  normalizeBusinessCardFilenames,
   attachBusinessCardsToContactInfo,
   appendBusinessCardsToContactInfo,
   resolveContactBusinessCardUploads,
   resolveStandaloneBusinessCardUploads,
   parseContactInput,
-  upsertLeadContacts,
+  upsertContactInfo,
+  formatContactForResponse,
 } = require('../utils/subdocumentHelpers');
 
 const ALLOWED_STATUSES = ['New', 'Assigned', 'In Progress', 'Lost Leads', 'Converted To Customer'];
-const API_BASE_URL = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
-
-const toBusinessCardUrl = (filename) => {
-  if (!filename) return '';
-  const value = String(filename).trim();
-  if (!value) return '';
-  if (value.startsWith('http')) return value;
-  return `${API_BASE_URL}/uploads/leads/business-cards/${value.replace(/^\//, '')}`;
-};
 
 const resolveSalesPerson = async (salesPersonId) => {
   if (!salesPersonId || !mongoose.Types.ObjectId.isValid(salesPersonId)) {
@@ -116,7 +107,7 @@ const parseBillDate = (value) => {
 const formatLeadResponse = (leadObj) => {
   leadObj.uploadElectricityBill = normalizeBillFilenames(leadObj.uploadElectricityBill);
   if (Array.isArray(leadObj.contactInfo)) {
-    leadObj.contactInfo = leadObj.contactInfo.map(formatLeadContact);
+    leadObj.contactInfo = leadObj.contactInfo.map(formatContactForResponse);
   }
   if (leadObj.leadSource) {
     leadObj.leadSourceName = getLeadSourceName(leadObj.leadSource);
@@ -306,24 +297,6 @@ function formatLeadActivity(activity) {
     date: plain.date || plain.createdAt || null,
     time: plain.time || plain.timeSlot || '',
     note: plain.note || plain.notes || plain.outcome || '',
-    createdAt: plain.createdAt,
-  };
-}
-
-function formatLeadContact(contact) {
-  const plain = contact?.toObject ? contact.toObject() : { ...contact };
-  const businessCardFilenames = normalizeBusinessCardFilenames(
-    plain.businessCard ?? plain.bussinessCard
-  );
-  return {
-    _id: plain._id,
-    position: plain.position || '',
-    department: plain.department || '',
-    name: plain.name || '',
-    phone: plain.phone || '',
-    mobile: plain.mobile || '',
-    email: plain.email || '',
-    businessCard: businessCardFilenames.map(toBusinessCardUrl).filter(Boolean),
     createdAt: plain.createdAt,
   };
 }
@@ -661,7 +634,7 @@ exports.getLeadContacts = async (req, res) => {
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    const contacts = (lead.contactInfo || []).map(formatLeadContact);
+    const contacts = (lead.contactInfo || []).map(formatContactForResponse);
 
     return res.status(200).json({
       leadId: id,
@@ -706,7 +679,7 @@ exports.saveLeadContacts = async (req, res) => {
     let contactInfo;
     let saved;
     try {
-      ({ contactInfo, saved } = upsertLeadContacts(
+      ({ contactInfo, saved } = upsertContactInfo(
         lead.contactInfo,
         incomingContacts,
         uploadsByIdx,
@@ -725,7 +698,7 @@ exports.saveLeadContacts = async (req, res) => {
     await lead.save();
 
     const results = saved.map((contact) => ({
-      ...formatLeadContact(contact),
+      ...formatContactForResponse(contact),
       action: contact.action,
     }));
 
@@ -749,7 +722,7 @@ exports.saveLeadContacts = async (req, res) => {
             ? 'Lead contact created successfully.'
             : 'Lead contact updated successfully.',
       contacts: results,
-      contactInfo: lead.contactInfo.map(formatLeadContact),
+      contactInfo: lead.contactInfo.map(formatContactForResponse),
     });
   } catch (error) {
     console.error('Save lead contacts error:', error);
@@ -1011,7 +984,7 @@ const mapLeadToSummary = (lead) => ({
   leadSource: lead.leadSource,
   leadSourceName: getLeadSourceName(lead.leadSource),
   addresses: lead.addresses || [],
-  contactInfo: (lead.contactInfo || []).map(formatLeadContact),
+  contactInfo: (lead.contactInfo || []).map(formatContactForResponse),
   street: lead.street,
   city: lead.city,
   state: lead.state,

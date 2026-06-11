@@ -14,6 +14,11 @@ const {
   normalizeNotes,
   normalizeBillFilenames,
   resolveNewBillFilenames,
+  parseContactInput,
+  resolveContactBusinessCardUploads,
+  resolveStandaloneBusinessCardUploads,
+  upsertContactInfo,
+  formatContactForResponse,
 } = require('../utils/subdocumentHelpers');
 const path = require('path');
 const fs = require('fs');
@@ -390,6 +395,10 @@ exports.getCustomer = async (req, res) => {
       });
     }
 
+    if (Array.isArray(updatedCustomer.contactInfo)) {
+      updatedCustomer.contactInfo = updatedCustomer.contactInfo.map(formatContactForResponse);
+    }
+
     return res.status(200).json({
       customer: updatedCustomer,
       surveys: surveysWithFullUrls,
@@ -400,6 +409,104 @@ exports.getCustomer = async (req, res) => {
   } catch (error) {
     console.error('Get customer error:', error);
     return res.status(500).json({ message: 'Server error fetching customer.' });
+  }
+};
+
+exports.getCustomerContacts = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Valid customer id is required.' });
+    }
+
+    const customer = await Customer.findById(id).select('contactInfo name');
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const contacts = (customer.contactInfo || []).map(formatContactForResponse);
+
+    return res.status(200).json({
+      customerId: id,
+      contacts,
+      total: contacts.length,
+    });
+  } catch (error) {
+    console.error('Get customer contacts error:', error);
+    return res.status(500).json({ message: 'Server error fetching customer contacts.' });
+  }
+};
+
+exports.saveCustomerContacts = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Valid customer id is required.' });
+    }
+
+    const incomingContacts = parseContactInput(req.body);
+    if (!incomingContacts || !incomingContacts.length) {
+      return res.status(400).json({
+        message:
+          'Contact data is required. Send contactInfo (array/object) or flat contact fields with optional id to update.',
+      });
+    }
+
+    const customer = await Customer.findById(id);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const uploadsByIdx = resolveContactBusinessCardUploads(req);
+    const standaloneUploads = resolveStandaloneBusinessCardUploads(req);
+
+    let contactInfo;
+    let saved;
+    try {
+      ({ contactInfo, saved } = upsertContactInfo(
+        customer.contactInfo,
+        incomingContacts,
+        uploadsByIdx,
+        standaloneUploads
+      ));
+    } catch (error) {
+      if (error.code === 'CONTACT_NOT_FOUND') {
+        return res.status(404).json({ message: error.message });
+      }
+      throw error;
+    }
+
+    customer.contactInfo = contactInfo;
+    customer.lastActivity = new Date();
+    customer.markModified('contactInfo');
+    await customer.save();
+
+    const results = saved.map((contact) => ({
+      ...formatContactForResponse(contact),
+      action: contact.action,
+    }));
+
+    const createdCount = results.filter((item) => item.action === 'created').length;
+    const updatedCount = results.filter((item) => item.action === 'updated').length;
+    const statusCode = results.length === 1 && createdCount === 1 ? 201 : 200;
+
+    await createLog('Customer Contact Saved', req.user.id, customer.name, 'Customer', customer._id);
+
+    return res.status(statusCode).json({
+      message:
+        createdCount && updatedCount
+          ? 'Customer contacts created and updated successfully.'
+          : createdCount
+            ? 'Customer contact created successfully.'
+            : 'Customer contact updated successfully.',
+      contacts: results,
+      contactInfo: customer.contactInfo.map(formatContactForResponse),
+    });
+  } catch (error) {
+    console.error('Save customer contacts error:', error);
+    return res.status(500).json({ message: 'Server error saving customer contacts.' });
   }
 };
 
