@@ -19,6 +19,9 @@ const {
   resolveStandaloneBusinessCardUploads,
   upsertContactInfo,
   formatContactForResponse,
+  parseAddressInput,
+  upsertAddresses,
+  formatAddressForResponse,
 } = require('../utils/subdocumentHelpers');
 const path = require('path');
 const fs = require('fs');
@@ -398,6 +401,9 @@ exports.getCustomer = async (req, res) => {
     if (Array.isArray(updatedCustomer.contactInfo)) {
       updatedCustomer.contactInfo = updatedCustomer.contactInfo.map(formatContactForResponse);
     }
+    if (Array.isArray(updatedCustomer.addresses)) {
+      updatedCustomer.addresses = updatedCustomer.addresses.map(formatAddressForResponse);
+    }
 
     return res.status(200).json({
       customer: updatedCustomer,
@@ -409,6 +415,100 @@ exports.getCustomer = async (req, res) => {
   } catch (error) {
     console.error('Get customer error:', error);
     return res.status(500).json({ message: 'Server error fetching customer.' });
+  }
+};
+
+exports.getCustomerAddresses = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Valid customer id is required.' });
+    }
+
+    const customer = await Customer.findById(id).select('addresses name');
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const addresses = (customer.addresses || []).map(formatAddressForResponse);
+
+    return res.status(200).json({
+      customerId: id,
+      addresses,
+      total: addresses.length,
+    });
+  } catch (error) {
+    console.error('Get customer addresses error:', error);
+    return res.status(500).json({ message: 'Server error fetching customer addresses.' });
+  }
+};
+
+exports.saveCustomerAddresses = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Valid customer id is required.' });
+    }
+
+    let incomingAddresses;
+    try {
+      incomingAddresses = parseAddressInput(req.body);
+    } catch (error) {
+      if (error.code === 'ADDRESS_ARRAY_NOT_ALLOWED') {
+        return res.status(400).json({ message: error.message });
+      }
+      throw error;
+    }
+
+    if (!incomingAddresses || !incomingAddresses.length) {
+      return res.status(400).json({
+        message:
+          'Address data is required. Send a single address object in addresses/address or flat address fields with optional id to update.',
+      });
+    }
+
+    const customer = await Customer.findById(id);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    let addresses;
+    let saved;
+    try {
+      ({ addresses, saved } = upsertAddresses(customer.addresses, incomingAddresses));
+    } catch (error) {
+      if (error.code === 'ADDRESS_NOT_FOUND') {
+        return res.status(404).json({ message: error.message });
+      }
+      throw error;
+    }
+
+    customer.addresses = addresses;
+    customer.lastActivity = new Date();
+    customer.markModified('addresses');
+    await customer.save();
+
+    const savedAddress = {
+      ...formatAddressForResponse(saved[0]),
+      action: saved[0].action,
+    };
+    const statusCode = savedAddress.action === 'created' ? 201 : 200;
+
+    await createLog('Customer Address Saved', req.user.id, customer.name, 'Customer', customer._id);
+
+    return res.status(statusCode).json({
+      message:
+        savedAddress.action === 'created'
+          ? 'Customer address created successfully.'
+          : 'Customer address updated successfully.',
+      address: savedAddress,
+      addresses: customer.addresses.map(formatAddressForResponse),
+    });
+  } catch (error) {
+    console.error('Save customer addresses error:', error);
+    return res.status(500).json({ message: 'Server error saving customer addresses.' });
   }
 };
 
@@ -446,11 +546,20 @@ exports.saveCustomerContacts = async (req, res) => {
       return res.status(400).json({ message: 'Valid customer id is required.' });
     }
 
-    const incomingContacts = parseContactInput(req.body);
+    let incomingContacts;
+    try {
+      incomingContacts = parseContactInput(req.body);
+    } catch (error) {
+      if (error.code === 'CONTACT_ARRAY_NOT_ALLOWED') {
+        return res.status(400).json({ message: error.message });
+      }
+      throw error;
+    }
+
     if (!incomingContacts || !incomingContacts.length) {
       return res.status(400).json({
         message:
-          'Contact data is required. Send contactInfo (array/object) or flat contact fields with optional id to update.',
+          'Contact data is required. Send a single contact object in contactInfo or flat contact fields with optional id to update.',
       });
     }
 
@@ -483,25 +592,20 @@ exports.saveCustomerContacts = async (req, res) => {
     customer.markModified('contactInfo');
     await customer.save();
 
-    const results = saved.map((contact) => ({
-      ...formatContactForResponse(contact),
-      action: contact.action,
-    }));
-
-    const createdCount = results.filter((item) => item.action === 'created').length;
-    const updatedCount = results.filter((item) => item.action === 'updated').length;
-    const statusCode = results.length === 1 && createdCount === 1 ? 201 : 200;
+    const savedContact = {
+      ...formatContactForResponse(saved[0]),
+      action: saved[0].action,
+    };
+    const statusCode = savedContact.action === 'created' ? 201 : 200;
 
     await createLog('Customer Contact Saved', req.user.id, customer.name, 'Customer', customer._id);
 
     return res.status(statusCode).json({
       message:
-        createdCount && updatedCount
-          ? 'Customer contacts created and updated successfully.'
-          : createdCount
-            ? 'Customer contact created successfully.'
-            : 'Customer contact updated successfully.',
-      contacts: results,
+        savedContact.action === 'created'
+          ? 'Customer contact created successfully.'
+          : 'Customer contact updated successfully.',
+      contact: savedContact,
       contactInfo: customer.contactInfo.map(formatContactForResponse),
     });
   } catch (error) {

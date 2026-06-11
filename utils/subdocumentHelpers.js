@@ -81,24 +81,116 @@ const mergeSubdocuments = (existing, incoming) => {
   return result;
 };
 
+const normalizeAddressEntry = (entry) => {
+  if (!entry || typeof entry !== 'object') return null;
+  const subdocId = getSubdocId(entry);
+  return {
+    ...(subdocId ? { id: subdocId } : {}),
+    title: (entry.title ?? entry.label ?? '').toString().trim(),
+    street: (entry.street ?? '').toString().trim(),
+    city: (entry.city ?? '').toString().trim(),
+    state: (entry.state ?? '').toString().trim(),
+    zip: (entry.zip ?? '').toString().trim(),
+    ...(entry.createdAt ? { createdAt: new Date(entry.createdAt) } : {}),
+  };
+};
+
 const normalizeAddresses = (addresses) => {
   if (addresses === undefined || addresses === null) return null;
   const parsed = tryParseJson(addresses);
   if (!Array.isArray(parsed)) return null;
-  return parsed
-    .filter(Boolean)
-    .map((a) => {
-      const subdocId = getSubdocId(a);
-      return {
-        ...(subdocId ? { id: subdocId } : {}),
-        title: (a.title ?? a.label ?? '').toString().trim(),
-        street: (a.street ?? '').toString().trim(),
-        city: (a.city ?? '').toString().trim(),
-        state: (a.state ?? '').toString().trim(),
-        zip: (a.zip ?? '').toString().trim(),
-        ...(a.createdAt ? { createdAt: new Date(a.createdAt) } : {}),
+  return parsed.map(normalizeAddressEntry).filter(Boolean);
+};
+
+const parseAddressInput = (body = {}) => {
+  const { addresses, address, id, _id, addressId } = body;
+
+  if (addresses !== undefined || address !== undefined) {
+    const parsed = tryParseJson(addresses ?? address);
+    if (Array.isArray(parsed)) {
+      const error = new Error('Send a single address object, not an array.');
+      error.code = 'ADDRESS_ARRAY_NOT_ALLOWED';
+      throw error;
+    }
+    if (parsed && typeof parsed === 'object') {
+      const one = normalizeAddressEntry(parsed);
+      return one ? [one] : [];
+    }
+    return null;
+  }
+
+  const hasAddressField =
+    id !== undefined ||
+    _id !== undefined ||
+    addressId !== undefined ||
+    ['title', 'label', 'street', 'city', 'state', 'zip'].some((field) => body[field] !== undefined);
+
+  if (!hasAddressField) return null;
+
+  const one = normalizeAddressEntry({
+    id: id ?? _id ?? addressId,
+    title: body.title ?? body.label,
+    street: body.street,
+    city: body.city,
+    state: body.state,
+    zip: body.zip,
+    createdAt: body.createdAt,
+  });
+
+  return one ? [one] : [];
+};
+
+const formatAddressForResponse = (address) => {
+  const plain = address?.toObject ? address.toObject() : { ...address };
+  return {
+    _id: plain._id,
+    title: plain.title || plain.label || '',
+    street: plain.street || '',
+    city: plain.city || '',
+    state: plain.state || '',
+    zip: plain.zip || '',
+    createdAt: plain.createdAt,
+  };
+};
+
+const upsertAddresses = (existingAddresses, incomingAddresses) => {
+  const result = toPlainSubdocs(existingAddresses);
+  const saved = [];
+
+  incomingAddresses.forEach((address) => {
+    const addressId = getSubdocId(address);
+    const { id, _id, ...fields } = address;
+
+    if (addressId) {
+      const index = result.findIndex(
+        (r) => String(r._id) === addressId || String(r.id) === addressId
+      );
+      if (index < 0) {
+        const error = new Error(`Address not found: ${addressId}`);
+        error.code = 'ADDRESS_NOT_FOUND';
+        error.addressId = addressId;
+        throw error;
+      }
+
+      result[index] = {
+        ...result[index],
+        ...fields,
+        _id: result[index]._id,
+        createdAt: result[index].createdAt || fields.createdAt || new Date(),
       };
-    });
+      saved.push({ ...result[index], action: 'updated' });
+      return;
+    }
+
+    const created = {
+      ...fields,
+      createdAt: fields.createdAt || new Date(),
+    };
+    result.push(created);
+    saved.push({ ...created, action: 'created' });
+  });
+
+  return { addresses: result, saved };
 };
 
 const normalizeBillFilenames = (value) => {
@@ -168,7 +260,9 @@ const parseContactInput = (body = {}) => {
   if (contactInfo !== undefined || contact_info !== undefined) {
     const parsed = tryParseJson(contactInfo ?? contact_info);
     if (Array.isArray(parsed)) {
-      return parsed.map(normalizeContactEntry).filter(Boolean);
+      const error = new Error('Send a single contact object, not an array.');
+      error.code = 'CONTACT_ARRAY_NOT_ALLOWED';
+      throw error;
     }
     if (parsed && typeof parsed === 'object') {
       const one = normalizeContactEntry(parsed);
@@ -372,6 +466,10 @@ module.exports = {
   tryParseJson,
   mergeSubdocuments,
   normalizeAddresses,
+  normalizeAddressEntry,
+  parseAddressInput,
+  formatAddressForResponse,
+  upsertAddresses,
   normalizeContactInfo,
   normalizeNotes,
   normalizeActivityLog,

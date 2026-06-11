@@ -83,6 +83,8 @@ router.get('/lead-sources', verifyToken, leadController.getLeadSources);
 router.get('/leads/sales-persons', verifyToken, leadController.listSalesPersons);
 router.get('/leads', verifyToken, leadController.listLeads);
 router.get('/leads/:id', verifyToken, leadController.getLead);
+router.get('/leads/:id/addresses', verifyToken, leadController.getLeadAddresses);
+router.post('/leads/:id/addresses', verifyToken, leadController.saveLeadAddresses);
 router.get('/leads/:id/contacts', verifyToken, leadController.getLeadContacts);
 router.post(
   '/leads/:id/contacts',

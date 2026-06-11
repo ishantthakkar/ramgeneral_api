@@ -24,6 +24,9 @@ const {
   parseContactInput,
   upsertContactInfo,
   formatContactForResponse,
+  parseAddressInput,
+  upsertAddresses,
+  formatAddressForResponse,
 } = require('../utils/subdocumentHelpers');
 
 const ALLOWED_STATUSES = ['New', 'Assigned', 'In Progress', 'Lost Leads', 'Converted To Customer'];
@@ -108,6 +111,9 @@ const formatLeadResponse = (leadObj) => {
   leadObj.uploadElectricityBill = normalizeBillFilenames(leadObj.uploadElectricityBill);
   if (Array.isArray(leadObj.contactInfo)) {
     leadObj.contactInfo = leadObj.contactInfo.map(formatContactForResponse);
+  }
+  if (Array.isArray(leadObj.addresses)) {
+    leadObj.addresses = leadObj.addresses.map(formatAddressForResponse);
   }
   if (leadObj.leadSource) {
     leadObj.leadSourceName = getLeadSourceName(leadObj.leadSource);
@@ -621,6 +627,111 @@ exports.addLeadNote = async (req, res) => {
   }
 };
 
+exports.getLeadAddresses = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Valid lead id is required.' });
+    }
+
+    const lead = await Lead.findById(id).select('addresses name leadName');
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    const addresses = (lead.addresses || []).map(formatAddressForResponse);
+
+    return res.status(200).json({
+      leadId: id,
+      addresses,
+      total: addresses.length,
+    });
+  } catch (error) {
+    console.error('Get lead addresses error:', error);
+    return res.status(500).json({ message: 'Server error fetching lead addresses.' });
+  }
+};
+
+exports.saveLeadAddresses = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Valid lead id is required.' });
+    }
+
+    let incomingAddresses;
+    try {
+      incomingAddresses = parseAddressInput(req.body);
+    } catch (error) {
+      if (error.code === 'ADDRESS_ARRAY_NOT_ALLOWED') {
+        return res.status(400).json({ message: error.message });
+      }
+      throw error;
+    }
+
+    if (!incomingAddresses || !incomingAddresses.length) {
+      return res.status(400).json({
+        message:
+          'Address data is required. Send a single address object in addresses/address or flat address fields with optional id to update.',
+      });
+    }
+
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+
+    const lead = await Lead.findById(id);
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    let addresses;
+    let saved;
+    try {
+      ({ addresses, saved } = upsertAddresses(lead.addresses, incomingAddresses));
+    } catch (error) {
+      if (error.code === 'ADDRESS_NOT_FOUND') {
+        return res.status(404).json({ message: error.message });
+      }
+      throw error;
+    }
+
+    lead.addresses = addresses;
+    lead.lastActivity = new Date();
+    lead.markModified('addresses');
+    await lead.save();
+
+    const savedAddress = {
+      ...formatAddressForResponse(saved[0]),
+      action: saved[0].action,
+    };
+    const statusCode = savedAddress.action === 'created' ? 201 : 200;
+
+    await createLog(
+      'Lead Address Saved',
+      req.user.id,
+      lead.name || lead.leadName || 'Lead',
+      'Lead',
+      lead._id
+    );
+
+    return res.status(statusCode).json({
+      message:
+        savedAddress.action === 'created'
+          ? 'Lead address created successfully.'
+          : 'Lead address updated successfully.',
+      address: savedAddress,
+      addresses: lead.addresses.map(formatAddressForResponse),
+    });
+  } catch (error) {
+    console.error('Save lead addresses error:', error);
+    return res.status(500).json({ message: 'Server error saving lead addresses.' });
+  }
+};
+
 exports.getLeadContacts = async (req, res) => {
   try {
     const { id } = req.params;
@@ -655,11 +766,20 @@ exports.saveLeadContacts = async (req, res) => {
       return res.status(400).json({ message: 'Valid lead id is required.' });
     }
 
-    const incomingContacts = parseContactInput(req.body);
+    let incomingContacts;
+    try {
+      incomingContacts = parseContactInput(req.body);
+    } catch (error) {
+      if (error.code === 'CONTACT_ARRAY_NOT_ALLOWED') {
+        return res.status(400).json({ message: error.message });
+      }
+      throw error;
+    }
+
     if (!incomingContacts || !incomingContacts.length) {
       return res.status(400).json({
         message:
-          'Contact data is required. Send contactInfo (array/object) or flat contact fields with optional id to update.',
+          'Contact data is required. Send a single contact object in contactInfo or flat contact fields with optional id to update.',
       });
     }
 
@@ -697,14 +817,11 @@ exports.saveLeadContacts = async (req, res) => {
     lead.markModified('contactInfo');
     await lead.save();
 
-    const results = saved.map((contact) => ({
-      ...formatContactForResponse(contact),
-      action: contact.action,
-    }));
-
-    const createdCount = results.filter((item) => item.action === 'created').length;
-    const updatedCount = results.filter((item) => item.action === 'updated').length;
-    const statusCode = results.length === 1 && createdCount === 1 ? 201 : 200;
+    const savedContact = {
+      ...formatContactForResponse(saved[0]),
+      action: saved[0].action,
+    };
+    const statusCode = savedContact.action === 'created' ? 201 : 200;
 
     await createLog(
       'Lead Contact Saved',
@@ -716,12 +833,10 @@ exports.saveLeadContacts = async (req, res) => {
 
     return res.status(statusCode).json({
       message:
-        createdCount && updatedCount
-          ? 'Lead contacts created and updated successfully.'
-          : createdCount
-            ? 'Lead contact created successfully.'
-            : 'Lead contact updated successfully.',
-      contacts: results,
+        savedContact.action === 'created'
+          ? 'Lead contact created successfully.'
+          : 'Lead contact updated successfully.',
+      contact: savedContact,
       contactInfo: lead.contactInfo.map(formatContactForResponse),
     });
   } catch (error) {
@@ -983,7 +1098,7 @@ const mapLeadToSummary = (lead) => ({
   email: lead.email,
   leadSource: lead.leadSource,
   leadSourceName: getLeadSourceName(lead.leadSource),
-  addresses: lead.addresses || [],
+  addresses: (lead.addresses || []).map(formatAddressForResponse),
   contactInfo: (lead.contactInfo || []).map(formatContactForResponse),
   street: lead.street,
   city: lead.city,
