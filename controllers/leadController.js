@@ -15,7 +15,12 @@ const {
   resolveLeadSourceCode,
   getLeadSourceName,
 } = require('../constants/leadSources');
-const { normalizeNotes } = require('../utils/subdocumentHelpers');
+const {
+  normalizeNotes,
+  attachBusinessCardsToContactInfo,
+  appendBusinessCardsToContactInfo,
+  resolveContactBusinessCardUploads,
+} = require('../utils/subdocumentHelpers');
 
 const ALLOWED_STATUSES = ['New', 'Assigned', 'In Progress', 'Lost Leads', 'Converted To Customer'];
 
@@ -137,9 +142,10 @@ async function getTeamMemberIds(managerId) {
 }
 
 const resolveNewBillFilenames = (req, uploadElectricityBill, upload_electricity_bill) => {
-  const fromFiles = (req.files && Array.isArray(req.files) ? req.files : []).map(
-    (f) => f.filename
-  );
+  const billFieldNames = new Set(['upload_electricity_bill', 'uploadElectricityBill']);
+  const fromFiles = (req.files && Array.isArray(req.files) ? req.files : [])
+    .filter((f) => billFieldNames.has(f.fieldname))
+    .map((f) => f.filename);
   const fromBody = [
     ...normalizeBillFilenames(uploadElectricityBill),
     ...normalizeBillFilenames(upload_electricity_bill),
@@ -227,6 +233,7 @@ const normalizeContactInfo = (contactInfo) => {
         phone: (c.phone ?? '').toString().trim(),
         mobile: (c.mobile ?? '').toString().trim(),
         email: (c.email ?? '').toString().trim().toLowerCase(),
+        businessCard: normalizeBillFilenames(c.businessCard ?? c.bussinessCard),
         ...(c.createdAt ? { createdAt: new Date(c.createdAt) } : {}),
       };
     });
@@ -354,6 +361,7 @@ exports.createLead = async (req, res) => {
     const hasContactInfoField = contactInfo !== undefined || contact_info !== undefined;
     const processedAddresses = normalizeAddresses(addresses ?? address);
     const processedContactInfo = normalizeContactInfo(contactInfo ?? contact_info);
+    const businessCardUploads = resolveContactBusinessCardUploads(req);
 
     const newBillFilenames = resolveNewBillFilenames(
       req,
@@ -420,6 +428,10 @@ exports.createLead = async (req, res) => {
 
       if (hasContactInfoField && processedContactInfo !== null) {
         lead.contactInfo = mergeSubdocuments(lead.contactInfo, processedContactInfo);
+        lead.contactInfo = appendBusinessCardsToContactInfo(lead.contactInfo, businessCardUploads);
+        lead.markModified('contactInfo');
+      } else if (Object.keys(businessCardUploads).length > 0) {
+        lead.contactInfo = appendBusinessCardsToContactInfo(lead.contactInfo, businessCardUploads);
         lead.markModified('contactInfo');
       }
 
@@ -501,7 +513,10 @@ exports.createLead = async (req, res) => {
         email: email ? email.toLowerCase() : '',
         leadSource: leadSourceCode,
         addresses: processedAddresses || [],
-        contactInfo: processedContactInfo || [],
+        contactInfo: attachBusinessCardsToContactInfo(
+          processedContactInfo || [],
+          businessCardUploads
+        ),
         street: street || '',
         city: city || '',
         state: state || '',

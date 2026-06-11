@@ -44,6 +44,7 @@ const customerSchema = new mongoose.Schema({
       phone: { type: String, trim: true, default: '' },
       mobile: { type: String, trim: true, default: '' },
       email: { type: String, trim: true, lowercase: true, default: '' },
+      businessCard: { type: [String], default: [] },
       createdAt: { type: Date, default: Date.now },
     },
   ],

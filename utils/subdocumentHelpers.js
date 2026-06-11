@@ -72,6 +72,67 @@ const normalizeAddresses = (addresses) => {
     });
 };
 
+const normalizeBillFilenames = (value) => {
+  if (!value) return [];
+  const parsed = tryParseJson(value);
+  if (Array.isArray(parsed)) {
+    return parsed.map((f) => String(f).trim()).filter(Boolean);
+  }
+  if (typeof parsed === 'string' && parsed.trim()) {
+    return [parsed.trim()];
+  }
+  return [];
+};
+
+const normalizeBusinessCardFilenames = (value) => normalizeBillFilenames(value);
+
+const parseContactBusinessCardField = (fieldname) => {
+  const field = String(fieldname || '').trim();
+  let match = field.match(/^contact_(?:business_card|bussiness_card)_(\d+)$/i);
+  if (match) return Number(match[1], 10);
+  match = field.match(/^contact_(\d+)_(?:business_card|bussiness_card)$/i);
+  if (match) return Number(match[1], 10);
+  return null;
+};
+
+const resolveContactBusinessCardUploads = (req) => {
+  const byContactIdx = {};
+  for (const file of req.files || []) {
+    const contactIdx = parseContactBusinessCardField(file.fieldname);
+    if (contactIdx === null) continue;
+    if (!byContactIdx[contactIdx]) byContactIdx[contactIdx] = [];
+    byContactIdx[contactIdx].push(file.filename);
+  }
+  return byContactIdx;
+};
+
+const attachBusinessCardsToContactInfo = (contactInfo, uploadsByIdx = {}) => {
+  if (!Array.isArray(contactInfo)) return contactInfo;
+  return contactInfo.map((contact, idx) => {
+    const uploaded = uploadsByIdx[idx] || [];
+    const fromJson = normalizeBusinessCardFilenames(
+      contact.businessCard ?? contact.bussinessCard
+    );
+    const businessCard = [...new Set([...fromJson, ...uploaded].filter(Boolean))];
+    return { ...contact, businessCard };
+  });
+};
+
+const appendBusinessCardsToContactInfo = (contactInfo, uploadsByIdx = {}) => {
+  if (!Array.isArray(contactInfo)) return contactInfo;
+  return contactInfo.map((contact, idx) => {
+    const uploaded = uploadsByIdx[idx] || [];
+    if (!uploaded.length) return contact;
+    const existing = normalizeBusinessCardFilenames(
+      contact.businessCard ?? contact.bussinessCard
+    );
+    return {
+      ...contact,
+      businessCard: [...new Set([...existing, ...uploaded].filter(Boolean))],
+    };
+  });
+};
+
 const normalizeContactInfo = (contactInfo) => {
   if (contactInfo === undefined || contactInfo === null) return null;
   const parsed = tryParseJson(contactInfo);
@@ -88,6 +149,7 @@ const normalizeContactInfo = (contactInfo) => {
         phone: (c.phone ?? '').toString().trim(),
         mobile: (c.mobile ?? '').toString().trim(),
         email: (c.email ?? '').toString().trim().toLowerCase(),
+        businessCard: normalizeBusinessCardFilenames(c.businessCard ?? c.bussinessCard),
         ...(c.createdAt ? { createdAt: new Date(c.createdAt) } : {}),
       };
     });
@@ -139,22 +201,11 @@ const normalizeActivityLog = (activityLog) => {
   }));
 };
 
-const normalizeBillFilenames = (value) => {
-  if (!value) return [];
-  const parsed = tryParseJson(value);
-  if (Array.isArray(parsed)) {
-    return parsed.map((f) => String(f).trim()).filter(Boolean);
-  }
-  if (typeof parsed === 'string' && parsed.trim()) {
-    return [parsed.trim()];
-  }
-  return [];
-};
-
 const resolveNewBillFilenames = (req, uploadElectricityBill, upload_electricity_bill) => {
-  const fromFiles = (req.files && Array.isArray(req.files) ? req.files : []).map(
-    (f) => f.filename
-  );
+  const billFieldNames = new Set(['upload_electricity_bill', 'uploadElectricityBill']);
+  const fromFiles = (req.files && Array.isArray(req.files) ? req.files : [])
+    .filter((f) => billFieldNames.has(f.fieldname))
+    .map((f) => f.filename);
   const fromBody = [
     ...normalizeBillFilenames(uploadElectricityBill),
     ...normalizeBillFilenames(upload_electricity_bill),
@@ -170,5 +221,10 @@ module.exports = {
   normalizeNotes,
   normalizeActivityLog,
   normalizeBillFilenames,
+  normalizeBusinessCardFilenames,
+  parseContactBusinessCardField,
+  resolveContactBusinessCardUploads,
+  attachBusinessCardsToContactInfo,
+  appendBusinessCardsToContactInfo,
   resolveNewBillFilenames,
 };

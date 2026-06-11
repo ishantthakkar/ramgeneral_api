@@ -8,9 +8,14 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-const storage = multer.diskStorage({
+const isContactBusinessCardField = (fieldname) =>
+  /^contact_(?:business_card|bussiness_card)_\d+$/i.test(fieldname) ||
+  /^contact_\d+_(?:business_card|bussiness_card)$/i.test(fieldname);
+
+const leadUploadStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadPath = path.join(__dirname, '../uploads/leads/bills');
+    const subdir = isContactBusinessCardField(file.fieldname) ? 'business-cards' : 'bills';
+    const uploadPath = path.join(__dirname, '../uploads/leads', subdir);
     fs.mkdirSync(uploadPath, { recursive: true });
     cb(null, uploadPath);
   },
@@ -22,19 +27,27 @@ const storage = multer.diskStorage({
   },
 });
 
-const uploadElectricityBill = multer({
-  storage,
+const uploadLeadFiles = multer({
+  storage: leadUploadStorage,
   fileFilter: (req, file, cb) => {
     const isImage = file.mimetype && file.mimetype.startsWith('image/');
     const isPdf = file.mimetype === 'application/pdf';
+
+    if (isContactBusinessCardField(file.fieldname)) {
+      if (!isImage) {
+        return cb(new Error('Contact business card uploads must be image files.'), false);
+      }
+      return cb(null, true);
+    }
+
     if (!isImage && !isPdf) {
-      return cb(new Error('Only image or PDF files are allowed.'), false);
+      return cb(new Error('Only image or PDF files are allowed for electricity bills.'), false);
     }
     cb(null, true);
   },
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB per file
-    files: 20,
+    files: 40,
   },
 });
 
@@ -49,7 +62,7 @@ router.post('/leads/:id/activities', verifyToken, leadController.addLeadActivity
 router.post(
   '/leads-create',
   verifyToken,
-  uploadElectricityBill.array('upload_electricity_bill', 20),
+  uploadLeadFiles.any(),
   leadController.createLead
 );
 router.post('/leads/:id/assign', verifyToken, leadController.assignLeadToSalesPerson);
