@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 
 const CATEGORIES = ['PSE&G', 'JCP&L', 'ATLANTIC CITY ENERGY'];
+const FIXTURE_TYPES = ['Proposed Fixture', 'Existing Fixture'];
 
 const productSchema = new mongoose.Schema(
   {
@@ -31,6 +32,12 @@ const productSchema = new mongoose.Schema(
       min: 0,
       default: 0,
     },
+    productType: {
+      type: String,
+      enum: FIXTURE_TYPES,
+      trim: true,
+      default: 'Proposed Fixture',
+    },
     category: {
       type: String,
       enum: CATEGORIES,
@@ -46,5 +53,8 @@ const productSchema = new mongoose.Schema(
 
 const Product = mongoose.model('Product', productSchema);
 
+productSchema.index({ sku: 1, productType: 1 }, { unique: true });
+
 module.exports = Product;
 module.exports.CATEGORIES = CATEGORIES;
+module.exports.FIXTURE_TYPES = FIXTURE_TYPES;
