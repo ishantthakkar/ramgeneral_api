@@ -559,6 +559,46 @@ exports.updateSurvey = async (req, res) => {
     }
 };
 
+exports.updateSurveyName = async (req, res) => {
+    try {
+        const { survey_id, surveyName, survey_name } = req.body;
+        const name = surveyName !== undefined ? surveyName : survey_name;
+
+        if (!survey_id) {
+            return res.status(400).json({ message: 'survey_id is required.' });
+        }
+        if (name === undefined || name === null || !String(name).trim()) {
+            return res.status(400).json({ message: 'surveyName is required.' });
+        }
+
+        const survey = await Survey.findById(survey_id);
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found.' });
+        }
+
+        survey.surveyName = String(name).trim();
+        await survey.save();
+
+        const surveyResponse = await formatSurveyResponse(survey.toObject());
+
+        await createLog(
+            'Survey Name Updated',
+            req.user.id,
+            (await Customer.findById(survey.customer_id))?.name || 'Unknown',
+            'Survey',
+            survey._id
+        );
+
+        return res.status(200).json({
+            survey: surveyResponse,
+            message: 'Survey name updated successfully.',
+        });
+    } catch (error) {
+        console.error('Update survey name error:', error);
+        return res.status(500).json({ message: 'Server error updating survey name.' });
+    }
+};
+
 exports.updateSurveyNotes = async (req, res) => {
     try {
         const { survey_id, title, note, notes } = req.body;
