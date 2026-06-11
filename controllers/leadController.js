@@ -15,6 +15,7 @@ const {
   resolveLeadSourceCode,
   getLeadSourceName,
 } = require('../constants/leadSources');
+const { normalizeNotes } = require('../utils/subdocumentHelpers');
 
 const ALLOWED_STATUSES = ['New', 'Assigned', 'In Progress', 'Lost Leads', 'Converted To Customer'];
 
@@ -231,6 +232,38 @@ const normalizeContactInfo = (contactInfo) => {
     });
 };
 
+const normalizeLeadActivityLog = (activityLog) => {
+  if (activityLog === undefined || activityLog === null) return [];
+  const parsed = tryParseJson(activityLog);
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') return null;
+
+      const activityType = (entry.activityType ?? '').toString().trim();
+      if (!activityType) return null;
+
+      const noteText = (entry.note ?? '').toString().trim();
+      const notesText = (entry.notes ?? '').toString().trim();
+      const outcomeText = (entry.outcome ?? '').toString().trim();
+      const note =
+        noteText ||
+        [outcomeText, notesText].filter(Boolean).join(' — ') ||
+        '';
+
+      return {
+        activityType,
+        location: (entry.location ?? '').toString().trim(),
+        date: entry.date ? new Date(entry.date) : new Date(),
+        time: (entry.time ?? entry.timeSlot ?? '').toString().trim(),
+        note,
+        createdAt: entry.createdAt ? new Date(entry.createdAt) : new Date(),
+      };
+    })
+    .filter(Boolean);
+};
+
 function formatLeadNote(note) {
   const plain = note?.toObject ? note.toObject() : { ...note };
   return {
@@ -301,6 +334,8 @@ exports.createLead = async (req, res) => {
       state,
       zip,
       lastActivity,
+      notes,
+      activityLog,
     } = req.body;
 
     const resolvedUser = await resolveCurrentUser(req.user.id);
@@ -388,6 +423,23 @@ exports.createLead = async (req, res) => {
         lead.markModified('contactInfo');
       }
 
+      if (notes !== undefined) {
+        const processedNotes = normalizeNotes(notes).filter((item) => item.note || item.title);
+        if (processedNotes.length) {
+          lead.notes = [...(lead.notes || []), ...processedNotes];
+          lead.markModified('notes');
+        }
+      }
+
+      if (activityLog !== undefined) {
+        const processedActivityLog = normalizeLeadActivityLog(activityLog);
+        if (processedActivityLog.length) {
+          lead.activityLog = [...(lead.activityLog || []), ...processedActivityLog];
+          lead.markModified('activityLog');
+          lead.lastActivity = new Date();
+        }
+      }
+
       const updatedLead = await lead.save();
 
       await createLog(`Lead Updated`, req.user.id, name, 'Lead', updatedLead._id);
@@ -427,6 +479,13 @@ exports.createLead = async (req, res) => {
         });
       }
 
+      const processedNotes = normalizeNotes(notes).filter((item) => item.note || item.title);
+      const processedActivityLog = normalizeLeadActivityLog(activityLog);
+      const latestActivityDate = processedActivityLog.reduce((latest, entry) => {
+        const entryDate = entry.date ? new Date(entry.date).getTime() : 0;
+        return entryDate > latest ? entryDate : latest;
+      }, 0);
+
       const leadData = {
         leadName: leadName ?? '',
         name,
@@ -447,8 +506,8 @@ exports.createLead = async (req, res) => {
         city: city || '',
         state: state || '',
         zip: zip || '',
-        notes: [],
-        activityLog: [],
+        notes: processedNotes,
+        activityLog: processedActivityLog,
         user_id: assignedSalesPerson ? assignedSalesPerson._id : currentUser._id,
         ...(isAssigningToSalesPerson
           ? { assignedBy: currentUser._id, assignedAt: new Date() }
@@ -456,7 +515,11 @@ exports.createLead = async (req, res) => {
         createdByName: is_admin ? currentUser.email : currentUser.fullName,
         createdByEmail: currentUser.email,
         createdByRole: is_admin ? 'admin' : currentUser.userRole,
-        lastActivity: lastActivity ? new Date(lastActivity) : Date.now(),
+        lastActivity: lastActivity
+          ? new Date(lastActivity)
+          : latestActivityDate
+            ? new Date(latestActivityDate)
+            : Date.now(),
         status: isAssigningToSalesPerson ? 'Assigned' : initialStatus,
         convertedToCustomer: initialStatus === 'Converted To Customer',
       };
