@@ -95,15 +95,139 @@ const parseContactBusinessCardField = (fieldname) => {
   return null;
 };
 
+const isStandaloneBusinessCardField = (fieldname) => {
+  const field = String(fieldname || '').trim();
+  return /^(?:business_card|businessCard|upload_business_card)$/i.test(field);
+};
+
+const resolveStandaloneBusinessCardUploads = (req) =>
+  (req.files || [])
+    .filter((f) => isStandaloneBusinessCardField(f.fieldname))
+    .map((f) => f.filename);
+
 const resolveContactBusinessCardUploads = (req) => {
   const byContactIdx = {};
   for (const file of req.files || []) {
+    if (isStandaloneBusinessCardField(file.fieldname)) continue;
     const contactIdx = parseContactBusinessCardField(file.fieldname);
     if (contactIdx === null) continue;
     if (!byContactIdx[contactIdx]) byContactIdx[contactIdx] = [];
     byContactIdx[contactIdx].push(file.filename);
   }
   return byContactIdx;
+};
+
+const normalizeContactEntry = (entry) => {
+  if (!entry || typeof entry !== 'object') return null;
+  const subdocId = getSubdocId(entry);
+  return {
+    ...(subdocId ? { id: subdocId } : {}),
+    position: (entry.position ?? '').toString().trim(),
+    department: (entry.department ?? '').toString().trim(),
+    name: (entry.name ?? '').toString().trim(),
+    phone: (entry.phone ?? '').toString().trim(),
+    mobile: (entry.mobile ?? '').toString().trim(),
+    email: (entry.email ?? '').toString().trim().toLowerCase(),
+    businessCard: normalizeBusinessCardFilenames(entry.businessCard ?? entry.bussinessCard),
+    ...(entry.createdAt ? { createdAt: new Date(entry.createdAt) } : {}),
+  };
+};
+
+const parseContactInput = (body = {}) => {
+  const { contactInfo, contact_info, id, _id, contactId } = body;
+
+  if (contactInfo !== undefined || contact_info !== undefined) {
+    const parsed = tryParseJson(contactInfo ?? contact_info);
+    if (Array.isArray(parsed)) {
+      return parsed.map(normalizeContactEntry).filter(Boolean);
+    }
+    if (parsed && typeof parsed === 'object') {
+      const one = normalizeContactEntry(parsed);
+      return one ? [one] : [];
+    }
+    return null;
+  }
+
+  const hasContactField =
+    id !== undefined ||
+    _id !== undefined ||
+    contactId !== undefined ||
+    ['position', 'department', 'name', 'phone', 'mobile', 'email', 'businessCard', 'bussinessCard'].some(
+      (field) => body[field] !== undefined
+    );
+
+  if (!hasContactField) return null;
+
+  const one = normalizeContactEntry({
+    id: id ?? _id ?? contactId,
+    position: body.position,
+    department: body.department,
+    name: body.name,
+    phone: body.phone,
+    mobile: body.mobile,
+    email: body.email,
+    businessCard: body.businessCard ?? body.bussinessCard,
+    createdAt: body.createdAt,
+  });
+
+  return one ? [one] : [];
+};
+
+const upsertLeadContacts = (
+  existingContacts,
+  incomingContacts,
+  uploadsByIdx = {},
+  standaloneUploads = []
+) => {
+  const result = toPlainSubdocs(existingContacts);
+  const saved = [];
+
+  incomingContacts.forEach((contact, idx) => {
+    const idxUploads = uploadsByIdx[idx] || [];
+    const extraUploads = incomingContacts.length === 1 ? standaloneUploads : [];
+    const newUploads = [...idxUploads, ...extraUploads];
+    const fromJson = normalizeBusinessCardFilenames(contact.businessCard ?? contact.bussinessCard);
+    const contactId = getSubdocId(contact);
+    const { id, _id, ...fields } = contact;
+
+    if (contactId) {
+      const index = result.findIndex(
+        (r) => String(r._id) === contactId || String(r.id) === contactId
+      );
+      if (index < 0) {
+        const error = new Error(`Contact not found: ${contactId}`);
+        error.code = 'CONTACT_NOT_FOUND';
+        error.contactId = contactId;
+        throw error;
+      }
+
+      const existingCards = normalizeBusinessCardFilenames(
+        result[index].businessCard ?? result[index].bussinessCard
+      );
+      const businessCard = [...new Set([...existingCards, ...fromJson, ...newUploads].filter(Boolean))];
+
+      result[index] = {
+        ...result[index],
+        ...fields,
+        businessCard,
+        _id: result[index]._id,
+        createdAt: result[index].createdAt || fields.createdAt || new Date(),
+      };
+      saved.push({ ...result[index], action: 'updated' });
+      return;
+    }
+
+    const businessCard = [...new Set([...fromJson, ...newUploads].filter(Boolean))];
+    const created = {
+      ...fields,
+      businessCard,
+      createdAt: fields.createdAt || new Date(),
+    };
+    result.push(created);
+    saved.push({ ...created, action: 'created' });
+  });
+
+  return { contactInfo: result, saved };
 };
 
 const attachBusinessCardsToContactInfo = (contactInfo, uploadsByIdx = {}) => {
@@ -222,9 +346,13 @@ module.exports = {
   normalizeActivityLog,
   normalizeBillFilenames,
   normalizeBusinessCardFilenames,
+  normalizeContactEntry,
+  parseContactInput,
   parseContactBusinessCardField,
   resolveContactBusinessCardUploads,
+  resolveStandaloneBusinessCardUploads,
   attachBusinessCardsToContactInfo,
   appendBusinessCardsToContactInfo,
+  upsertLeadContacts,
   resolveNewBillFilenames,
 };

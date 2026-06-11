@@ -17,12 +17,25 @@ const {
 } = require('../constants/leadSources');
 const {
   normalizeNotes,
+  normalizeBusinessCardFilenames,
   attachBusinessCardsToContactInfo,
   appendBusinessCardsToContactInfo,
   resolveContactBusinessCardUploads,
+  resolveStandaloneBusinessCardUploads,
+  parseContactInput,
+  upsertLeadContacts,
 } = require('../utils/subdocumentHelpers');
 
 const ALLOWED_STATUSES = ['New', 'Assigned', 'In Progress', 'Lost Leads', 'Converted To Customer'];
+const API_BASE_URL = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
+
+const toBusinessCardUrl = (filename) => {
+  if (!filename) return '';
+  const value = String(filename).trim();
+  if (!value) return '';
+  if (value.startsWith('http')) return value;
+  return `${API_BASE_URL}/uploads/leads/business-cards/${value.replace(/^\//, '')}`;
+};
 
 const resolveSalesPerson = async (salesPersonId) => {
   if (!salesPersonId || !mongoose.Types.ObjectId.isValid(salesPersonId)) {
@@ -102,6 +115,9 @@ const parseBillDate = (value) => {
 
 const formatLeadResponse = (leadObj) => {
   leadObj.uploadElectricityBill = normalizeBillFilenames(leadObj.uploadElectricityBill);
+  if (Array.isArray(leadObj.contactInfo)) {
+    leadObj.contactInfo = leadObj.contactInfo.map(formatLeadContact);
+  }
   if (leadObj.leadSource) {
     leadObj.leadSourceName = getLeadSourceName(leadObj.leadSource);
   }
@@ -290,6 +306,24 @@ function formatLeadActivity(activity) {
     date: plain.date || plain.createdAt || null,
     time: plain.time || plain.timeSlot || '',
     note: plain.note || plain.notes || plain.outcome || '',
+    createdAt: plain.createdAt,
+  };
+}
+
+function formatLeadContact(contact) {
+  const plain = contact?.toObject ? contact.toObject() : { ...contact };
+  const businessCardFilenames = normalizeBusinessCardFilenames(
+    plain.businessCard ?? plain.bussinessCard
+  );
+  return {
+    _id: plain._id,
+    position: plain.position || '',
+    department: plain.department || '',
+    name: plain.name || '',
+    phone: plain.phone || '',
+    mobile: plain.mobile || '',
+    email: plain.email || '',
+    businessCard: businessCardFilenames.map(toBusinessCardUrl).filter(Boolean),
     createdAt: plain.createdAt,
   };
 }
@@ -614,6 +648,115 @@ exports.addLeadNote = async (req, res) => {
   }
 };
 
+exports.getLeadContacts = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Valid lead id is required.' });
+    }
+
+    const lead = await Lead.findById(id).select('contactInfo name leadName');
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    const contacts = (lead.contactInfo || []).map(formatLeadContact);
+
+    return res.status(200).json({
+      leadId: id,
+      contacts,
+      total: contacts.length,
+    });
+  } catch (error) {
+    console.error('Get lead contacts error:', error);
+    return res.status(500).json({ message: 'Server error fetching lead contacts.' });
+  }
+};
+
+exports.saveLeadContacts = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Valid lead id is required.' });
+    }
+
+    const incomingContacts = parseContactInput(req.body);
+    if (!incomingContacts || !incomingContacts.length) {
+      return res.status(400).json({
+        message:
+          'Contact data is required. Send contactInfo (array/object) or flat contact fields with optional id to update.',
+      });
+    }
+
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+
+    const lead = await Lead.findById(id);
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    const uploadsByIdx = resolveContactBusinessCardUploads(req);
+    const standaloneUploads = resolveStandaloneBusinessCardUploads(req);
+
+    let contactInfo;
+    let saved;
+    try {
+      ({ contactInfo, saved } = upsertLeadContacts(
+        lead.contactInfo,
+        incomingContacts,
+        uploadsByIdx,
+        standaloneUploads
+      ));
+    } catch (error) {
+      if (error.code === 'CONTACT_NOT_FOUND') {
+        return res.status(404).json({ message: error.message });
+      }
+      throw error;
+    }
+
+    lead.contactInfo = contactInfo;
+    lead.lastActivity = new Date();
+    lead.markModified('contactInfo');
+    await lead.save();
+
+    const results = saved.map((contact) => ({
+      ...formatLeadContact(contact),
+      action: contact.action,
+    }));
+
+    const createdCount = results.filter((item) => item.action === 'created').length;
+    const updatedCount = results.filter((item) => item.action === 'updated').length;
+    const statusCode = results.length === 1 && createdCount === 1 ? 201 : 200;
+
+    await createLog(
+      'Lead Contact Saved',
+      req.user.id,
+      lead.name || lead.leadName || 'Lead',
+      'Lead',
+      lead._id
+    );
+
+    return res.status(statusCode).json({
+      message:
+        createdCount && updatedCount
+          ? 'Lead contacts created and updated successfully.'
+          : createdCount
+            ? 'Lead contact created successfully.'
+            : 'Lead contact updated successfully.',
+      contacts: results,
+      contactInfo: lead.contactInfo.map(formatLeadContact),
+    });
+  } catch (error) {
+    console.error('Save lead contacts error:', error);
+    return res.status(500).json({ message: 'Server error saving lead contacts.' });
+  }
+};
+
 exports.getLeadNotes = async (req, res) => {
   try {
     const { id } = req.params;
@@ -868,7 +1011,7 @@ const mapLeadToSummary = (lead) => ({
   leadSource: lead.leadSource,
   leadSourceName: getLeadSourceName(lead.leadSource),
   addresses: lead.addresses || [],
-  contactInfo: lead.contactInfo || [],
+  contactInfo: (lead.contactInfo || []).map(formatLeadContact),
   street: lead.street,
   city: lead.city,
   state: lead.state,
