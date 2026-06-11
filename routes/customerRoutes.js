@@ -111,6 +111,8 @@ router.get('/inspection-list-user', verifyToken, customerController.inspectionLi
 router.get('/survey-quotations-list', verifyToken, quotationController.listSurveyQuotationsByUser);
 router.get('/quotations-list', verifyToken, quotationController.listSurveyQuotationsByUser);
 router.post('/quotation/approve', verifyToken, quotationController.approveQuotation);
+router.post('/quotation/preview', verifyToken, quotationController.previewQuotation);
+router.get('/quotation/preview', verifyToken, quotationController.previewQuotation);
 router.post('/quotation', verifyToken, quotationController.createQuotation);
 router.post(
     '/quotation/upload',

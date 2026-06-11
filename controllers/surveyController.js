@@ -16,6 +16,7 @@ const {
     validateAreaProducts,
     enrichAreasWithProducts,
 } = require('../utils/surveyProductUtils');
+const { buildFixtureTypeFilter } = require('../utils/productUtils');
 const UPLOAD_DIR = path.join(__dirname, '../uploads/surveys');
 const COMPRESS_THRESHOLD = 800 * 1024;
 const SURVEY_IMAGE_BASE = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
@@ -414,7 +415,12 @@ exports.getSurveyProducts = async (req, res) => {
             });
         }
 
-        const products = await Product.find({ category }).sort({ name: 1 }).lean();
+        const products = await Product.find({
+            category,
+            ...buildFixtureTypeFilter('Proposed Fixture'),
+        })
+            .sort({ name: 1 })
+            .lean();
 
         return res.status(200).json({
             electricCompany,

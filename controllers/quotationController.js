@@ -9,6 +9,7 @@ const { isSalesManagerRole, isSalesPersonRole } = require('../constants/userRole
 const { enrichAreasWithProducts } = require('../utils/surveyProductUtils');
 const {
   getQuotationAddresses,
+  groupLineItemsByArea,
   generatePdfBuffer,
   saveQuotationPdf,
 } = require('../utils/quotationPdf');
@@ -88,10 +89,7 @@ async function recordQuotationCustomerActivity(customerId, userId, activityType,
   });
 }
 
-function resolveAreaLabel(survey, area, index) {
-  const surveyAreaName = (survey.areaName || '').trim();
-  if (surveyAreaName) return surveyAreaName;
-
+function resolveAreaLabel(area, index) {
   const itemAreaName = (area.areaName || '').trim();
   if (itemAreaName) return itemAreaName;
 
@@ -104,15 +102,54 @@ function resolveAreaLabel(survey, area, index) {
   );
 }
 
+function mergeAreasForQuotation(areas) {
+  const merged = new Map();
+
+  areas.forEach((area, index) => {
+    const areaName = (area.areaName || '').trim();
+    const key = areaName || String(area._id || `index-${index}`);
+    const fixtures = area.fixtures?.length
+      ? area.fixtures
+      : area.product_id
+        ? [area]
+        : [];
+
+    if (!fixtures.length) return;
+
+    if (!merged.has(key)) {
+      merged.set(key, {
+        areaName: areaName || '',
+        fixtures: [],
+      });
+    }
+
+    merged.get(key).fixtures.push(...fixtures);
+  });
+
+  return Array.from(merged.values());
+}
+
+function buildAreasForEstimateResponse(flatLineItems) {
+  return groupLineItemsByArea(flatLineItems).map((group) => ({
+    area: group.area,
+    fixtures: group.items.map(({ proposedFixture, quantity, unitPrice, total }) => ({
+      proposedFixture,
+      quantity,
+      unitPrice,
+      total,
+    })),
+  }));
+}
+
 async function buildLineItemsFromSurvey(survey) {
   const areas = await enrichAreasWithProducts(survey.areas || []);
+  const mergedAreas = mergeAreasForQuotation(areas);
   const lineItems = [];
 
-  areas.forEach((area, areaIndex) => {
-    const areaLabel = resolveAreaLabel(survey, area, areaIndex);
-    const fixtures = area.fixtures?.length ? area.fixtures : [area];
+  mergedAreas.forEach((area, areaIndex) => {
+    const areaLabel = resolveAreaLabel(area, areaIndex);
 
-    fixtures.forEach((fixture) => {
+    area.fixtures.forEach((fixture) => {
       const quantity = parseFloat(fixture.proposedQty) || 0;
       const unitPrice =
         parseFloat(fixture.price) ||
@@ -137,6 +174,43 @@ async function buildLineItemsFromSurvey(survey) {
   });
 
   return lineItems.filter((row) => row.quantity > 0 || row.unitPrice > 0);
+}
+
+async function buildQuotationPreviewData(survey, customer) {
+  const flatLineItems = await buildLineItemsFromSurvey(survey);
+
+  if (!flatLineItems.length) {
+    return {
+      error: 'Survey has no line items. Add products with quantity and price in survey areas.',
+    };
+  }
+
+  const grandTotal = flatLineItems.reduce((sum, row) => sum + row.total, 0);
+  const primaryContact = (customer.contactInfo || [])[0] || {};
+  const salesPerson = customer.user_id || {};
+  const { serviceAddress, billingAddress } = getQuotationAddresses(customer);
+
+  return {
+    survey_id: survey._id,
+    customerId: survey.customer_id,
+    surveyName: (survey.surveyName || survey.areaName || '').trim(),
+    company: getCompanyInfo(),
+    generatedDate: new Date(),
+    serviceAddress,
+    billingAddress,
+    salesPerson: {
+      name: salesPerson.fullName || '',
+      phone: salesPerson.mobileNumber || customer.mobileNumber || '',
+    },
+    customerContact: {
+      name: primaryContact.name || getCustomerDisplayName(customer),
+      phone: primaryContact.phone || primaryContact.mobile || customer.mobileNumber || '',
+      email: primaryContact.email || customer.email || '',
+    },
+    area: buildAreasForEstimateResponse(flatLineItems),
+    flatLineItems,
+    grandTotal,
+  };
 }
 
 async function getTeamSalesPersonIds(managerId) {
@@ -348,6 +422,43 @@ exports.listQuotationsForManagerApproval = exports.listSurveyQuotationsByUser;
 
 exports.listCustomerQuotationsForAdmin = exports.listSurveyQuotationsByUser;
 
+exports.previewQuotation = async (req, res) => {
+  try {
+    const surveyId = req.body?.surveyId || req.body?.survey_id || req.query?.surveyId || req.query?.survey_id;
+
+    const surveyResult = await resolveSurveyById(surveyId, { requireAreas: true });
+    if (surveyResult.error) {
+      return res.status(404).json({ message: surveyResult.error });
+    }
+
+    const { survey } = surveyResult;
+
+    const customer = await Customer.findById(survey.customer_id)
+      .populate('user_id', 'fullName mobileNumber email')
+      .populate('leadId', 'leadName name')
+      .lean();
+
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found for this survey.' });
+    }
+
+    const preview = await buildQuotationPreviewData(survey, customer);
+    if (preview.error) {
+      return res.status(400).json({ message: preview.error });
+    }
+
+    const { flatLineItems, ...estimate } = preview;
+
+    return res.status(200).json({
+      message: 'Estimate preview retrieved successfully.',
+      estimate,
+    });
+  } catch (error) {
+    console.error('Preview quotation error:', error);
+    return res.status(500).json({ message: 'Server error previewing estimate.' });
+  }
+};
+
 exports.createQuotation = async (req, res) => {
   try {
     const surveyId = req.body?.surveyId || req.body?.survey_id;
@@ -369,37 +480,18 @@ exports.createQuotation = async (req, res) => {
       return res.status(404).json({ message: 'Customer not found for this survey.' });
     }
 
-    const lineItems = await buildLineItemsFromSurvey(survey);
-
-    if (!lineItems.length) {
-      return res.status(400).json({
-        message: 'Survey has no line items. Add products with quantity and price in survey areas.',
-      });
+    const preview = await buildQuotationPreviewData(survey, customer);
+    if (preview.error) {
+      return res.status(400).json({ message: preview.error });
     }
 
-    const grandTotal = lineItems.reduce((sum, row) => sum + row.total, 0);
-    const primaryContact = (customer.contactInfo || [])[0] || {};
-    const salesPerson = customer.user_id || {};
-    const { serviceAddress, billingAddress } = getQuotationAddresses(customer);
     const quotationNumber = await generateUniqueQuotationNumber();
 
+    const { flatLineItems, ...previewFields } = preview;
     const pdfData = {
-      company: getCompanyInfo(),
-      generatedDate: new Date(),
+      ...previewFields,
+      lineItems: flatLineItems,
       quotationNumber,
-      serviceAddress,
-      billingAddress,
-      salesPerson: {
-        name: salesPerson.fullName || '',
-        phone: salesPerson.mobileNumber || customer.mobileNumber || '',
-      },
-      customerContact: {
-        name: primaryContact.name || getCustomerDisplayName(customer),
-        phone: primaryContact.phone || primaryContact.mobile || customer.mobileNumber || '',
-        email: primaryContact.email || customer.email || '',
-      },
-      lineItems,
-      grandTotal,
     };
 
     const pdfBuffer = await generatePdfBuffer(pdfData);
@@ -416,7 +508,7 @@ exports.createQuotation = async (req, res) => {
       url: pdfUrl,
       filename,
       surveyId: survey._id,
-      grandTotal,
+      grandTotal: preview.grandTotal,
       uploadedBy: req.user?.id,
       uploadedByName: generator?.fullName || '',
     });

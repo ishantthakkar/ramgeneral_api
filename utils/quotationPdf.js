@@ -493,6 +493,7 @@ module.exports = {
   formatMoney,
   formatAddressLines,
   getQuotationAddresses,
+  groupLineItemsByArea,
   generatePdfBuffer,
   saveQuotationPdf,
 };

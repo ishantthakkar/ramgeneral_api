@@ -1,6 +1,11 @@
 const Product = require('../models/Product');
 const { createLog } = require('../utils/logger');
-const { CATEGORIES, FIXTURE_TYPES } = require('../models/Product');
+const { CATEGORIES } = require('../models/Product');
+const {
+  FIXTURE_TYPES,
+  resolveFixtureType,
+  buildFixtureTypeFilter,
+} = require('../utils/productUtils');
 
 function formatProduct(doc) {
   const p = doc.toObject ? doc.toObject() : doc;
@@ -16,28 +21,6 @@ function formatProduct(doc) {
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   };
-}
-
-function resolveFixtureType(value) {
-  const requested = (value ?? '').toString().trim();
-  if (!requested) return null;
-  return (
-    FIXTURE_TYPES.find((type) => type.toLowerCase() === requested.toLowerCase()) || null
-  );
-}
-
-function buildFixtureTypeFilter(fixtureType) {
-  if (fixtureType === 'Proposed Fixture') {
-    return {
-      $or: [
-        { productType: 'Proposed Fixture' },
-        { productType: { $exists: false } },
-        { productType: null },
-        { productType: '' },
-      ],
-    };
-  }
-  return { productType: fixtureType };
 }
 
 function parseMoney(value, fieldName) {
@@ -118,6 +101,11 @@ function applyProductFields(product, payload) {
   product.commission = payload.commission;
   product.installationCost = payload.installationCost;
 }
+
+exports.listProposedFixtureProducts = async (req, res) => {
+  req.query = { ...req.query, productType: 'Proposed Fixture' };
+  return exports.listProducts(req, res);
+};
 
 exports.listProducts = async (req, res) => {
   try {
