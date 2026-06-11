@@ -153,8 +153,8 @@ function applyProductFields(product, payload) {
   product.installationCost = payload.installationCost;
 }
 
-exports.listProposedFixtureProducts = async (req, res) => {
-  req.query = { ...req.query, productType: 'Proposed Fixture' };
+exports.listExistingFixtureProducts = async (req, res) => {
+  req.query = { ...req.query, productType: 'Existing Fixture' };
   return exports.listProducts(req, res);
 };
 
