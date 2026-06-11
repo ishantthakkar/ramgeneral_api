@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Product = require('../models/Product');
 const { createLog } = require('../utils/logger');
 const { CATEGORIES, FIXTURE_TYPES } = require('../models/Product');
@@ -59,18 +60,15 @@ function buildSkuFilter(sku, productType = null) {
   return { $and: [skuFilter, buildFixtureTypeFilter(productType)] };
 }
 
-function parseProductPayload(body) {
-  const { sku, name, salesPrice, commission, installationCost, price, productType } = body;
+function generateExistingFixtureSku() {
+  return `EF-${new mongoose.Types.ObjectId().toString()}`;
+}
+
+function parseProposedProductPayload(body, resolvedFixtureType) {
+  const { sku, name, salesPrice, commission, installationCost, price } = body;
 
   if (!sku || !name) {
     return { error: 'SKU and name are required.' };
-  }
-
-  const resolvedFixtureType = resolveFixtureType(productType);
-  if (!resolvedFixtureType) {
-    return {
-      error: 'Valid productType is required. Use "Proposed Fixture" or "Existing Fixture".',
-    };
   }
 
   const salesPriceResult = parseMoney(
@@ -103,11 +101,64 @@ function parseProductPayload(body) {
   };
 }
 
+function parseExistingFixturePayload(body, resolvedFixtureType, existingProduct = null) {
+  const { name } = body;
+
+  if (!name || !String(name).trim()) {
+    return { error: 'Name is required.' };
+  }
+
+  return {
+    value: {
+      sku: existingProduct?.sku || generateExistingFixtureSku(),
+      name: String(name).trim(),
+      salesPrice: 0,
+      commission: 0,
+      installationCost: 0,
+      productType: resolvedFixtureType,
+    },
+  };
+}
+
+function parseProductPayload(body, existingProduct = null) {
+  const resolvedFixtureType =
+    resolveFixtureType(body.productType) ||
+    resolveFixtureType(existingProduct?.productType);
+
+  if (!resolvedFixtureType) {
+    return {
+      error: 'Valid productType is required. Use "Proposed Fixture" or "Existing Fixture".',
+    };
+  }
+
+  if (resolvedFixtureType === 'Existing Fixture') {
+    return parseExistingFixturePayload(body, resolvedFixtureType, existingProduct);
+  }
+
+  return parseProposedProductPayload(body, resolvedFixtureType);
+}
+
 async function findProductBySku(sku, excludeId = null, productType = null) {
   const filter = buildSkuFilter(sku, productType);
   if (excludeId) {
     filter._id = { $ne: excludeId };
   }
+  return Product.findOne(filter);
+}
+
+async function findProductByName(name, excludeId = null, productType = null) {
+  const trimmedName = String(name || '').trim();
+  if (!trimmedName) return null;
+
+  const filter = {
+    name: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, 'i') },
+    ...buildFixtureTypeFilter(productType || 'Existing Fixture'),
+  };
+
+  if (excludeId) {
+    filter._id = { $ne: excludeId };
+  }
+
   return Product.findOne(filter);
 }
 
@@ -176,15 +227,28 @@ exports.createProduct = async (req, res) => {
       return res.status(400).json({ message: parsed.error });
     }
 
-    const existingSku = await findProductBySku(
-      parsed.value.sku,
-      null,
-      parsed.value.productType
-    );
-    if (existingSku) {
-      return res.status(400).json({
-        message: 'A product with this SKU already exists for this fixture type.',
-      });
+    if (parsed.value.productType === 'Existing Fixture') {
+      const existingName = await findProductByName(
+        parsed.value.name,
+        null,
+        parsed.value.productType
+      );
+      if (existingName) {
+        return res.status(400).json({
+          message: 'A product with this name already exists.',
+        });
+      }
+    } else {
+      const existingSku = await findProductBySku(
+        parsed.value.sku,
+        null,
+        parsed.value.productType
+      );
+      if (existingSku) {
+        return res.status(400).json({
+          message: 'A product with this SKU already exists for this fixture type.',
+        });
+      }
     }
 
     const product = await Product.create(parsed.value);
@@ -212,27 +276,34 @@ exports.createProduct = async (req, res) => {
 exports.updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    const parsed = parseProductPayload(req.body);
-
-    if (parsed.error) {
-      return res.status(400).json({ message: parsed.error });
-    }
-
     const product = await Product.findById(id);
     if (!product) {
       return res.status(404).json({ message: 'Product not found.' });
     }
 
-    const existingSku = await findProductBySku(
-      parsed.value.sku,
-      id,
-      product.productType || parsed.value.productType
-    );
-    if (existingSku) {
-      return res.status(400).json({ message: 'A product with this SKU already exists.' });
+    const parsed = parseProductPayload(req.body, product);
+
+    if (parsed.error) {
+      return res.status(400).json({ message: parsed.error });
     }
 
-    applyProductFields(product, parsed.value);
+    const fixtureType = product.productType || parsed.value.productType;
+
+    if (fixtureType === 'Existing Fixture') {
+      const existingName = await findProductByName(parsed.value.name, id, fixtureType);
+      if (existingName) {
+        return res.status(400).json({ message: 'A product with this name already exists.' });
+      }
+
+      product.name = parsed.value.name;
+    } else {
+      const existingSku = await findProductBySku(parsed.value.sku, id, fixtureType);
+      if (existingSku) {
+        return res.status(400).json({ message: 'A product with this SKU already exists.' });
+      }
+
+      applyProductFields(product, parsed.value);
+    }
     await product.save();
 
     if (req.user?.id) {
