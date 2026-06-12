@@ -118,7 +118,11 @@ const leadSchema = new mongoose.Schema({
   notes: [{
     title: { type: String, trim: true, default: '' },
     note: { type: String, trim: true, default: '' },
-    createdAt: { type: Date, default: Date.now }
+    user_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    createdAt: { type: Date, default: Date.now },
   }],
   activityLog: [{
     activityType: { type: String, trim: true, required: true },

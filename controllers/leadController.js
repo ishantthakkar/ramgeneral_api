@@ -17,6 +17,9 @@ const {
 } = require('../constants/leadSources');
 const {
   normalizeNotes,
+  buildNoteEntry,
+  attachUserIdToNotes,
+  enrichNotesWithAuthors,
   attachBusinessCardsToContactInfo,
   appendBusinessCardsToContactInfo,
   resolveContactBusinessCardUploads,
@@ -284,16 +287,6 @@ const normalizeLeadActivityLog = (activityLog) => {
     .filter(Boolean);
 };
 
-function formatLeadNote(note) {
-  const plain = note?.toObject ? note.toObject() : { ...note };
-  return {
-    _id: plain._id,
-    title: plain.title || '',
-    note: plain.note || '',
-    createdAt: plain.createdAt,
-  };
-}
-
 function formatLeadActivity(activity) {
   const plain = activity?.toObject ? activity.toObject() : { ...activity };
   return {
@@ -449,7 +442,10 @@ exports.createLead = async (req, res) => {
       }
 
       if (notes !== undefined) {
-        const processedNotes = normalizeNotes(notes).filter((item) => item.note || item.title);
+        const processedNotes = attachUserIdToNotes(
+          normalizeNotes(notes).filter((item) => item.note || item.title),
+          req.user.id
+        );
         if (processedNotes.length) {
           lead.notes = [...(lead.notes || []), ...processedNotes];
           lead.markModified('notes');
@@ -504,7 +500,10 @@ exports.createLead = async (req, res) => {
         });
       }
 
-      const processedNotes = normalizeNotes(notes).filter((item) => item.note || item.title);
+      const processedNotes = attachUserIdToNotes(
+        normalizeNotes(notes).filter((item) => item.note || item.title),
+        req.user.id
+      );
       const processedActivityLog = normalizeLeadActivityLog(activityLog);
       const latestActivityDate = processedActivityLog.reduce((latest, entry) => {
         const entryDate = entry.date ? new Date(entry.date).getTime() : 0;
@@ -601,25 +600,25 @@ exports.addLeadNote = async (req, res) => {
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    const noteEntry = {
-      title: (title ?? '').toString().trim(),
+    const noteEntry = buildNoteEntry({
+      title,
       note: noteText,
-      createdAt: new Date(),
-    };
+      userId: req.user.id,
+    });
 
     lead.notes = [...(lead.notes || []), noteEntry];
     lead.lastActivity = new Date();
     lead.markModified('notes');
     await lead.save();
 
-    const savedNote = lead.notes[lead.notes.length - 1];
-
     await createLog('Lead Note Added', req.user.id, lead.name || lead.leadName || 'Lead', 'Lead', lead._id);
+
+    const notes = await enrichNotesWithAuthors(lead.notes);
 
     return res.status(201).json({
       message: 'Lead note added successfully.',
-      note: formatLeadNote(savedNote),
-      notes: lead.notes.map(formatLeadNote),
+      note: notes[notes.length - 1],
+      notes,
     });
   } catch (error) {
     console.error('Add lead note error:', error);
@@ -858,9 +857,9 @@ exports.getLeadNotes = async (req, res) => {
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    const notes = [...(lead.notes || [])]
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-      .map(formatLeadNote);
+    const notes = (await enrichNotesWithAuthors(lead.notes || [])).sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
 
     return res.status(200).json({
       leadId: id,
@@ -1161,6 +1160,7 @@ exports.getLead = async (req, res) => {
     }
 
     const leadObj = formatLeadResponse(lead.toObject());
+    leadObj.notes = await enrichNotesWithAuthors(leadObj.notes || []);
     return res.status(200).json({ lead: leadObj });
   } catch (error) {
     console.error('Get lead error:', error);

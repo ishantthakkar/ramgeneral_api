@@ -404,32 +404,153 @@ const normalizeContactInfo = (contactInfo) => {
     });
 };
 
-const normalizeNotes = (notes) => {
-  if (notes === undefined || notes === null) return [];
-  const parsed = tryParseJson(notes);
-  if (Array.isArray(parsed)) {
-    return parsed.filter(Boolean).map((n) => {
-      if (typeof n === 'string') {
-        return { title: '', note: n.trim(), createdAt: new Date() };
-      }
-      return {
-        title: (n.title ?? '').toString().trim(),
-        note: (n.note ?? '').toString().trim(),
-        createdAt: n.createdAt ? new Date(n.createdAt) : new Date(),
+const buildNoteEntry = ({ title, note, userId, createdAt } = {}) => {
+  const noteText = (note ?? '').toString().trim();
+  if (!noteText) return null;
+
+  const entry = {
+    title: (title ?? '').toString().trim(),
+    note: noteText,
+    createdAt: createdAt ? new Date(createdAt) : new Date(),
+  };
+
+  if (userId) {
+    entry.user_id = userId;
+  }
+
+  return entry;
+};
+
+const attachUserIdToNotes = (notes, userId) => {
+  if (!userId || !Array.isArray(notes)) return notes || [];
+  return notes.map((note) => ({
+    ...note,
+    user_id: note.user_id || userId,
+  }));
+};
+
+const formatNoteUserSummary = (userRef) => {
+  if (!userRef) return null;
+
+  if (typeof userRef === 'object' && (userRef.fullName !== undefined || userRef.email !== undefined)) {
+    return {
+      id: userRef._id || userRef.id || null,
+      fullName: userRef.fullName || userRef.name || userRef.email || '',
+      email: userRef.email || '',
+    };
+  }
+
+  const id = userRef?._id || userRef?.id || userRef;
+  if (!id) return null;
+
+  return {
+    id,
+    fullName: '',
+    email: '',
+  };
+};
+
+const formatNoteForResponse = (note) => {
+  const plain = note?.toObject ? note.toObject() : { ...note };
+  const createdBy = formatNoteUserSummary(plain.user_id);
+
+  return {
+    _id: plain._id,
+    title: plain.title || '',
+    note: plain.note || '',
+    user_id: createdBy?.id || plain.user_id || null,
+    createdByName: createdBy?.fullName || '',
+    createdBy,
+    createdAt: plain.createdAt,
+  };
+};
+
+const enrichNotesWithAuthors = async (notes) => {
+  const list = (Array.isArray(notes) ? notes : []).map((note) =>
+    note?.toObject ? note.toObject() : { ...note }
+  );
+
+  const userIds = [
+    ...new Set(
+      list
+        .map((note) => {
+          const raw = note.user_id;
+          const id = raw?._id || raw;
+          return id ? String(id) : null;
+        })
+        .filter(Boolean)
+    ),
+  ];
+
+  const authorById = {};
+  if (userIds.length) {
+    const User = require('../models/User');
+    const Admin = require('../models/Admin');
+    const [users, admins] = await Promise.all([
+      User.find({ _id: { $in: userIds } }).select('fullName email').lean(),
+      Admin.find({ _id: { $in: userIds } }).select('email').lean(),
+    ]);
+
+    users.forEach((user) => {
+      authorById[String(user._id)] = {
+        id: user._id,
+        fullName: user.fullName || '',
+        email: user.email || '',
+      };
+    });
+
+    admins.forEach((admin) => {
+      authorById[String(admin._id)] = {
+        id: admin._id,
+        fullName: admin.email || '',
+        email: admin.email || '',
       };
     });
   }
+
+  return list.map((note) => {
+    const raw = note.user_id;
+    const id = raw?._id || raw;
+    const author = id ? authorById[String(id)] : null;
+
+    return formatNoteForResponse({
+      ...note,
+      user_id: author || raw || null,
+    });
+  });
+};
+
+const normalizeNotes = (notes, userId = null) => {
+  if (notes === undefined || notes === null) return [];
+  const parsed = tryParseJson(notes);
+  if (Array.isArray(parsed)) {
+    return parsed
+      .filter(Boolean)
+      .map((n) => {
+        if (typeof n === 'string') {
+          return buildNoteEntry({ note: n, userId });
+        }
+        return buildNoteEntry({
+          title: n.title,
+          note: n.note,
+          userId: n.user_id || userId,
+          createdAt: n.createdAt,
+        });
+      })
+      .filter(Boolean);
+  }
   if (typeof parsed === 'object' && parsed !== null) {
-    return [
-      {
-        title: (parsed.title ?? '').toString().trim(),
-        note: (parsed.note ?? '').toString().trim(),
-        createdAt: parsed.createdAt ? new Date(parsed.createdAt) : new Date(),
-      },
-    ];
+    const one = buildNoteEntry({
+      title: parsed.title,
+      note: parsed.note,
+      userId: parsed.user_id || userId,
+      createdAt: parsed.createdAt,
+    });
+    return one ? [one] : [];
   }
   if (typeof parsed === 'string' && parsed.trim()) {
-    return [{ title: '', note: parsed.trim(), createdAt: new Date() }];
+    const one = buildNoteEntry({ note: parsed, userId });
+    return one ? [one] : [];
   }
   return [];
 };
@@ -472,6 +593,10 @@ module.exports = {
   upsertAddresses,
   normalizeContactInfo,
   normalizeNotes,
+  buildNoteEntry,
+  attachUserIdToNotes,
+  formatNoteForResponse,
+  enrichNotesWithAuthors,
   normalizeActivityLog,
   normalizeBillFilenames,
   normalizeBusinessCardFilenames,

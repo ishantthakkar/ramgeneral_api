@@ -22,6 +22,7 @@ const coerceSurveyNotes = (notes) => {
           return {
             title: (item.title ?? '').toString().trim(),
             note: noteText,
+            ...(item.user_id ? { user_id: item.user_id } : {}),
             createdAt: item.createdAt ? new Date(item.createdAt) : new Date(),
           };
         }

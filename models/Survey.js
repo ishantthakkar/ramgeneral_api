@@ -58,6 +58,10 @@ const surveySchema = new mongoose.Schema({
     {
       title: { type: String, trim: true, default: '' },
       note: { type: String, trim: true, required: true },
+      user_id: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
       createdAt: { type: Date, default: Date.now },
     },
   ],

@@ -7,7 +7,12 @@ const User = require('../models/User');
 const Admin = require('../models/Admin');
 const Product = require('../models/Product');
 const { createLog } = require('../utils/logger');
-const { normalizeNotes } = require('../utils/subdocumentHelpers');
+const {
+    normalizeNotes,
+    buildNoteEntry,
+    attachUserIdToNotes,
+    enrichNotesWithAuthors,
+} = require('../utils/subdocumentHelpers');
 const { coerceSurveyNotes, sanitizeSurveyDocumentNotes } = require('../utils/surveyNotes');
 const {
     resolveProductCategory,
@@ -51,6 +56,7 @@ const mapSurveyImageUrls = (surveyObj) => {
 const formatSurveyResponse = async (surveyObj) => {
     mapSurveyImageUrls(surveyObj);
     surveyObj.areas = await enrichAreasWithProducts(surveyObj.areas || []);
+    surveyObj.notes = await enrichNotesWithAuthors(coerceSurveyNotes(surveyObj.notes));
     return surveyObj;
 };
 
@@ -333,7 +339,10 @@ exports.createSurvey = async (req, res) => {
         if (areaName !== undefined) survey.areaName = areaName;
         if (note !== undefined) survey.note = note;
         if (notes !== undefined) {
-            const processedNotes = normalizeNotes(notes).filter((item) => item.note);
+            const processedNotes = attachUserIdToNotes(
+                normalizeNotes(notes).filter((item) => item.note),
+                req.user.id
+            );
             if (processedNotes.length) {
                 survey.notes = [...coerceSurveyNotes(survey.notes), ...processedNotes];
                 survey.markModified('notes');
@@ -541,7 +550,10 @@ exports.updateSurvey = async (req, res) => {
         if (areaName !== undefined) survey.areaName = areaName;
         if (note !== undefined) survey.note = note;
         if (notes !== undefined) {
-            const processedNotes = normalizeNotes(notes).filter((item) => item.note);
+            const processedNotes = attachUserIdToNotes(
+                normalizeNotes(notes).filter((item) => item.note),
+                req.user.id
+            );
             if (processedNotes.length) {
                 survey.notes = [...coerceSurveyNotes(survey.notes), ...processedNotes];
                 survey.markModified('notes');
@@ -620,14 +632,17 @@ exports.updateSurveyNotes = async (req, res) => {
                 return res.status(400).json({ message: 'note is required.' });
             }
             processedNotes = [
-                {
-                    title: (title ?? '').toString().trim(),
+                buildNoteEntry({
+                    title,
                     note: noteText,
-                    createdAt: new Date(),
-                },
-            ];
+                    userId: req.user.id,
+                }),
+            ].filter(Boolean);
         } else if (notes !== undefined && notes !== null) {
-            processedNotes = normalizeNotes(notes).filter((item) => item.note);
+            processedNotes = attachUserIdToNotes(
+                normalizeNotes(notes).filter((item) => item.note),
+                req.user.id
+            );
             if (!processedNotes.length) {
                 return res.status(400).json({ message: 'note is required.' });
             }
