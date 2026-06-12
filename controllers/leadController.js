@@ -1249,7 +1249,7 @@ exports.convertToCustomer = async (req, res) => {
     return res.status(200).json({ lead, customer, message: 'Lead converted to customer.' });
   } catch (error) {
     console.error('Convert lead error:', error);
-    return res.status(500).json({ message: 'Server error converting lead.' });
+    return res.status(500).json({ message: 'Server error converting lead.', error: error.message });
   }
 };
 
