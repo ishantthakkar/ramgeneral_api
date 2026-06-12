@@ -11,7 +11,6 @@ const customerSchema = new mongoose.Schema({
   accountNumber: {
     type: String,
     required: false,
-    unique: true,
   },
   leadId: {
     type: mongoose.Schema.Types.ObjectId,
