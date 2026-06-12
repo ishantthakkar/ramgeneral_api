@@ -20,6 +20,7 @@ const {
   buildNoteEntry,
   attachUserIdToNotes,
   enrichNotesWithAuthors,
+  enrichNotesForManyRecords,
   attachBusinessCardsToContactInfo,
   appendBusinessCardsToContactInfo,
   resolveContactBusinessCardUploads,
@@ -150,6 +151,14 @@ function formatLeadForUserList(lead) {
     assignedBy: mapUserSummary(assignedByUser),
     assignedByName: assignedByUser?.fullName || '',
   };
+}
+
+async function formatLeadForUserListWithNotes(lead) {
+  const formatted = formatLeadForUserList(lead);
+  formatted.notes = (await enrichNotesWithAuthors(formatted.notes || [])).sort(
+    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+  );
+  return formatted;
 }
 
 async function getTeamMemberIds(managerId) {
@@ -1139,7 +1148,13 @@ exports.listLeads = async (req, res) => {
       .populate('user_id', 'fullName email')
       .populate('assignedBy', 'fullName email');
 
-    const leadSummaries = leads.map((lead) => mapLeadToSummary(lead));
+    const leadSummaries = await Promise.all(
+      leads.map(async (lead) => {
+        const summary = mapLeadToSummary(lead);
+        summary.notes = await enrichNotesWithAuthors(summary.notes || []);
+        return summary;
+      })
+    );
 
     return res.status(200).json({ leads: leadSummaries });
   } catch (error) {
@@ -1412,10 +1427,17 @@ exports.getLeadsByUser = async (req, res) => {
       .populate('assignedBy', 'fullName email mobileNumber userRole');
 
     const formattedLeads = leads.map((lead) => formatLeadForUserList(lead));
+    const leadsWithNotes = await enrichNotesForManyRecords(formattedLeads, 'notes');
+
+    leadsWithNotes.forEach((lead) => {
+      if (Array.isArray(lead.notes)) {
+        lead.notes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      }
+    });
 
     return res.status(200).json({
-      leads: formattedLeads,
-      total: formattedLeads.length,
+      leads: leadsWithNotes,
+      total: leadsWithNotes.length,
     });
   } catch (error) {
     console.error('Get leads by user error:', error);

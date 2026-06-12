@@ -22,6 +22,10 @@ const {
   parseAddressInput,
   upsertAddresses,
   formatAddressForResponse,
+  buildNoteEntry,
+  attachUserIdToNotes,
+  enrichNotesWithAuthors,
+  enrichNotesForManyRecords,
 } = require('../utils/subdocumentHelpers');
 const path = require('path');
 const fs = require('fs');
@@ -404,6 +408,9 @@ exports.getCustomer = async (req, res) => {
     if (Array.isArray(updatedCustomer.addresses)) {
       updatedCustomer.addresses = updatedCustomer.addresses.map(formatAddressForResponse);
     }
+    if (Array.isArray(updatedCustomer.notes)) {
+      updatedCustomer.notes = await enrichNotesWithAuthors(updatedCustomer.notes);
+    }
 
     return res.status(200).json({
       customer: updatedCustomer,
@@ -415,6 +422,86 @@ exports.getCustomer = async (req, res) => {
   } catch (error) {
     console.error('Get customer error:', error);
     return res.status(500).json({ message: 'Server error fetching customer.' });
+  }
+};
+
+exports.getCustomerNotes = async (req, res) => {
+  try {
+    const customerId = req.params.id || req.query.customer_id || req.query.customerId;
+
+    if (!customerId || !mongoose.Types.ObjectId.isValid(customerId)) {
+      return res.status(400).json({ message: 'Valid customer id is required.' });
+    }
+
+    const customer = await Customer.findById(customerId).select('notes name');
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const notes = (await enrichNotesWithAuthors(customer.notes || [])).sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
+
+    return res.status(200).json({
+      customerId,
+      notes,
+      total: notes.length,
+    });
+  } catch (error) {
+    console.error('Get customer notes error:', error);
+    return res.status(500).json({ message: 'Server error fetching customer notes.' });
+  }
+};
+
+exports.addCustomerNote = async (req, res) => {
+  try {
+    const customerId =
+      req.params.id || req.body.customer_id || req.body.customerId || req.body.id;
+    const { title, note } = req.body;
+
+    if (!customerId || !mongoose.Types.ObjectId.isValid(customerId)) {
+      return res.status(400).json({ message: 'Valid customer_id is required.' });
+    }
+
+    const noteText = (note ?? '').toString().trim();
+    if (!noteText) {
+      return res.status(400).json({ message: 'note is required.' });
+    }
+
+    const customer = await Customer.findById(customerId);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const noteEntry = buildNoteEntry({
+      title,
+      note: noteText,
+      userId: req.user.id,
+    });
+
+    customer.notes = [...(customer.notes || []), noteEntry];
+    customer.lastActivity = new Date();
+    customer.markModified('notes');
+    await customer.save();
+
+    await createLog(
+      'Customer Note Added',
+      req.user.id,
+      customer.name || customer.company || 'Customer',
+      'Customer',
+      customer._id
+    );
+
+    const notes = await enrichNotesWithAuthors(customer.notes);
+
+    return res.status(201).json({
+      message: 'Customer note added successfully.',
+      note: notes[notes.length - 1],
+      notes,
+    });
+  } catch (error) {
+    console.error('Add customer note error:', error);
+    return res.status(500).json({ message: 'Server error adding customer note.' });
   }
 };
 
@@ -704,7 +791,10 @@ exports.updateCustomer = async (req, res) => {
     }
 
     if (body.notes !== undefined) {
-      const processedNotes = normalizeNotes(body.notes);
+      const processedNotes = attachUserIdToNotes(
+        normalizeNotes(body.notes).filter((item) => item.note),
+        req.user.id
+      );
       if (processedNotes.length > 0) {
         customer.notes = [...(customer.notes || []), ...processedNotes];
         customer.markModified('notes');
@@ -1109,9 +1199,20 @@ exports.getCustomersByUser = async (req, res) => {
       })
     );
 
+    const customersWithNoteAuthors = await enrichNotesForManyRecords(
+      customersWithSurveys,
+      'notes'
+    );
+
+    customersWithNoteAuthors.forEach((customer) => {
+      if (Array.isArray(customer.notes)) {
+        customer.notes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      }
+    });
+
     return res.status(200).json({
-      customers: customersWithSurveys,
-      total: customersWithSurveys.length,
+      customers: customersWithNoteAuthors,
+      total: customersWithNoteAuthors.length,
     });
   } catch (error) {
     console.error('Get customers by user error:', error);

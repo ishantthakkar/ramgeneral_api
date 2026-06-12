@@ -149,6 +149,9 @@ router.post(
     quotationController.uploadQuotation
 );
 router.post('/customers/reassign-salesperson', verifyToken, customerController.reassignSalesPerson);
+router.post('/notes', verifyToken, customerController.addCustomerNote);
+router.get('/customers/:id/notes', verifyToken, customerController.getCustomerNotes);
+router.post('/customers/:id/notes', verifyToken, customerController.addCustomerNote);
 router.get('/customers/:id/addresses', verifyToken, customerController.getCustomerAddresses);
 router.post('/customers/:id/addresses', verifyToken, customerController.saveCustomerAddresses);
 router.get('/customers/:id/contacts', verifyToken, customerController.getCustomerContacts);
@@ -180,6 +183,8 @@ router.post('/:id/installation-notes', verifyToken, customerController.addInstal
 router.post('/:id/inspection-notes', verifyToken, customerController.addInspectionNote);
 router.post('/:id/inspection-status', verifyToken, customerController.updateInspectionStatus);
 router.get('/customers/:id/activities', verifyToken, customerController.getCustomerActivities);
+router.get('/:id/notes', verifyToken, customerController.getCustomerNotes);
+router.post('/:id/notes', verifyToken, customerController.addCustomerNote);
 router.get('/:id/addresses', verifyToken, customerController.getCustomerAddresses);
 router.post('/:id/addresses', verifyToken, customerController.saveCustomerAddresses);
 router.get('/:id/contacts', verifyToken, customerController.getCustomerContacts);

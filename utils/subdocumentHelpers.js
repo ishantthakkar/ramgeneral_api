@@ -520,6 +520,35 @@ const enrichNotesWithAuthors = async (notes) => {
   });
 };
 
+const enrichNotesForManyRecords = async (records, notesKey = 'notes') => {
+  if (!Array.isArray(records) || !records.length) return records || [];
+
+  const cloned = records.map((record) => ({
+    ...record,
+    [notesKey]: [...(record[notesKey] || [])],
+  }));
+
+  const flatNotes = [];
+  const placements = [];
+
+  cloned.forEach((record, recordIndex) => {
+    (record[notesKey] || []).forEach((note, noteIndex) => {
+      flatNotes.push(note);
+      placements.push({ recordIndex, noteIndex });
+    });
+  });
+
+  if (!flatNotes.length) return cloned;
+
+  const enriched = await enrichNotesWithAuthors(flatNotes);
+
+  placements.forEach(({ recordIndex, noteIndex }, flatIndex) => {
+    cloned[recordIndex][notesKey][noteIndex] = enriched[flatIndex];
+  });
+
+  return cloned;
+};
+
 const normalizeNotes = (notes, userId = null) => {
   if (notes === undefined || notes === null) return [];
   const parsed = tryParseJson(notes);
@@ -597,6 +626,7 @@ module.exports = {
   attachUserIdToNotes,
   formatNoteForResponse,
   enrichNotesWithAuthors,
+  enrichNotesForManyRecords,
   normalizeActivityLog,
   normalizeBillFilenames,
   normalizeBusinessCardFilenames,
