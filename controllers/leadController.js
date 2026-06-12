@@ -1183,22 +1183,6 @@ exports.getLead = async (req, res) => {
   }
 };
 
-const mapLeadNotesForCustomer = (leadNotes) => {
-  if (!Array.isArray(leadNotes)) return [];
-  return leadNotes
-    .map((n) => {
-      const noteText = (n?.note ?? '').toString().trim();
-      const title = (n?.title ?? '').toString().trim();
-      if (!noteText && !title) return null;
-      return {
-        title,
-        note: noteText || title,
-        createdAt: n?.createdAt || new Date(),
-      };
-    })
-    .filter(Boolean);
-};
-
 const buildCustomerPayloadFromLead = (lead, userId) => {
   const leadObj = lead.toObject ? lead.toObject() : lead;
 
@@ -1223,7 +1207,6 @@ const buildCustomerPayloadFromLead = (lead, userId) => {
     },
     addresses: toPlainSubdocs(leadObj.addresses),
     contactInfo: toPlainSubdocs(leadObj.contactInfo),
-    notes: mapLeadNotesForCustomer(leadObj.notes),
     convertedDate: new Date(),
     lastActivity: leadObj.lastActivity || new Date(),
     status: 'New',
