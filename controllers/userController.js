@@ -66,21 +66,54 @@ function isWorkingDayMatch(workingDayValue, targetDate) {
 }
 
 function parseDateOnly(value) {
-  if (!value) return null;
+  if (value === undefined || value === null) return null;
   const text = value.toString().trim();
   if (!text) return null;
 
-  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
-  if (!isoMatch) return null;
+  const isoDateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (isoDateMatch) {
+    const y = Number(isoDateMatch[1]);
+    const m = Number(isoDateMatch[2]);
+    const d = Number(isoDateMatch[3]);
+    const dt = new Date(y, m - 1, d);
+    if (
+      Number.isNaN(dt.getTime()) ||
+      dt.getFullYear() !== y ||
+      dt.getMonth() !== m - 1 ||
+      dt.getDate() !== d
+    ) {
+      return null;
+    }
+    return dt;
+  }
 
-  const y = Number(isoMatch[1]);
-  const m = Number(isoMatch[2]);
-  const d = Number(isoMatch[3]);
-  if (!y || !m || !d) return null;
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
 
-  const dt = new Date(y, m - 1, d);
-  if (Number.isNaN(dt.getTime())) return null;
-  return dt;
+  return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+}
+
+function formatLocalDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function resolveRequestedDate(dateParam) {
+  if (dateParam === undefined || dateParam === null || String(dateParam).trim() === '') {
+    return { date: new Date(), error: null };
+  }
+
+  const parsed = parseDateOnly(dateParam);
+  if (!parsed) {
+    return {
+      date: null,
+      error: 'Invalid date. Use YYYY-MM-DD format (e.g. 2026-06-15).',
+    };
+  }
+
+  return { date: parsed, error: null };
 }
 
 function parseTimeToMinutes(value) {
@@ -281,10 +314,15 @@ exports.loginUser = async (req, res) => {
 exports.getUserWorkingHours = async (req, res) => {
   try {
     const id = req.user?.id;
-    const dateParam = req.query?.date;
+    const dateParam = req.query?.date ?? req.body?.date;
 
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return res.status(401).json({ message: 'Invalid authenticated user.' });
+    }
+
+    const { date: requestedDate, error: dateError } = resolveRequestedDate(dateParam);
+    if (dateError) {
+      return res.status(400).json({ message: dateError });
     }
 
     const user = await User.findById(id)
@@ -295,21 +333,13 @@ exports.getUserWorkingHours = async (req, res) => {
       return res.status(404).json({ message: 'User not found.' });
     }
 
-    const requestedDate = parseDateOnly(dateParam) || new Date();
     const dayName = DAY_NAMES[requestedDate.getDay()];
-    const isWorkingToday = (user.workingDays || []).some((d) =>
+    const isWorkingDay = (user.workingDays || []).some((d) =>
       isWorkingDayMatch(d, requestedDate)
     );
 
     const fromMinutes = parseTimeToMinutes(user.workingFrom);
     const toMinutes = parseTimeToMinutes(user.workingTo);
-
-    const now = new Date();
-    const isToday =
-      now.getFullYear() === requestedDate.getFullYear() &&
-      now.getMonth() === requestedDate.getMonth() &&
-      now.getDate() === requestedDate.getDate();
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
     const slot = [];
     for (let start = 0; start < 24 * 60; start += 60) {
@@ -322,15 +352,22 @@ exports.getUserWorkingHours = async (req, res) => {
 
       slot.push({
         time: formatMinutesToRange(start, end),
-        available: Boolean(isWorkingToday && isWithinWorkingHours),
+        available: Boolean(isWorkingDay && isWithinWorkingHours),
       });
     }
+
+    const today = formatLocalDate(new Date());
 
     return res.status(200).json({
       user_id: id,
       fullName: user.fullName,
-      date: requestedDate.toISOString().slice(0, 10),
+      date: formatLocalDate(requestedDate),
       day: dayName,
+      isWorkingDay,
+      isToday: formatLocalDate(requestedDate) === today,
+      workingFrom: user.workingFrom || '',
+      workingTo: user.workingTo || '',
+      workingDays: user.workingDays || [],
       slot,
     });
   } catch (error) {

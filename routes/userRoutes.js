@@ -47,6 +47,7 @@ router.post(
   userController.uploadProfileImage
 );
 router.get('/working-hours', verifyToken, userController.getUserWorkingHours);
+router.post('/working-hours', verifyToken, userController.getUserWorkingHours);
 router.get('/:id([0-9a-fA-F]{24})', verifyToken, userController.getUser);
 
 module.exports = router;

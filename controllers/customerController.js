@@ -63,6 +63,7 @@ function mapUserSummary(user) {
 }
 const { enrichAreasWithProducts } = require('../utils/surveyProductUtils');
 const { applySurveySiteUpdates } = require('../utils/surveySiteUpdate');
+const { enrichSurveyNotesInObject } = require('../utils/surveyNotes');
 
 async function formatSurveysForResponse(surveys, surveyBaseUrl) {
   return Promise.all(
@@ -95,7 +96,7 @@ async function formatSurveysForResponse(surveys, surveyBaseUrl) {
           return `${surveyBaseUrl}${filename}`;
         });
       }
-      return surveyObj;
+      return enrichSurveyNotesInObject(surveyObj);
     })
   );
 }

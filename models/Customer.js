@@ -258,12 +258,5 @@ const customerSchema = new mongoose.Schema({
   timestamps: true,
 });
 
-customerSchema.pre('validate', async function (next) {
-  if (!this.accountNumber) {
-    this.accountNumber = Math.floor(1000 + Math.random() * 9000).toString();
-  }
-  next();
-});
-
 const Customer = mongoose.model('Customer', customerSchema);
 module.exports = Customer;

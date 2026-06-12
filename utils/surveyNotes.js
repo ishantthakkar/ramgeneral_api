@@ -1,4 +1,4 @@
-const { normalizeNotes } = require('./subdocumentHelpers');
+const { normalizeNotes, enrichNotesWithAuthors } = require('./subdocumentHelpers');
 
 const coerceSurveyNotes = (notes) => {
   if (notes === undefined || notes === null || notes === '') return [];
@@ -63,9 +63,19 @@ const sanitizeSurveyDocumentNotes = (survey) => {
   return survey;
 };
 
+const enrichSurveyNotesInObject = async (surveyObj) => {
+  if (!surveyObj || typeof surveyObj !== 'object') return surveyObj;
+
+  return {
+    ...surveyObj,
+    notes: await enrichNotesWithAuthors(coerceSurveyNotes(surveyObj.notes)),
+  };
+};
+
 module.exports = {
   coerceSurveyNotes,
   surveyNotesNeedCoercion,
   getRawSurveyNotes,
   sanitizeSurveyDocumentNotes,
+  enrichSurveyNotesInObject,
 };
