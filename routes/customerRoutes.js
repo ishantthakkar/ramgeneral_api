@@ -169,13 +169,13 @@ router.post(
 );
 router.post('/customers/:id/assign-contractor', verifyToken, customerController.assignContractor);
 router.post('/customers/:id/assign', verifyToken, customerController.assignCustomer);
+router.post('/surveys/edit-status', verifyToken, customerController.updateSurveyEditStatus);
 router.post('/:surveyId/:status/update-status', verifyToken, customerController.updateCustomerSurveyStatus);
 router.post('/customers/:id/materials', verifyToken, upload.array('images', 10), customerController.addCustomerMaterial);
 router.post('/customers/:id/assign-to-contractor', verifyToken, customerController.assignToContractor);
 router.post('/customers/:id/verify', verifyToken, customerController.verifyCustomer);
 router.post('/:id/activities', verifyToken, customerController.addCustomerActivity);
 router.post('/customers/:id/commissions', verifyToken, customerController.updateCustomerCommissions);
-router.post('/:id/edit-status', verifyToken, customerController.editCustomerStatus);
 router.post('/:id/admin-approval', verifyToken, customerController.adminApprovalStatus);
 router.post('/:id/material-status', verifyToken, customerController.confirmMaterialStatus);
 router.post('/:id/installation-status', verifyToken, customerController.updateInstallationStatus);

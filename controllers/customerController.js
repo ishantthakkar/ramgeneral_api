@@ -1981,30 +1981,58 @@ exports.customerCommissionList = async (req, res) => {
   }
 };
 
-exports.editCustomerStatus = async (req, res) => {
+exports.updateSurveyEditStatus = async (req, res) => {
   try {
-    const { id } = req.params;
+    const surveyId = req.body.survey_id ?? req.body.surveyId;
+    const status = String(req.body.status || '').trim().toLowerCase();
 
-    const customer = await Customer.findByIdAndUpdate(
-      id,
-      { status: 'pending_edit_approval', adminApproval: 'Pending' },
-      { new: true, runValidators: true }
-    );
-
-    if (!customer) {
-      return res.status(404).json({ message: 'Customer not found.' });
+    if (!surveyId) {
+      return res.status(400).json({ message: 'survey_id is required.' });
     }
 
-    const { createLog } = require('../utils/logger');
-    await createLog(`Customer Status Reopened`, req.user.id, customer.name, 'Customer', customer._id);
+    const allowedStatuses = ['pending', 'approved', 'rejected'];
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        message: `Invalid status. Allowed: ${allowedStatuses.join(', ')}`,
+      });
+    }
+
+    const user_id = req.user.id;
+
+    const survey = await Survey.findById(surveyId);
+    if (!survey) {
+      return res.status(404).json({ message: 'Survey not found.' });
+    }
+
+    survey.editApprovalStatus = status;
+    survey.editApprovalBy = user_id;
+    survey.editApprovalAt = new Date();
+
+    if (status === 'approved') {
+      survey.status = 'in_progress';
+    }
+
+    await survey.save();
+
+    const customer = survey.customer_id
+      ? await Customer.findById(survey.customer_id).select('name')
+      : null;
+
+    await createLog(
+      `Survey Edit ${status}`,
+      user_id,
+      customer?.name || survey.surveyName || 'Survey',
+      'Survey',
+      survey._id
+    );
 
     return res.status(200).json({
-      message: 'Customer status updated to reopen successfully.',
-      customer,
+      message: `Survey edit status updated to '${status}' successfully.`,
+      survey,
     });
   } catch (error) {
-    console.error('Edit customer status error:', error);
-    return res.status(500).json({ message: 'Server error updating customer status.' });
+    console.error('Update survey edit status error:', error);
+    return res.status(500).json({ message: 'Server error updating survey edit status.' });
   }
 };
 
@@ -2024,11 +2052,14 @@ exports.adminApprovalStatus = async (req, res) => {
     const isAdmin = await Admin.findById(user_id);
 
     if (!isAdmin) {
-      // Check if user is Project Manager
-      const User = require('../models/User');
       const user = await User.findById(user_id);
-      if (!user || user.userRole !== 'Project Manager') {
-        return res.status(403).json({ message: 'Only Admins or Project Managers can approve or reject.' });
+      const canApprove =
+        user &&
+        (user.userRole === 'Project Manager' || isSalesManagerRole(user.userRole));
+      if (!canApprove) {
+        return res.status(403).json({
+          message: 'Only Admins, Project Managers, or Sales Managers can approve or reject.',
+        });
       }
     }
 

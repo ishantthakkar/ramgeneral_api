@@ -70,6 +70,16 @@ const surveySchema = new mongoose.Schema({
   verifyQty: { type: Number, default: 0 },
   issueFound: { type: String, trim: true, enum: ['yes', 'no'], default: 'no' },
   verificationComments: { type: String, trim: true, default: '' },
+  editApprovalStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending',
+  },
+  editApprovalBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  },
+  editApprovalAt: { type: Date },
   quotationStatus: {
     type: String,
     enum: ['pending', 'approved'],
