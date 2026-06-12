@@ -60,8 +60,18 @@ const formatSurveyResponse = async (surveyObj) => {
     return surveyObj;
 };
 
-const parseFixtureInput = (item) => ({
-    _id: item?._id ?? item?.id ?? undefined,
+const getSubdocId = (item) => {
+    if (!item) return null;
+    const id = item.id ?? item._id ?? item.areaId ?? item.fixtureId;
+    if (!id) return null;
+    const value = String(id).trim();
+    return value || null;
+};
+
+const parseFixtureInput = (item) => {
+    const subdocId = getSubdocId(item);
+    return {
+    ...(subdocId ? { _id: subdocId } : {}),
     product_id: toProductObjectId(item?.product_id ?? item?.productId),
     heightFt: (item?.heightFt ?? item?.height_ft ?? '').toString().trim(),
     heightIn: (item?.heightIn ?? item?.height_in ?? '').toString().trim(),
@@ -86,43 +96,47 @@ const parseFixtureInput = (item) => ({
         .trim(),
     price: item?.price !== undefined && item?.price !== null ? String(item.price).trim() : '',
     images: [],
-});
+};
+};
+
+const parseAreaInput = (item) => {
+    const subdocId = getSubdocId(item);
+    const areaName = (item?.areaName ?? item?.area_name ?? '').toString().trim();
+    const areaNote = (item?.areaNote ?? item?.area_note ?? '').toString().trim();
+
+    if (Array.isArray(item?.fixtures)) {
+        return {
+            ...(subdocId ? { _id: subdocId } : {}),
+            areaName,
+            note: areaNote,
+            images: [],
+            fixtures: item.fixtures.map(parseFixtureInput),
+        };
+    }
+
+    const hasFixtureFields =
+        item?.product_id ||
+        item?.productId ||
+        item?.existingFixtureType ||
+        item?.existing_fixture_type ||
+        item?.heightFt ||
+        item?.height_ft;
+
+    return {
+        ...(subdocId ? { _id: subdocId } : {}),
+        areaName,
+        note: areaNote,
+        images: [],
+        fixtures: hasFixtureFields ? [parseFixtureInput(item)] : [],
+    };
+};
 
 const parseAreasInput = (areas) => {
     if (areas === undefined || areas === null || areas === '') return [];
     const parsed = tryParseJson(areas);
     if (!Array.isArray(parsed)) return null;
 
-    return parsed.map((item) => {
-        const areaName = (item?.areaName ?? item?.area_name ?? '').toString().trim();
-        const areaNote = (item?.areaNote ?? item?.area_note ?? '').toString().trim();
-
-        if (Array.isArray(item?.fixtures)) {
-            return {
-                _id: item?._id ?? item?.id ?? undefined,
-                areaName,
-                note: areaNote,
-                images: [],
-                fixtures: item.fixtures.map(parseFixtureInput),
-            };
-        }
-
-        const hasFixtureFields =
-            item?.product_id ||
-            item?.productId ||
-            item?.existingFixtureType ||
-            item?.existing_fixture_type ||
-            item?.heightFt ||
-            item?.height_ft;
-
-        return {
-            _id: item?._id ?? item?.id ?? undefined,
-            areaName,
-            note: areaNote,
-            images: [],
-            fixtures: hasFixtureFields ? [parseFixtureInput(item)] : [],
-        };
-    });
+    return parsed.map(parseAreaInput);
 };
 
 const validateAreasForCustomer = async (areas, customerId) => {
@@ -221,6 +235,58 @@ const applyFixtureUpdates = (existingFixture, fixture) => {
     if (fixture.images && fixture.images.length > 0) {
         existingFixture.images = [...(existingFixture.images || []), ...fixture.images];
     }
+};
+
+const stripSubdocId = (item) => {
+    const copy = { ...item };
+    delete copy._id;
+    delete copy.id;
+    delete copy.areaId;
+    delete copy.fixtureId;
+    return copy;
+};
+
+const upsertSurveyAreas = (survey, incomingAreas) => {
+    for (const area of incomingAreas) {
+        const areaId = getSubdocId(area);
+
+        if (areaId) {
+            const existingArea = survey.areas.id(areaId);
+            if (!existingArea) {
+                const error = new Error(`Area not found: ${areaId}`);
+                error.code = 'AREA_NOT_FOUND';
+                throw error;
+            }
+
+            if (area.areaName !== undefined) existingArea.areaName = area.areaName;
+            if (area.note !== undefined) existingArea.note = area.note;
+            if (area.images?.length) {
+                existingArea.images = [...(existingArea.images || []), ...area.images];
+            }
+
+            for (const fixture of area.fixtures || []) {
+                const fixtureId = getSubdocId(fixture);
+                if (fixtureId) {
+                    const existingFixture = existingArea.fixtures.id(fixtureId);
+                    if (!existingFixture) {
+                        const error = new Error(`Fixture not found: ${fixtureId}`);
+                        error.code = 'FIXTURE_NOT_FOUND';
+                        throw error;
+                    }
+                    applyFixtureUpdates(existingFixture, fixture);
+                } else {
+                    existingArea.fixtures.push(stripSubdocId(fixture));
+                }
+            }
+            continue;
+        }
+
+        const newArea = stripSubdocId(area);
+        newArea.fixtures = (area.fixtures || []).map(stripSubdocId);
+        survey.areas.push(newArea);
+    }
+
+    survey.markModified('areas');
 };
 
 const ensureUploadDir = async () => {
@@ -352,35 +418,13 @@ exports.createSurvey = async (req, res) => {
         survey.markAsCompleted = completionFlag;
 
         if (processedAreas !== null) {
-            for (const area of processedAreas) {
-                if (area._id) {
-                    const existingArea = survey.areas.id(area._id);
-                    if (existingArea) {
-                        if (area.areaName !== undefined) existingArea.areaName = area.areaName;
-                        if (area.note !== undefined) existingArea.note = area.note;
-                        if (area.images && area.images.length > 0) {
-                            existingArea.images = [...(existingArea.images || []), ...area.images];
-                        }
-
-                        for (const fixture of area.fixtures || []) {
-                            if (fixture._id) {
-                                const existingFixture = existingArea.fixtures.id(fixture._id);
-                                if (existingFixture) {
-                                    applyFixtureUpdates(existingFixture, fixture);
-                                }
-                            } else {
-                                delete fixture._id;
-                                existingArea.fixtures.push(fixture);
-                            }
-                        }
-                    }
-                } else {
-                    delete area._id;
-                    for (const fixture of area.fixtures || []) {
-                        delete fixture._id;
-                    }
-                    survey.areas.push(area);
+            try {
+                upsertSurveyAreas(survey, processedAreas);
+            } catch (upsertError) {
+                if (upsertError.code === 'AREA_NOT_FOUND' || upsertError.code === 'FIXTURE_NOT_FOUND') {
+                    return res.status(404).json({ message: upsertError.message });
                 }
+                throw upsertError;
             }
         }
 
