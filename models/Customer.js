@@ -10,7 +10,8 @@ const customerSchema = new mongoose.Schema({
   },
   accountNumber: {
     type: String,
-    required: false,
+    trim: true,
+    default: '',
   },
   leadId: {
     type: mongoose.Schema.Types.ObjectId,

@@ -35,6 +35,11 @@ const {
 
 const ALLOWED_STATUSES = ['New', 'Assigned', 'In Progress', 'Lost Leads', 'Converted To Customer'];
 
+const normalizeAccountNumber = (value) => {
+  if (value === undefined || value === null) return '';
+  return String(value).trim();
+};
+
 const resolveSalesPerson = async (salesPersonId) => {
   if (!salesPersonId || !mongoose.Types.ObjectId.isValid(salesPersonId)) {
     return { error: 'Valid salesPersonId (or sales_person_user_id) is required.' };
@@ -336,6 +341,7 @@ exports.createLead = async (req, res) => {
       dba,
       legalName,
       accountNumber,
+      account_number,
       electric_company,
       electricCompany,
       upload_electricity_bill,
@@ -383,6 +389,7 @@ exports.createLead = async (req, res) => {
       uploadElectricityBill,
       upload_electricity_bill
     );
+    const resolvedAccountNumber = normalizeAccountNumber(accountNumber ?? account_number);
 
     if (id) {
       // UPDATE RECORD
@@ -397,7 +404,9 @@ exports.createLead = async (req, res) => {
       if (company !== undefined) lead.company = company;
       if (dba !== undefined) lead.dba = dba;
       if (legalName !== undefined) lead.legalName = legalName;
-      if (accountNumber !== undefined) lead.accountNumber = accountNumber;
+      if (accountNumber !== undefined || account_number !== undefined) {
+        lead.accountNumber = resolvedAccountNumber;
+      }
       if (electricCompany !== undefined) lead.electricCompany = electricCompany;
       if (electric_company !== undefined) lead.electricCompany = electric_company;
       if (newBillFilenames.length > 0) {
@@ -525,7 +534,7 @@ exports.createLead = async (req, res) => {
         company,
         dba: dba || '',
         legalName: legalName || '',
-        accountNumber: accountNumber || '',
+        accountNumber: resolvedAccountNumber,
         electricCompany: electricCompany || electric_company || '',
         uploadElectricityBill: newBillFilenames,
         billDate: parseBillDate(billDate),
@@ -1183,15 +1192,19 @@ exports.getLead = async (req, res) => {
   }
 };
 
-const buildCustomerPayloadFromLead = (lead, userId) => {
+const buildCustomerPayloadFromLead = (lead, userId, accountNumberOverride) => {
   const leadObj = lead.toObject ? lead.toObject() : lead;
+  const accountNumber =
+    accountNumberOverride !== undefined
+      ? normalizeAccountNumber(accountNumberOverride)
+      : normalizeAccountNumber(leadObj.accountNumber);
 
   return {
     leadId: leadObj._id,
     user_id: leadObj.user_id || userId,
     name: leadObj.name || leadObj.leadName || '',
     legalName: leadObj.legalName || '',
-    ...(leadObj.accountNumber ? { accountNumber: leadObj.accountNumber } : {}),
+    accountNumber,
     company: leadObj.company || '',
     uploadElectricityBill: normalizeBillFilenames(leadObj.uploadElectricityBill),
     mobileNumber: leadObj.mobileNumber || '',
@@ -1216,13 +1229,27 @@ const buildCustomerPayloadFromLead = (lead, userId) => {
 exports.convertToCustomer = async (req, res) => {
   try {
     const { id } = req.params;
+    const { accountNumber, account_number } = req.body;
     const lead = await Lead.findById(id);
 
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    const customerPayload = buildCustomerPayloadFromLead(lead, req.user.id);
+    const hasAccountNumberField = accountNumber !== undefined || account_number !== undefined;
+    const resolvedAccountNumber = hasAccountNumberField
+      ? normalizeAccountNumber(accountNumber ?? account_number)
+      : undefined;
+
+    if (hasAccountNumberField) {
+      lead.accountNumber = resolvedAccountNumber;
+    }
+
+    const customerPayload = buildCustomerPayloadFromLead(
+      lead,
+      req.user.id,
+      resolvedAccountNumber
+    );
 
     let customer = await Customer.findOne({ leadId: lead._id });
     if (!customer) {
