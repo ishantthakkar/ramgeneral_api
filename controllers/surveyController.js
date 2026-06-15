@@ -22,6 +22,9 @@ const {
     enrichAreasWithProducts,
 } = require('../utils/surveyProductUtils');
 const { buildFixtureTypeFilter } = require('../utils/productUtils');
+
+const normalizeAssignRole = (value) =>
+    (value || '').toString().trim().toLowerCase().replace(/_/g, ' ');
 const UPLOAD_DIR = path.join(__dirname, '../uploads/surveys');
 const COMPRESS_THRESHOLD = 800 * 1024;
 const SURVEY_IMAGE_BASE = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
@@ -872,7 +875,7 @@ exports.assignSurvey = async (req, res) => {
             return res.status(404).json({ message: 'Assigned user not found.' });
         }
 
-        if (assignedUser.userRole !== 'contractor' && assignedUser.userRole !== 'Project Manager') {
+        if (!['contractor', 'project manager'].includes(normalizeAssignRole(assignedUser.userRole))) {
             return res.status(400).json({ message: 'Assigned user must be a contractor or project manager.' });
         }
 
@@ -965,11 +968,14 @@ exports.assignContractor = async (req, res) => {
 exports.installation = async (req, res) => {
     try {
         const surveys = await Survey.find({ quotationStatus: 'approved' })
-            .populate('user_id', 'fullName email name userRole mobileNumber')
-            .populate('assignedTo', 'fullName email userRole mobileNumber')
-            .populate('customer_id', 'name customerCode accountNumber company email mobileNumber phone')
-            .sort({ quotationApprovedAt: -1, updatedAt: -1 })
-            .lean();
+            .populate({
+                path: 'customer_id',
+                select: 'accountNumber name company mobileNumber phone email customerCode installationStatus',
+                populate: { path: 'leadId', select: 'lead_id leadName dba' },
+            })
+            .populate('user_id', 'fullName email mobileNumber userRole')
+            .populate('assignedTo', 'fullName email mobileNumber userRole')
+            .sort({ quotationApprovedAt: -1, updatedAt: -1 });
 
         return res.status(200).json({
             message: 'Installations retrieved successfully.',
