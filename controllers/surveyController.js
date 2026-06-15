@@ -886,46 +886,54 @@ exports.confirmVerifySurvey = async (req, res) => {
 exports.assignSurvey = async (req, res) => {
     try {
         const user_id = req.user.id;
-        console.log(user_id);
+        const surveyId = req.body.survey_id ?? req.body.surveyId ?? req.params.id;
+        const { assignedTo } = req.body;
+
         const admin = await Admin.findById(user_id);
         if (!admin) {
             return res.status(403).json({ message: 'Only admins can assign surveys.' });
         }
 
-        const { id } = req.params;
-        const { assignedTo } = req.body;
+        if (!surveyId) {
+            return res.status(400).json({ message: 'survey_id is required.' });
+        }
 
         if (!assignedTo) {
             return res.status(400).json({ message: 'assignedTo is required.' });
         }
 
-        // Check if assigned user exists and has appropriate role
         const assignedUser = await User.findById(assignedTo);
         if (!assignedUser) {
             return res.status(404).json({ message: 'Assigned user not found.' });
         }
 
-        if (assignedUser.userRole !== 'Project Manager') {
-            return res.status(400).json({ message: 'Assigned user must be a project manager.' });
+        if (assignedUser.userRole !== 'contractor' && assignedUser.userRole !== 'Project Manager') {
+            return res.status(400).json({ message: 'Assigned user must be a contractor or project manager.' });
         }
 
-        const customer = await Customer.findByIdAndUpdate(
-            id,
-            {
-                assignedTo: assignedTo,
-                projectManagerStatus: 'to-do'
-            },
-            { new: true }
-        ).populate('assignedTo', 'fullName email mobileNumber');
+        const survey = await Survey.findByIdAndUpdate(
+            surveyId,
+            { assignedTo },
+            { new: true, runValidators: true }
+        ).populate('assignedTo', 'fullName email userRole');
 
-        if (!customer) {
-            return res.status(404).json({ message: 'Customer not found.' });
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found.' });
         }
 
-        await createLog('Survey Assigned to PM', user_id, customer.name, 'Assignment', customer._id);
+        const customer = survey.customer_id
+            ? await Customer.findById(survey.customer_id).select('name')
+            : null;
 
-        return res.status(200).json({ message: 'Survey assigned successfully.' });
+        await createLog(
+            'Survey Assigned to PM/Contractor',
+            user_id,
+            customer?.name || survey.surveyName || 'Survey',
+            'Assignment',
+            survey._id
+        );
 
+        return res.status(200).json({ survey, message: 'Survey assigned successfully.' });
     } catch (error) {
         console.error('Assign survey error:', error);
         return res.status(500).json({ message: 'Server error assigning survey.' });

@@ -41,7 +41,7 @@ router.get('/surveys/products', verifyToken, surveyController.getSurveyProducts)
 router.get('/surveys/assigned', verifyToken, surveyController.listAssignedSurveys);
 router.get('/surveys/:id', verifyToken, surveyController.getSurvey);
 router.put('/surveys/:id', verifyToken, surveyController.updateSurvey);
-router.post('/surveys/:id/assign', verifyToken, surveyController.assignSurvey);
+router.post('/surveys/assign', verifyToken, surveyController.assignSurvey);
 router.post('/surveys/:id/assign-contractor', verifyToken, surveyController.assignContractor);
 router.post('/surveys/name', verifyToken, surveyController.updateSurveyName);
 router.post('/surveys/notes', verifyToken, surveyController.updateSurveyNotes);

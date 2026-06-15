@@ -168,7 +168,6 @@ router.post(
     customerController.updateCustomer
 );
 router.post('/customers/:id/assign-contractor', verifyToken, customerController.assignContractor);
-router.post('/customers/:id/assign', verifyToken, customerController.assignCustomer);
 router.post('/surveys/edit-status', verifyToken, customerController.updateSurveyEditStatus);
 router.post('/:surveyId/:status/update-status', verifyToken, customerController.updateCustomerSurveyStatus);
 router.post('/customers/:id/materials', verifyToken, upload.array('images', 10), customerController.addCustomerMaterial);

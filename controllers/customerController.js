@@ -999,53 +999,6 @@ exports.listAssignedCustomers = async (req, res) => {
   }
 };
 
-exports.assignCustomer = async (req, res) => {
-  try {
-    const user_id = req.user.id;
-    const { id } = req.params;
-    const { assignedTo } = req.body;
-
-    // Check if user is admin
-    const Admin = require('../models/Admin');
-    const admin = await Admin.findById(user_id);
-    if (!admin) {
-      return res.status(403).json({ message: 'Only admins can assign customers.' });
-    }
-
-    if (!assignedTo) {
-      return res.status(400).json({ message: 'assignedTo is required.' });
-    }
-
-    // Check if assigned user exists and has appropriate role
-    const User = require('../models/User');
-    const assignedUser = await User.findById(assignedTo);
-    if (!assignedUser) {
-      return res.status(404).json({ message: 'Assigned user not found.' });
-    }
-
-    if (assignedUser.userRole !== 'contractor' && assignedUser.userRole !== 'Project Manager') {
-      return res.status(400).json({ message: 'Assigned user must be a contractor or project manager.' });
-    }
-
-    const customer = await Customer.findByIdAndUpdate(
-      id,
-      { assignedTo },
-      { new: true, runValidators: true }
-    ).populate('assignedTo', 'fullName email userRole');
-
-    if (!customer) {
-      return res.status(404).json({ message: 'Customer not found.' });
-    }
-
-    await createLog('Customer Assigned to PM/Contractor', user_id, customer.name, 'Assignment', customer._id);
-
-    return res.status(200).json({ customer, message: 'Customer assigned successfully.' });
-  } catch (error) {
-    console.error('Assign customer error:', error);
-    return res.status(500).json({ message: 'Server error assigning customer.' });
-  }
-};
-
 exports.updateCustomerSurveyStatus = async (req, res) => {
   try {
     const { surveyId, status } = req.params;
