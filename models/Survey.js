@@ -91,6 +91,12 @@ const surveySchema = new mongoose.Schema({
   },
   quotationApprovedAt: { type: Date },
   confirmDate: { type: Date },
+  job_id: {
+    type: String,
+    trim: true,
+    unique: true,
+    sparse: true,
+  },
   generateQuotation: [quotationFileFields],
   uploadSignedQuotation: [quotationFileFields],
 }, {

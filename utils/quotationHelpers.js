@@ -304,6 +304,27 @@ function applySurveyQuotationStatusFilter(surveyFilter, statusFilter) {
   surveyFilter.quotationStatus = statusFilter;
 }
 
+function formatJobId(sequence) {
+  return `JB${sequence}`;
+}
+
+async function getNextJobId() {
+  const Survey = require('../models/Survey');
+  const surveys = await Survey.find({ job_id: /^JB\d+$/i }).select('job_id').lean();
+
+  let maxNumber = 0;
+  for (const { job_id } of surveys) {
+    const match = String(job_id || '').match(/^JB(\d+)$/i);
+    if (!match) continue;
+    const parsed = parseInt(match[1], 10);
+    if (!Number.isNaN(parsed) && parsed > maxNumber) {
+      maxNumber = parsed;
+    }
+  }
+
+  return formatJobId(maxNumber + 1);
+}
+
 module.exports = {
   quotationFileFields,
   generateUniqueQuotationNumber,
@@ -324,4 +345,6 @@ module.exports = {
   surveyQuotationDataFilter,
   applySurveyQuotationStatusFilter,
   getSurveyIdString,
+  formatJobId,
+  getNextJobId,
 };

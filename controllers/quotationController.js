@@ -27,6 +27,7 @@ const {
   uploadSignedQuotationSurveyFilter,
   surveyQuotationDataFilter,
   applySurveyQuotationStatusFilter,
+  getNextJobId,
 } = require('../utils/quotationHelpers');
 
 const API_BASE_URL = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
@@ -74,6 +75,7 @@ async function formatSurveyQuotationMeta(survey) {
     quotationApprovedBy: plain.quotationApprovedBy || null,
     quotationApprovedAt: plain.quotationApprovedAt || plain.confirmDate || null,
     confirmDate: plain.confirmDate || plain.quotationApprovedAt || null,
+    job_id: plain.job_id || '',
     quotationApprovedByUser: mapUserFromId(plain.quotationApprovedBy, userMap),
   };
 }
@@ -675,16 +677,35 @@ exports.approveQuotation = async (req, res) => {
 
     const approvedAt = new Date();
 
-    const updatedSurvey = await Survey.findByIdAndUpdate(
-      survey._id,
-      {
-        quotationStatus: 'approved',
-        quotationApprovedBy: approverId,
-        quotationApprovedAt: approvedAt,
-        confirmDate: approvedAt,
-      },
-      { new: true }
-    );
+    let updatedSurvey = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const job_id = survey.job_id || (await getNextJobId());
+
+      try {
+        updatedSurvey = await Survey.findByIdAndUpdate(
+          survey._id,
+          {
+            quotationStatus: 'approved',
+            quotationApprovedBy: approverId,
+            quotationApprovedAt: approvedAt,
+            confirmDate: approvedAt,
+            job_id,
+          },
+          { new: true, runValidators: true }
+        );
+        break;
+      } catch (err) {
+        if (err.code === 11000 && err.keyPattern?.job_id && attempt < 4) {
+          survey.job_id = '';
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (!updatedSurvey) {
+      return res.status(500).json({ message: 'Could not generate a unique job_id.' });
+    }
 
     const uploadNote =
       uploadedQuotations.length > 0
@@ -712,6 +733,7 @@ exports.approveQuotation = async (req, res) => {
       message: 'Quotation approved successfully.',
       survey_id: updatedSurvey._id,
       customerId: updatedSurvey.customer_id,
+      job_id: updatedSurvey.job_id,
       quotationStatus: quotationMeta.quotationStatus,
       quotationApprovedAt: quotationMeta.quotationApprovedAt,
       confirmDate: quotationMeta.confirmDate,
