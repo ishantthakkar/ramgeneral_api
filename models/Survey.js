@@ -30,9 +30,10 @@ const materialDeliverySchema = {
   note: { type: String, trim: true, default: '' },
   deliveryStatus: {
     type: String,
-    enum: ['pending', 'scheduled', 'delivered', 'cancelled'],
+    enum: ['pending', 'scheduled', 'delivered', 'cancelled', 'approved'],
     default: 'pending',
   },
+  images: [{ type: String, trim: true }],
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -52,6 +53,10 @@ const surveySchema = new mongoose.Schema({
     required: false,
   },
   assignedTo: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  },
+  assignToContractor: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
   },

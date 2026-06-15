@@ -217,6 +217,8 @@ function parseMaterialDeliveryItems(body) {
 
 async function formatMaterialDeliveryList(deliveries) {
   const list = Array.isArray(deliveries) ? deliveries : [];
+  const materialBaseUrl =
+    `${process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com'}/uploads/materials/`;
   const skus = [
     ...new Set(
       list.flatMap((delivery) => {
@@ -238,6 +240,12 @@ async function formatMaterialDeliveryList(deliveries) {
     return {
       ...plain,
       deliveryStatus: plain.deliveryStatus || 'pending',
+      images: (plain.images || []).map((img) => {
+        const filename = String(img || '').replace(/^\//, '');
+        if (!filename) return img;
+        if (filename.startsWith('http')) return filename;
+        return `${materialBaseUrl}${filename}`;
+      }),
       items: (plain.items || []).map((item) => {
         const skuValue = (item.sku ?? '').toString().trim();
         const product = skuValue ? productMap.get(skuValue) : null;
@@ -1053,29 +1061,50 @@ exports.updateCustomer = async (req, res) => {
 
 exports.assignContractor = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { contractor } = req.body;
+    const user_id = req.user.id;
+    const surveyId = req.body.survey_id ?? req.body.surveyId;
+    const contractorId =
+      req.body.contractor ?? req.body.contractorId ?? req.body.assignToContractor;
 
-    if (!contractor) {
-      return res.status(400).json({ message: 'Contractor value is required.' });
+    if (!surveyId) {
+      return res.status(400).json({ message: 'survey_id is required.' });
     }
 
-    const customer = await Customer.findByIdAndUpdate(
-      id,
-      {
-        assignToContractor: contractor,
-        contractorStatus: 'New'
-      },
-      { new: true }
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractor is required.' });
+    }
+
+    const contractorUser = await User.findById(contractorId);
+    if (!contractorUser) {
+      return res.status(404).json({ message: 'Contractor user not found.' });
+    }
+
+    const survey = await Survey.findByIdAndUpdate(
+      surveyId,
+      { assignToContractor: contractorId },
+      { new: true, runValidators: true }
     ).populate('assignToContractor', 'fullName email userRole mobileNumber');
 
-    if (!customer) {
-      return res.status(404).json({ message: 'Customer not found.' });
+    if (!survey) {
+      return res.status(404).json({ message: 'Survey not found.' });
     }
 
-    await createLog('Contractor Value Assigned', req.user.id, customer.name, 'Customer', customer._id);
+    const customer = survey.customer_id
+      ? await Customer.findById(survey.customer_id).select('name')
+      : null;
 
-    return res.status(200).json({ customer, message: 'Contractor assigned successfully.' });
+    await createLog(
+      'Contractor Assigned to Survey',
+      user_id,
+      customer?.name || survey.surveyName || 'Survey',
+      'Survey',
+      survey._id
+    );
+
+    return res.status(200).json({
+      survey,
+      message: 'Contractor assigned successfully.',
+    });
   } catch (error) {
     console.error('Assign contractor error:', error);
     return res.status(500).json({ message: 'Server error assigning contractor.' });
@@ -1341,39 +1370,55 @@ exports.getCustomersByContractor = async (req, res) => {
       });
     }
 
-    // Fetch customers assigned to this contractor
-    const customers = await Customer.find({
-      assignToContractor: userId,
-    }).sort({ createdAt: -1 });
+    const surveyBaseUrl = 'https://ramgeneral-api.onrender.com/uploads/surveys/';
+    const materialBaseUrl = 'https://ramgeneral-api.onrender.com/uploads/materials/';
 
-    // Fetch all surveys for these customers
-    const customerIds = customers.map(customer => customer._id);
+    const surveys = await Survey.find({ assignToContractor: userId })
+      .populate({
+        path: 'customer_id',
+        select: 'name accountNumber mobileNumber email company leadSource createdAt convertedDate assignToContractor contractorStatus projectManagerStatus verifyStatus',
+        populate: [
+          { path: 'assignToContractor', select: 'fullName email mobileNumber userRole' },
+          { path: 'assignedTo', select: 'fullName email mobileNumber userRole' },
+          {
+            path: 'user_id',
+            select: 'fullName name email userRole mobileNumber',
+            populate: { path: 'reportsTo', select: 'fullName userRole' },
+          },
+        ],
+      })
+      .populate('user_id', 'fullName email name userRole mobileNumber')
+      .sort({ createdAt: -1 });
 
-    const surveys = await Survey.find({
-      customer_id: { $in: customerIds },
-    });
+    const formattedSurveys = await formatSurveysForResponse(surveys, surveyBaseUrl);
 
-    // Attach surveys to customers
-    const customersWithSurveys = customers.map(customer => {
-      const customerObj = customer.toObject();
+    const surveysWithDetails = await Promise.all(
+      formattedSurveys.map(async (survey, index) => {
+        const customerDetails = await formatCustomerForSurveyResponse(
+          surveys[index].customer_id,
+          materialBaseUrl
+        );
 
-      customerObj.surveys = surveys.filter(
-        survey =>
-          survey.customer_id.toString() === customer._id.toString()
-      );
-
-      return customerObj;
-    });
+        return {
+          ...survey,
+          customer_id: customerDetails,
+          materialSummary: buildMaterialSummaryFromAreas(survey.areas),
+          materialDelivery: await formatMaterialDeliveryList(surveys[index].materialDelivery),
+          materialDeliveryReturn: surveys[index].materialDeliveryReturn || [],
+          deliverySummary: surveys[index].deliverySummary || [],
+        };
+      })
+    );
 
     return res.status(200).json({
-      customers: customersWithSurveys,
+      total: surveysWithDetails.length,
+      surveys: surveysWithDetails,
     });
-
   } catch (error) {
     console.error('Get customers by contractor error:', error);
 
     return res.status(500).json({
-      message: 'Server error fetching customers by contractor.',
+      message: 'Server error fetching surveys for Contractor.',
       error: error.message,
     });
   }
@@ -1407,6 +1452,7 @@ exports.getCustomersByPM = async (req, res) => {
       })
       .populate('user_id', 'fullName email name userRole mobileNumber')
       .populate('assignedTo', 'fullName email userRole mobileNumber')
+      .populate('assignToContractor', 'fullName email userRole mobileNumber')
       .populate('editApprovalBy', 'fullName email userRole')
       .sort({ createdAt: -1 });
 
@@ -1448,6 +1494,7 @@ exports.addSurveyMaterialDelivery = async (req, res) => {
   try {
     const user_id = req.user.id;
     const surveyId = req.body.survey_id ?? req.body.surveyId;
+    const deliveryId = req.body.id ?? req.body._id ?? req.body.material_delivery_id;
     const {
       date,
       delivery_date,
@@ -1477,16 +1524,21 @@ exports.addSurveyMaterialDelivery = async (req, res) => {
       return res.status(400).json({ message: 'survey_id is required.' });
     }
 
-    const items = parseMaterialDeliveryItems(req.body);
-    if (!items.length) {
+    const hasItemsInput =
+      req.body.items !== undefined || req.body.sku !== undefined;
+    const parsedItems = hasItemsInput ? parseMaterialDeliveryItems(req.body) : null;
+
+    if (!deliveryId && (!parsedItems || !parsedItems.length)) {
       return res.status(400).json({ message: 'At least one delivery item with sku is required.' });
     }
 
-    const skus = items.map((item) => item.sku);
-    const foundProducts = await Product.find({ sku: { $in: skus } }).select('sku').lean();
-    const foundSkuSet = new Set(foundProducts.map((product) => product.sku));
-    if (!skus.every((skuValue) => foundSkuSet.has(skuValue))) {
-      return res.status(400).json({ message: 'One or more products not found.' });
+    if (parsedItems?.length) {
+      const skus = parsedItems.map((item) => item.sku);
+      const foundProducts = await Product.find({ sku: { $in: skus } }).select('sku').lean();
+      const foundSkuSet = new Set(foundProducts.map((product) => product.sku));
+      if (!skus.every((skuValue) => foundSkuSet.has(skuValue))) {
+        return res.status(400).json({ message: 'One or more products not found.' });
+      }
     }
 
     const survey = await Survey.findById(surveyId);
@@ -1494,21 +1546,55 @@ exports.addSurveyMaterialDelivery = async (req, res) => {
       return res.status(404).json({ message: 'Survey not found.' });
     }
 
-    const deliveryEntry = {
-      date: date || delivery_date ? new Date(date || delivery_date) : new Date(),
-      time: (time ?? time_slot ?? '').toString().trim(),
-      items,
-      note: (note ?? '').toString().trim(),
-      deliveryStatus: (deliveryStatus ?? delivery_status ?? 'pending').toString().trim().toLowerCase(),
-      createdBy: user_id,
-      createdAt: new Date(),
-    };
+    let savedDelivery;
+    let action = 'created';
 
-    if (!['pending', 'scheduled', 'delivered', 'cancelled'].includes(deliveryEntry.deliveryStatus)) {
-      deliveryEntry.deliveryStatus = 'pending';
+    if (deliveryId) {
+      const existingDelivery = survey.materialDelivery.id(deliveryId);
+      if (!existingDelivery) {
+        return res.status(404).json({ message: 'Material delivery not found.' });
+      }
+
+      if (date !== undefined || delivery_date !== undefined) {
+        existingDelivery.date = new Date(date || delivery_date);
+      }
+      if (time !== undefined || time_slot !== undefined) {
+        existingDelivery.time = (time ?? time_slot ?? '').toString().trim();
+      }
+      if (note !== undefined) {
+        existingDelivery.note = note.toString().trim();
+      }
+      if (deliveryStatus !== undefined || delivery_status !== undefined) {
+        const status = (deliveryStatus ?? delivery_status).toString().trim().toLowerCase();
+        if (['pending', 'scheduled', 'delivered', 'cancelled', 'approved'].includes(status)) {
+          existingDelivery.deliveryStatus = status;
+        }
+      }
+      if (parsedItems?.length) {
+        existingDelivery.items = parsedItems;
+      }
+
+      savedDelivery = existingDelivery;
+      action = 'updated';
+    } else {
+      const deliveryEntry = {
+        date: date || delivery_date ? new Date(date || delivery_date) : new Date(),
+        time: (time ?? time_slot ?? '').toString().trim(),
+        items: parsedItems,
+        note: (note ?? '').toString().trim(),
+        deliveryStatus: (deliveryStatus ?? delivery_status ?? 'pending').toString().trim().toLowerCase(),
+        createdBy: user_id,
+        createdAt: new Date(),
+      };
+
+      if (!['pending', 'scheduled', 'delivered', 'cancelled', 'approved'].includes(deliveryEntry.deliveryStatus)) {
+        deliveryEntry.deliveryStatus = 'pending';
+      }
+
+      survey.materialDelivery.push(deliveryEntry);
+      savedDelivery = survey.materialDelivery[survey.materialDelivery.length - 1];
     }
 
-    survey.materialDelivery.push(deliveryEntry);
     survey.markModified('materialDelivery');
     await survey.save();
 
@@ -1517,24 +1603,100 @@ exports.addSurveyMaterialDelivery = async (req, res) => {
       : null;
 
     await createLog(
-      'Survey Material Delivery Scheduled',
+      action === 'updated' ? 'Survey Material Delivery Updated' : 'Survey Material Delivery Scheduled',
       user_id,
       customer?.name || survey.surveyName || 'Survey',
       'Survey',
       survey._id
     );
 
-    const savedDelivery = survey.materialDelivery[survey.materialDelivery.length - 1];
     const [formattedDelivery] = await formatMaterialDeliveryList([savedDelivery]);
 
     return res.status(200).json({
-      message: 'Material delivery scheduled successfully.',
+      message:
+        action === 'updated'
+          ? 'Material delivery updated successfully.'
+          : 'Material delivery scheduled successfully.',
       survey_id: survey._id,
       materialDelivery: formattedDelivery,
     });
   } catch (error) {
     console.error('Add survey material delivery error:', error);
     return res.status(500).json({ message: 'Server error scheduling material delivery.' });
+  }
+};
+
+exports.markDeliveryAsCompleted = async (req, res) => {
+  try {
+    const user_id = req.user.id;
+    const deliveryId =
+      req.body.delivery_id ?? req.body.deliveryId ?? req.body.id ?? req.body._id;
+
+    const Admin = require('../models/Admin');
+    const isAdmin = await Admin.findById(user_id);
+    let isAuthorized = !!isAdmin;
+
+    if (!isAuthorized) {
+      const user = await User.findById(user_id);
+      if (user && user.userRole === 'Project Manager') {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ message: 'Only admins or project managers can approve delivery.' });
+    }
+
+    if (!deliveryId) {
+      return res.status(400).json({ message: 'delivery_id is required.' });
+    }
+
+    const survey = await Survey.findOne({ 'materialDelivery._id': deliveryId });
+
+    if (!survey) {
+      return res.status(404).json({ message: 'Material delivery not found.' });
+    }
+
+    const delivery = survey.materialDelivery.id(deliveryId);
+    if (!delivery) {
+      return res.status(404).json({ message: 'Material delivery not found.' });
+    }
+
+    if (delivery.deliveryStatus === 'approved') {
+      return res.status(400).json({ message: 'Delivery is already approved.' });
+    }
+
+    const uploadedImages = (req.files || []).map((file) => file.filename);
+    if (uploadedImages.length) {
+      delivery.images = [...(delivery.images || []), ...uploadedImages];
+    }
+
+    delivery.deliveryStatus = 'approved';
+    survey.markModified('materialDelivery');
+    await survey.save();
+
+    const customer = survey.customer_id
+      ? await Customer.findById(survey.customer_id).select('name')
+      : null;
+
+    await createLog(
+      'Survey Material Delivery Approved',
+      user_id,
+      customer?.name || survey.surveyName || 'Survey',
+      'Survey',
+      survey._id
+    );
+
+    const [formattedDelivery] = await formatMaterialDeliveryList([delivery]);
+
+    return res.status(200).json({
+      message: 'Delivery marked as approved successfully.',
+      survey_id: survey._id,
+      materialDelivery: formattedDelivery,
+    });
+  } catch (error) {
+    console.error('Mark delivery as completed error:', error);
+    return res.status(500).json({ message: 'Server error approving delivery.' });
   }
 };
 
