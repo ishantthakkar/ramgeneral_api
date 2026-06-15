@@ -1066,6 +1066,9 @@ exports.updateCustomerSurveyStatus = async (req, res) => {
     }
 
     survey.status = status;
+    if (status === 'submitted') {
+      survey.editApprovalStatus = 'none';
+    }
     await survey.save();
 
     let customer = null;
