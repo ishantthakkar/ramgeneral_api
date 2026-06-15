@@ -40,7 +40,7 @@ const surveySchema = new mongoose.Schema({
   status: {
     type: String,
     trim: true,
-    enum: ['Draft', 'In Progress', 'Completed', 'draft', 'in_progress', 'completed', 'submitted'],
+    enum: ['Draft', 'In Progress', 'Completed', 'draft', 'in_progress', 'completed', 'submitted', 'reopen'],
     default: 'Draft',
   },
   surveyName: { type: String, trim: true, default: '' },
@@ -72,8 +72,8 @@ const surveySchema = new mongoose.Schema({
   verificationComments: { type: String, trim: true, default: '' },
   editApprovalStatus: {
     type: String,
-    enum: ['pending', 'approved', 'rejected'],
-    default: 'pending',
+    enum: ['none', 'pending', 'approved', 'rejected'],
+    default: 'none',
   },
   editApprovalBy: {
     type: mongoose.Schema.Types.ObjectId,

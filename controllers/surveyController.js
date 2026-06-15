@@ -347,6 +347,7 @@ exports.createNewSurvey = async (req, res) => {
             customer_id,
             user_id,
             surveyName: surveyName || '',
+            editApprovalStatus: 'none',
             status: 'in_progress',
             areas: []
         });

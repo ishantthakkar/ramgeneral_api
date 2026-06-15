@@ -2009,7 +2009,7 @@ exports.updateSurveyEditStatus = async (req, res) => {
     survey.editApprovalAt = new Date();
 
     if (status === 'approved') {
-      survey.status = 'in_progress';
+      survey.status = 'reopen';
     }
 
     await survey.save();
