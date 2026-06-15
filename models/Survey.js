@@ -18,6 +18,31 @@ const fixtureSchema = {
   images: [{ type: String, trim: true }],
 };
 
+const materialDeliveryItemSchema = {
+  product_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Product',
+  },
+  issued_qty: { type: Number, default: 0 },
+};
+
+const materialDeliverySchema = {
+  date: { type: Date },
+  time: { type: String, trim: true, default: '' },
+  items: [materialDeliveryItemSchema],
+  note: { type: String, trim: true, default: '' },
+  deliveryStatus: {
+    type: String,
+    enum: ['pending', 'scheduled', 'delivered', 'cancelled'],
+    default: 'pending',
+  },
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  },
+  createdAt: { type: Date, default: Date.now },
+};
+
 const surveySchema = new mongoose.Schema({
   customer_id: {
     type: mongoose.Schema.Types.ObjectId,
@@ -97,6 +122,9 @@ const surveySchema = new mongoose.Schema({
     unique: true,
     sparse: true,
   },
+  materialDelivery: [materialDeliverySchema],
+  materialDeliveryReturn: { type: Array, default: [] },
+  deliverySummary: { type: Array, default: [] },
   generateQuotation: [quotationFileFields],
   uploadSignedQuotation: [quotationFileFields],
 }, {

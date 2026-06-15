@@ -3,6 +3,7 @@ const Customer = require('../models/Customer');
 const Lead = require('../models/Lead');
 const Survey = require('../models/Survey');
 const User = require('../models/User');
+const Product = require('../models/Product');
 const CustomerActivity = require('../models/CustomerActivity');
 const { createLog } = require('../utils/logger');
 const { resolveLeadSourceCode } = require('../constants/leadSources');
@@ -189,6 +190,72 @@ function buildMaterialSummaryFromAreas(areas) {
       heightIn: (maxHeightIn ?? '').toString().trim() || '0',
     })
   );
+}
+
+function parseMaterialDeliveryItems(body) {
+  const { items, product_id, productId, issued_qty, issuedQty } = body;
+  const parsed = tryParseJson(items);
+
+  if (Array.isArray(parsed) && parsed.length) {
+    return parsed
+      .map((item) => ({
+        product_id: item?.product_id ?? item?.productId,
+        issued_qty: Number(item?.issued_qty ?? item?.issuedQty ?? 0),
+      }))
+      .filter(
+        (item) =>
+          item.product_id && mongoose.Types.ObjectId.isValid(String(item.product_id))
+      );
+  }
+
+  const singleProductId = product_id ?? productId;
+  if (singleProductId && mongoose.Types.ObjectId.isValid(String(singleProductId))) {
+    return [
+      {
+        product_id: singleProductId,
+        issued_qty: Number(issued_qty ?? issuedQty ?? 0),
+      },
+    ];
+  }
+
+  return [];
+}
+
+async function formatMaterialDeliveryList(deliveries) {
+  const list = Array.isArray(deliveries) ? deliveries : [];
+  const productIds = [
+    ...new Set(
+      list.flatMap((delivery) => {
+        const plain = delivery?.toObject ? delivery.toObject() : delivery;
+        return (plain.items || [])
+          .map((item) => item.product_id?.toString?.() || String(item.product_id || ''))
+          .filter((id) => mongoose.Types.ObjectId.isValid(id));
+      })
+    ),
+  ];
+
+  const products = productIds.length
+    ? await Product.find({ _id: { $in: productIds } }).select('name sku').lean()
+    : [];
+  const productMap = new Map(products.map((product) => [product._id.toString(), product]));
+
+  return list.map((delivery) => {
+    const plain = delivery?.toObject ? delivery.toObject() : { ...delivery };
+    return {
+      ...plain,
+      deliveryStatus: plain.deliveryStatus || 'pending',
+      items: (plain.items || []).map((item) => {
+        const productId = item.product_id?.toString?.() || String(item.product_id || '');
+        const product = productId ? productMap.get(productId) : null;
+        return {
+          product_id: productId || null,
+          productName: product?.name || '',
+          productSku: product?.sku || '',
+          issued_qty: Number(item.issued_qty) || 0,
+        };
+      }),
+    };
+  });
 }
 
 const flattenPopulatedLead = (leadId, customer) => {
@@ -1363,9 +1430,9 @@ exports.getCustomersByPM = async (req, res) => {
           ...survey,
           customer_id: customerDetails,
           materialSummary: buildMaterialSummaryFromAreas(survey.areas),
-          materialDelivery: [],
-          materialDeliveryReturn: [],
-          deliverySummary: [],
+          materialDelivery: await formatMaterialDeliveryList(surveys[index].materialDelivery),
+          materialDeliveryReturn: surveys[index].materialDeliveryReturn || [],
+          deliverySummary: surveys[index].deliverySummary || [],
         };
       })
     );
@@ -1384,20 +1451,25 @@ exports.getCustomersByPM = async (req, res) => {
   }
 };
 
-exports.addCustomerMaterial = async (req, res) => {
+exports.addSurveyMaterialDelivery = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { item_name, issued_qty, issued_date, materialStatus } = req.body;
-
     const user_id = req.user.id;
+    const surveyId = req.body.survey_id ?? req.body.surveyId;
+    const {
+      date,
+      delivery_date,
+      time,
+      time_slot,
+      note,
+      deliveryStatus,
+      delivery_status,
+    } = req.body;
 
-    // Check permissions (Admin or Project Manager)
     const Admin = require('../models/Admin');
     const isAdmin = await Admin.findById(user_id);
     let isAuthorized = !!isAdmin;
 
     if (!isAuthorized) {
-      const User = require('../models/User');
       const user = await User.findById(user_id);
       if (user && user.userRole === 'Project Manager') {
         isAuthorized = true;
@@ -1405,56 +1477,70 @@ exports.addCustomerMaterial = async (req, res) => {
     }
 
     if (!isAuthorized) {
-      return res.status(403).json({ message: 'Only admins or project managers can update materials.' });
+      return res.status(403).json({ message: 'Only admins or project managers can schedule material delivery.' });
     }
 
-    const customer = await Customer.findById(id);
-    if (!customer) {
-      return res.status(404).json({ message: 'Customer not found.' });
+    if (!surveyId) {
+      return res.status(400).json({ message: 'survey_id is required.' });
     }
 
-    // Handle single material entry from formData
-    if (!item_name || issued_qty === undefined) {
-      return res.status(400).json({ message: 'item_name and issued_qty are required.' });
+    const items = parseMaterialDeliveryItems(req.body);
+    if (!items.length) {
+      return res.status(400).json({ message: 'At least one delivery item with product_id is required.' });
     }
 
-    let savedFilenames = [];
-    if (req.files && Array.isArray(req.files)) {
-      savedFilenames = req.files.map(file => file.filename);
+    const productIds = items.map((item) => item.product_id);
+    const foundProducts = await Product.find({ _id: { $in: productIds } }).select('_id').lean();
+    if (foundProducts.length !== productIds.length) {
+      return res.status(400).json({ message: 'One or more products not found.' });
     }
 
-    customer.material.push({
-      item_name: item_name,
-      issued_qty: Number(issued_qty),
-      issued_date: issued_date ? new Date(issued_date) : new Date(),
-      images: savedFilenames
-    });
-
-    if (materialStatus) {
-      customer.materialStatus = materialStatus;
+    const survey = await Survey.findById(surveyId);
+    if (!survey) {
+      return res.status(404).json({ message: 'Survey not found.' });
     }
 
-    await customer.save();
+    const deliveryEntry = {
+      date: date || delivery_date ? new Date(date || delivery_date) : new Date(),
+      time: (time ?? time_slot ?? '').toString().trim(),
+      items,
+      note: (note ?? '').toString().trim(),
+      deliveryStatus: (deliveryStatus ?? delivery_status ?? 'pending').toString().trim().toLowerCase(),
+      createdBy: user_id,
+      createdAt: new Date(),
+    };
 
-    // Map image to full URL for response
-    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
-    const updatedCustomer = customer.toObject();
-    if (updatedCustomer.material) {
-      updatedCustomer.material = updatedCustomer.material.map(item => {
-        item.images = (item.images || []).map(img => `${materialBaseUrl}${img}`);
-        return item;
-      });
+    if (!['pending', 'scheduled', 'delivered', 'cancelled'].includes(deliveryEntry.deliveryStatus)) {
+      deliveryEntry.deliveryStatus = 'pending';
     }
 
-    await createLog('Customer Materials Updated', user_id, customer.name, 'Customer', customer._id);
+    survey.materialDelivery.push(deliveryEntry);
+    survey.markModified('materialDelivery');
+    await survey.save();
+
+    const customer = survey.customer_id
+      ? await Customer.findById(survey.customer_id).select('name')
+      : null;
+
+    await createLog(
+      'Survey Material Delivery Scheduled',
+      user_id,
+      customer?.name || survey.surveyName || 'Survey',
+      'Survey',
+      survey._id
+    );
+
+    const savedDelivery = survey.materialDelivery[survey.materialDelivery.length - 1];
+    const [formattedDelivery] = await formatMaterialDeliveryList([savedDelivery]);
 
     return res.status(200).json({
-      message: 'Material added successfully.',
-      customer: updatedCustomer,
+      message: 'Material delivery scheduled successfully.',
+      survey_id: survey._id,
+      materialDelivery: formattedDelivery,
     });
   } catch (error) {
-    console.error('Add customer material error:', error);
-    return res.status(500).json({ message: 'Server error updating materials.' });
+    console.error('Add survey material delivery error:', error);
+    return res.status(500).json({ message: 'Server error scheduling material delivery.' });
   }
 };
 
