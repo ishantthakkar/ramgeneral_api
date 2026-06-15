@@ -6,6 +6,10 @@ const roleSchema = new mongoose.Schema({
   permissions: {
     type: mongoose.Schema.Types.Mixed,
     default: {}
+  },
+  isSystemRole: {
+    type: Boolean,
+    default: false
   }
 }, { timestamps: true });
 
