@@ -101,6 +101,33 @@ async function formatSurveysForResponse(surveys, surveyBaseUrl) {
   );
 }
 
+async function formatCustomerForSurveyResponse(customer, materialBaseUrl) {
+  if (!customer) return null;
+
+  const customerObj = stripCustomerLogFields(
+    customer.toObject ? customer.toObject() : customer
+  );
+
+  if (customerObj.material && Array.isArray(customerObj.material)) {
+    customerObj.material = customerObj.material.map((item) => ({
+      ...item,
+      images: (item.images || []).map((img) => `${materialBaseUrl}${img}`),
+    }));
+  }
+
+  if (Array.isArray(customerObj.contactInfo)) {
+    customerObj.contactInfo = customerObj.contactInfo.map(formatContactForResponse);
+  }
+  if (Array.isArray(customerObj.addresses)) {
+    customerObj.addresses = customerObj.addresses.map(formatAddressForResponse);
+  }
+  if (Array.isArray(customerObj.notes)) {
+    customerObj.notes = await enrichNotesWithAuthors(customerObj.notes);
+  }
+
+  return customerObj;
+}
+
 const flattenPopulatedLead = (leadId, customer) => {
   const lead = leadId && typeof leadId === 'object' ? leadId : null;
   return {
@@ -1239,58 +1266,52 @@ exports.getCustomersByPM = async (req, res) => {
       });
     }
 
-    // Fetch customers assigned to this project manager
-    const customers = await Customer.find({
-      assignedTo: userId,
-    })
-      .populate('assignToContractor', 'fullName email mobileNumber')
-      .populate('assignedTo', 'fullName email mobileNumber')
-      .populate('user_id', 'fullName name email')
+    const surveyBaseUrl = 'https://ramgeneral-api.onrender.com/uploads/surveys/';
+    const materialBaseUrl = 'https://ramgeneral-api.onrender.com/uploads/materials/';
+
+    const surveys = await Survey.find({ assignedTo: userId })
+      .populate({
+        path: 'customer_id',
+        populate: [
+          { path: 'assignToContractor', select: 'fullName email mobileNumber userRole' },
+          { path: 'assignedTo', select: 'fullName email mobileNumber userRole' },
+          {
+            path: 'user_id',
+            select: 'fullName name email userRole mobileNumber',
+            populate: { path: 'reportsTo', select: 'fullName userRole' },
+          },
+        ],
+      })
+      .populate('user_id', 'fullName email name userRole mobileNumber')
+      .populate('assignedTo', 'fullName email userRole mobileNumber')
+      .populate('editApprovalBy', 'fullName email userRole')
       .sort({ createdAt: -1 });
 
-    // Fetch all surveys for these customers
-    const customerIds = customers.map(customer => customer._id);
+    const formattedSurveys = await formatSurveysForResponse(surveys, surveyBaseUrl);
 
-    const surveys = await Survey.find({
-      customer_id: { $in: customerIds },
-    }).sort({ createdAt: -1 });
+    const surveysWithDetails = await Promise.all(
+      formattedSurveys.map(async (survey, index) => {
+        const customerDetails = await formatCustomerForSurveyResponse(
+          surveys[index].customer_id,
+          materialBaseUrl
+        );
 
-    const surveyBaseUrl = "https://ramgeneral-api.onrender.com/uploads/surveys/";
-    const materialBaseUrl = "https://ramgeneral-api.onrender.com/uploads/materials/";
-
-    // Attach surveys and fix image URLs
-    const customersWithDetails = customers.map(customer => {
-      const customerObj = customer.toObject();
-
-      // Filter surveys for this customer
-      customerObj.surveys = surveys
-        .filter(s => s.customer_id.toString() === customer._id.toString())
-        .map(survey => {
-          const sObj = survey.toObject();
-          sObj.images = (sObj.images || []).map(img => `${surveyBaseUrl}${img}`);
-          return sObj;
-        });
-
-      if (customerObj.material && Array.isArray(customerObj.material)) {
-        customerObj.material = customerObj.material.map(item => {
-          item.images = (item.images || []).map(img => `${materialBaseUrl}${img}`);
-          return item;
-        });
-      }
-
-      return customerObj;
-    });
+        return {
+          ...survey,
+          customer_id: customerDetails,
+        };
+      })
+    );
 
     return res.status(200).json({
-      message: 'Customers retrieved successfully for Project Manager.',
-      total: customersWithDetails.length,
-      customers: customersWithDetails,
+      message: 'Surveys retrieved successfully for Project Manager.',
+      total: surveysWithDetails.length,
+      surveys: surveysWithDetails,
     });
-
   } catch (error) {
     console.error('Get customers by PM error:', error);
     return res.status(500).json({
-      message: 'Server error fetching customers for Project Manager.',
+      message: 'Server error fetching surveys for Project Manager.',
       error: error.message,
     });
   }
