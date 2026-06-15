@@ -48,6 +48,9 @@ const connectDB = async () => {
     console.log('MongoDB connected');
     await syncCustomerAccountNumberIndexes();
     await syncProductSkuIndexes();
+    const { seedSystemRoles } = require('../utils/seedRoles');
+    await seedSystemRoles();
+    console.log('System roles synced');
   } catch (error) {
     console.error('MongoDB connection error:', error.message);
     process.exit(1);
