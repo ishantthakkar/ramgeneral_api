@@ -128,6 +128,69 @@ async function formatCustomerForSurveyResponse(customer, materialBaseUrl) {
   return customerObj;
 }
 
+function parseFixtureHeightInches(heightFt, heightIn) {
+  const ft = parseFloat(heightFt) || 0;
+  const inches = parseFloat(heightIn) || 0;
+  return ft * 12 + inches;
+}
+
+function buildMaterialSummaryFromAreas(areas) {
+  const summaryMap = new Map();
+
+  for (const area of areas || []) {
+    for (const fixture of area.fixtures || []) {
+      const product = fixture.product;
+      const productKey =
+        product?._id?.toString() ||
+        fixture.product_id?.toString?.() ||
+        fixture.product_id ||
+        fixture.existingFixtureType ||
+        'unknown';
+
+      const fixtureName =
+        product?.sku ||
+        product?.name ||
+        fixture.existingFixtureType ||
+        '';
+      const quantity =
+        parseFloat(fixture.proposedQty) || parseFloat(fixture.existingQty) || 0;
+      const heightInches = parseFixtureHeightInches(fixture.heightFt, fixture.heightIn);
+
+      if (!summaryMap.has(productKey)) {
+        summaryMap.set(productKey, {
+          fixtureName,
+          quantity: 0,
+          maxHeightInches: 0,
+          maxHeightFt: fixture.heightFt || '',
+          maxHeightIn: fixture.heightIn || '',
+        });
+      }
+
+      const entry = summaryMap.get(productKey);
+      entry.quantity += quantity;
+
+      if (heightInches >= entry.maxHeightInches) {
+        entry.maxHeightInches = heightInches;
+        entry.maxHeightFt = fixture.heightFt || '';
+        entry.maxHeightIn = fixture.heightIn || '';
+      }
+
+      if (!entry.fixtureName && fixtureName) {
+        entry.fixtureName = fixtureName;
+      }
+    }
+  }
+
+  return Array.from(summaryMap.values()).map(
+    ({ fixtureName, quantity, maxHeightFt, maxHeightIn }) => ({
+      fixtureName,
+      quantity: String(Math.round(quantity)).padStart(2, '0'),
+      heightFt: (maxHeightFt ?? '').toString().trim() || '0',
+      heightIn: (maxHeightIn ?? '').toString().trim() || '0',
+    })
+  );
+}
+
 const flattenPopulatedLead = (leadId, customer) => {
   const lead = leadId && typeof leadId === 'object' ? leadId : null;
   return {
@@ -1299,6 +1362,10 @@ exports.getCustomersByPM = async (req, res) => {
         return {
           ...survey,
           customer_id: customerDetails,
+          materialSummary: buildMaterialSummaryFromAreas(survey.areas),
+          materialDelivery: [],
+          materialDeliveryReturn: [],
+          deliverySummary: [],
         };
       })
     );
