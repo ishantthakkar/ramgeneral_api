@@ -22,41 +22,6 @@ const {
     enrichAreasWithProducts,
 } = require('../utils/surveyProductUtils');
 const { buildFixtureTypeFilter } = require('../utils/productUtils');
-const { isSalesManagerRole } = require('../constants/userRoles');
-
-function buildInstallationCustomerInfo(customer) {
-    if (!customer) return null;
-
-    const lead = customer.leadId && typeof customer.leadId === 'object' ? customer.leadId : null;
-    const salesUser = customer.user_id && typeof customer.user_id === 'object' ? customer.user_id : null;
-    const salesManager = salesUser?.reportsTo && typeof salesUser.reportsTo === 'object'
-        ? salesUser.reportsTo
-        : null;
-    const salesManagerName =
-        salesManager && isSalesManagerRole(salesManager.userRole)
-            ? salesManager.fullName || ''
-            : '';
-
-    return {
-        id: customer._id,
-        customerCode: customer.customerCode || '',
-        leadId: lead?.lead_id || '',
-        leadName: lead?.leadName || lead?.name || customer.name || '',
-        dba: lead?.dba || '',
-        legalName: customer.legalName || '',
-        name: customer.name || '',
-        company: customer.company || '',
-        email: customer.email || '',
-        mobileNumber: customer.mobileNumber || '',
-        phone: customer.phone || '',
-        accountNumber: customer.accountNumber || '',
-        status: customer.status || '',
-        verifyStatus: customer.verifyStatus || '',
-        installationStatus: customer.installationStatus || 'not started',
-        salesPersonName: salesUser?.fullName || salesUser?.name || '',
-        salesManagerName,
-    };
-}
 const UPLOAD_DIR = path.join(__dirname, '../uploads/surveys');
 const COMPRESS_THRESHOLD = 800 * 1024;
 const SURVEY_IMAGE_BASE = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
@@ -1000,76 +965,16 @@ exports.assignContractor = async (req, res) => {
 exports.installation = async (req, res) => {
     try {
         const surveys = await Survey.find({ quotationStatus: 'approved' })
-            .select(
-                'customer_id surveyName areaName status quotationStatus quotationApprovedAt quotationApprovedBy confirmDate'
-            )
+            .populate('user_id', 'fullName email name userRole mobileNumber')
+            .populate('assignedTo', 'fullName email userRole mobileNumber')
+            .populate('customer_id', 'name customerCode accountNumber company email mobileNumber phone')
             .sort({ quotationApprovedAt: -1, updatedAt: -1 })
             .lean();
 
-        if (!surveys.length) {
-            return res.status(200).json({
-                message: 'Installations retrieved successfully.',
-                total: 0,
-                installations: [],
-            });
-        }
-
-        const customerIds = [
-            ...new Set(surveys.map((survey) => survey.customer_id?.toString()).filter(Boolean)),
-        ];
-
-        const customers = await Customer.find({ _id: { $in: customerIds } })
-            .populate('leadId', 'lead_id leadName dba name')
-            .populate('assignToContractor', 'fullName email userRole mobileNumber')
-            .populate({
-                path: 'user_id',
-                select: 'fullName email name userRole',
-                populate: { path: 'reportsTo', select: 'fullName userRole' },
-            })
-            .populate('assignedTo', 'fullName email userRole')
-            .lean();
-
-        const customerMap = new Map(customers.map((customer) => [customer._id.toString(), customer]));
-
-        const installations = surveys.map((survey) => {
-            const customer = customerMap.get(survey.customer_id?.toString());
-            const surveyName = (survey.surveyName || survey.areaName || '').trim();
-            const customerInfo = buildInstallationCustomerInfo(customer);
-
-            return {
-                id: survey._id,
-                survey_id: survey._id,
-                surveyId: survey._id,
-                surveyName: surveyName || 'Survey',
-                customerId: survey.customer_id,
-                customer: customerInfo,
-                customerName: customerInfo?.name || '—',
-                accountNumber: customerInfo?.accountNumber || '',
-                name: customerInfo?.name || '—',
-                company: customerInfo?.company || '',
-                dba: customerInfo?.dba || '',
-                email: customerInfo?.email || '',
-                mobileNumber: customerInfo?.mobileNumber || '',
-                phone: customerInfo?.phone || '',
-                customerCode: customerInfo?.customerCode || '',
-                leadId: customerInfo?.leadId || '',
-                quotationStatus: survey.quotationStatus || 'approved',
-                quotationApprovedAt: survey.quotationApprovedAt || survey.confirmDate || null,
-                assignToContractor: customer?.assignToContractor || null,
-                assignedTo: customer?.assignedTo || null,
-                salesPersonName: customerInfo?.salesPersonName || '',
-                salesManagerName: customerInfo?.salesManagerName || '',
-                contractorName: customer?.assignToContractor?.fullName || '',
-                projectManagerName: customer?.assignedTo?.fullName || '',
-                installationStatus: customerInfo?.installationStatus || 'not started',
-                status: customer?.status || survey.status || '',
-            };
-        });
-
         return res.status(200).json({
             message: 'Installations retrieved successfully.',
-            total: installations.length,
-            installations,
+            total: surveys.length,
+            surveys,
         });
     } catch (error) {
         console.error('List installations error:', error);
