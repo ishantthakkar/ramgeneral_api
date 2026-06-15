@@ -19,10 +19,7 @@ const fixtureSchema = {
 };
 
 const materialDeliveryItemSchema = {
-  product_id: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Product',
-  },
+  sku: { type: String, trim: true, default: '' },
   issued_qty: { type: Number, default: 0 },
 };
 

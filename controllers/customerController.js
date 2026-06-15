@@ -148,7 +148,7 @@ function buildMaterialSummaryFromAreas(areas) {
         fixture.existingFixtureType ||
         'unknown';
 
-      const fixtureName =
+      const sku =
         product?.sku ||
         product?.name ||
         fixture.existingFixtureType ||
@@ -159,7 +159,7 @@ function buildMaterialSummaryFromAreas(areas) {
 
       if (!summaryMap.has(productKey)) {
         summaryMap.set(productKey, {
-          fixtureName,
+          sku,
           quantity: 0,
           maxHeightInches: 0,
           maxHeightFt: fixture.heightFt || '',
@@ -176,15 +176,12 @@ function buildMaterialSummaryFromAreas(areas) {
         entry.maxHeightIn = fixture.heightIn || '';
       }
 
-      if (!entry.fixtureName && fixtureName) {
-        entry.fixtureName = fixtureName;
-      }
     }
   }
 
   return Array.from(summaryMap.values()).map(
-    ({ fixtureName, quantity, maxHeightFt, maxHeightIn }) => ({
-      fixtureName,
+    ({ sku, quantity, maxHeightFt, maxHeightIn }) => ({
+      sku,
       quantity: String(Math.round(quantity)).padStart(2, '0'),
       heightFt: (maxHeightFt ?? '').toString().trim() || '0',
       heightIn: (maxHeightIn ?? '').toString().trim() || '0',
@@ -193,26 +190,23 @@ function buildMaterialSummaryFromAreas(areas) {
 }
 
 function parseMaterialDeliveryItems(body) {
-  const { items, product_id, productId, issued_qty, issuedQty } = body;
+  const { items, sku, issued_qty, issuedQty } = body;
   const parsed = tryParseJson(items);
 
   if (Array.isArray(parsed) && parsed.length) {
     return parsed
       .map((item) => ({
-        product_id: item?.product_id ?? item?.productId,
+        sku: (item?.sku ?? '').toString().trim(),
         issued_qty: Number(item?.issued_qty ?? item?.issuedQty ?? 0),
       }))
-      .filter(
-        (item) =>
-          item.product_id && mongoose.Types.ObjectId.isValid(String(item.product_id))
-      );
+      .filter((item) => item.sku);
   }
 
-  const singleProductId = product_id ?? productId;
-  if (singleProductId && mongoose.Types.ObjectId.isValid(String(singleProductId))) {
+  const singleSku = (sku ?? '').toString().trim();
+  if (singleSku) {
     return [
       {
-        product_id: singleProductId,
+        sku: singleSku,
         issued_qty: Number(issued_qty ?? issuedQty ?? 0),
       },
     ];
@@ -223,21 +217,21 @@ function parseMaterialDeliveryItems(body) {
 
 async function formatMaterialDeliveryList(deliveries) {
   const list = Array.isArray(deliveries) ? deliveries : [];
-  const productIds = [
+  const skus = [
     ...new Set(
       list.flatMap((delivery) => {
         const plain = delivery?.toObject ? delivery.toObject() : delivery;
         return (plain.items || [])
-          .map((item) => item.product_id?.toString?.() || String(item.product_id || ''))
-          .filter((id) => mongoose.Types.ObjectId.isValid(id));
+          .map((item) => (item.sku ?? '').toString().trim())
+          .filter(Boolean);
       })
     ),
   ];
 
-  const products = productIds.length
-    ? await Product.find({ _id: { $in: productIds } }).select('name sku').lean()
+  const products = skus.length
+    ? await Product.find({ sku: { $in: skus } }).select('name sku').lean()
     : [];
-  const productMap = new Map(products.map((product) => [product._id.toString(), product]));
+  const productMap = new Map(products.map((product) => [product.sku, product]));
 
   return list.map((delivery) => {
     const plain = delivery?.toObject ? delivery.toObject() : { ...delivery };
@@ -245,12 +239,11 @@ async function formatMaterialDeliveryList(deliveries) {
       ...plain,
       deliveryStatus: plain.deliveryStatus || 'pending',
       items: (plain.items || []).map((item) => {
-        const productId = item.product_id?.toString?.() || String(item.product_id || '');
-        const product = productId ? productMap.get(productId) : null;
+        const skuValue = (item.sku ?? '').toString().trim();
+        const product = skuValue ? productMap.get(skuValue) : null;
         return {
-          product_id: productId || null,
+          sku: skuValue,
           productName: product?.name || '',
-          productSku: product?.sku || '',
           issued_qty: Number(item.issued_qty) || 0,
         };
       }),
@@ -1486,12 +1479,13 @@ exports.addSurveyMaterialDelivery = async (req, res) => {
 
     const items = parseMaterialDeliveryItems(req.body);
     if (!items.length) {
-      return res.status(400).json({ message: 'At least one delivery item with product_id is required.' });
+      return res.status(400).json({ message: 'At least one delivery item with sku is required.' });
     }
 
-    const productIds = items.map((item) => item.product_id);
-    const foundProducts = await Product.find({ _id: { $in: productIds } }).select('_id').lean();
-    if (foundProducts.length !== productIds.length) {
+    const skus = items.map((item) => item.sku);
+    const foundProducts = await Product.find({ sku: { $in: skus } }).select('sku').lean();
+    const foundSkuSet = new Set(foundProducts.map((product) => product.sku));
+    if (!skus.every((skuValue) => foundSkuSet.has(skuValue))) {
       return res.status(400).json({ message: 'One or more products not found.' });
     }
 
