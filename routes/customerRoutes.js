@@ -167,10 +167,16 @@ router.post(
     uploadElectricityBill.array('upload_electricity_bill', 20),
     customerController.updateCustomer
 );
-router.post('/customers/:id/assign-contractor', verifyToken, customerController.assignContractor);
+router.post('/surveys/assign-contractor', verifyToken, customerController.assignContractor);
 router.post('/surveys/edit-status', verifyToken, customerController.updateSurveyEditStatus);
 router.post('/:surveyId/:status/update-status', verifyToken, customerController.updateCustomerSurveyStatus);
 router.post('/surveys/add-material-delivery', verifyToken, customerController.addSurveyMaterialDelivery);
+router.post(
+    '/surveys/delivery-mark-as-completed',
+    verifyToken,
+    upload.array('images', 10),
+    customerController.markDeliveryAsCompleted
+);
 router.post('/customers/:id/assign-to-contractor', verifyToken, customerController.assignToContractor);
 router.post('/customers/:id/verify', verifyToken, customerController.verifyCustomer);
 router.post('/:id/activities', verifyToken, customerController.addCustomerActivity);

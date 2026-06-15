@@ -911,13 +911,14 @@ exports.assignSurvey = async (req, res) => {
 exports.assignContractor = async (req, res) => {
     try {
         const user_id = req.user.id;
+        const surveyId = req.body.survey_id ?? req.body.surveyId ?? req.params.id;
+        const contractorId =
+            req.body.contractor ?? req.body.contractorId ?? req.body.assignToContractor;
 
-        // Check if user is Admin
         const admin = await Admin.findById(user_id);
         let isAuthorized = !!admin;
 
         if (!isAuthorized) {
-            // Check if user is Project Manager
             const user = await User.findById(user_id);
             if (user && user.userRole === 'Project Manager') {
                 isAuthorized = true;
@@ -928,11 +929,12 @@ exports.assignContractor = async (req, res) => {
             return res.status(403).json({ message: 'Only admins or project managers can assign contractors.' });
         }
 
-        const { id } = req.params; // Customer ID
-        const { contractorId } = req.body;
+        if (!surveyId) {
+            return res.status(400).json({ message: 'survey_id is required.' });
+        }
 
         if (!contractorId) {
-            return res.status(400).json({ message: 'contractorId is required.' });
+            return res.status(400).json({ message: 'contractor is required.' });
         }
 
         const contractorUser = await User.findById(contractorId);
@@ -940,24 +942,31 @@ exports.assignContractor = async (req, res) => {
             return res.status(404).json({ message: 'Contractor user not found.' });
         }
 
-        const customer = await Customer.findByIdAndUpdate(
-            id,
-            {
-                assignToContractor: contractorId,
-                contractorStatus: 'New'
-            },
-            { new: true }
+        const survey = await Survey.findByIdAndUpdate(
+            surveyId,
+            { assignToContractor: contractorId },
+            { new: true, runValidators: true }
         ).populate('assignToContractor', 'fullName email userRole mobileNumber');
 
-        if (!customer) {
-            return res.status(404).json({ message: 'Customer not found.' });
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found.' });
         }
 
-        await createLog('Contractor Assigned', user_id, customer.name, 'Assignment', customer._id);
+        const customer = survey.customer_id
+            ? await Customer.findById(survey.customer_id).select('name')
+            : null;
+
+        await createLog(
+            'Contractor Assigned to Survey',
+            user_id,
+            customer?.name || survey.surveyName || 'Survey',
+            'Survey',
+            survey._id
+        );
 
         return res.status(200).json({
             message: 'Contractor assigned successfully.',
-            customer
+            survey,
         });
     } catch (error) {
         console.error('Assign contractor error:', error);
