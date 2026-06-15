@@ -111,7 +111,7 @@ exports.getWorkflowStats = async (req, res) => {
 
     const [totalSurveys, totalInstallations, totalInspections] = await Promise.all([
       Customer.countDocuments(surveyFilter),
-      Customer.countDocuments({ verifyStatus: 'verified' }),
+      Survey.countDocuments({ quotationStatus: 'approved' }),
       Customer.countDocuments({
         material: { $exists: true, $not: { $size: 0 } },
         installationStatus: 'completed',

@@ -955,33 +955,64 @@ exports.assignContractor = async (req, res) => {
 
 exports.installation = async (req, res) => {
     try {
-        const filter = { verifyStatus: 'verified' };
+        const surveys = await Survey.find({ quotationStatus: 'approved' })
+            .select(
+                'customer_id surveyName areaName status quotationStatus quotationApprovedAt quotationApprovedBy confirmDate'
+            )
+            .sort({ quotationApprovedAt: -1, updatedAt: -1 })
+            .lean();
 
-        const customers = await Customer.find(filter)
-            .sort({ updatedAt: -1 })
+        if (!surveys.length) {
+            return res.status(200).json({
+                message: 'Installations retrieved successfully.',
+                total: 0,
+                installations: [],
+            });
+        }
+
+        const customerIds = [
+            ...new Set(surveys.map((survey) => survey.customer_id?.toString()).filter(Boolean)),
+        ];
+
+        const customers = await Customer.find({ _id: { $in: customerIds } })
             .populate('assignToContractor', 'fullName email userRole mobileNumber')
             .populate('user_id', 'fullName email')
-            .populate('assignedTo', 'fullName email userRole');
+            .populate('assignedTo', 'fullName email userRole')
+            .lean();
 
-        const customerSummaries = customers.map((customer) => ({
-            id: customer._id,
-            accountNumber: customer.accountNumber,
-            name: customer.name,
-            company: customer.company,
-            mobileNumber: customer.mobileNumber,
-            status: customer.status,
-            lastActivity: customer.lastActivity,
-            assignToContractor: customer.assignToContractor,
-            assignedTo: customer.assignedTo,
-            salesPersonName: customer.user_id?.fullName || customer.user_id?.name || '',
-            contractorName: customer.assignToContractor?.fullName || '',
-            installationStatus: customer.installationStatus,
-        }));
+        const customerMap = new Map(customers.map((customer) => [customer._id.toString(), customer]));
+
+        const installations = surveys.map((survey) => {
+            const customer = customerMap.get(survey.customer_id?.toString());
+            const surveyName = (survey.surveyName || survey.areaName || '').trim();
+
+            return {
+                id: survey._id,
+                survey_id: survey._id,
+                surveyId: survey._id,
+                surveyName: surveyName || 'Survey',
+                customerId: survey.customer_id,
+                customerName: customer?.name || '—',
+                accountNumber: customer?.accountNumber || '',
+                name: customer?.name || '—',
+                company: customer?.company || '',
+                mobileNumber: customer?.mobileNumber || '',
+                quotationStatus: survey.quotationStatus || 'approved',
+                quotationApprovedAt: survey.quotationApprovedAt || survey.confirmDate || null,
+                assignToContractor: customer?.assignToContractor || null,
+                assignedTo: customer?.assignedTo || null,
+                salesPersonName: customer?.user_id?.fullName || customer?.user_id?.name || '',
+                contractorName: customer?.assignToContractor?.fullName || '',
+                projectManagerName: customer?.assignedTo?.fullName || '',
+                installationStatus: customer?.installationStatus || 'not started',
+                status: customer?.status || survey.status || '',
+            };
+        });
 
         return res.status(200).json({
             message: 'Installations retrieved successfully.',
-            total: customerSummaries.length,
-            installations: customerSummaries,
+            total: installations.length,
+            installations,
         });
     } catch (error) {
         console.error('List installations error:', error);
