@@ -1206,6 +1206,7 @@ const buildCustomerPayloadFromLead = (lead, userId, accountNumberOverride) => {
     legalName: leadObj.legalName || '',
     accountNumber,
     company: leadObj.company || '',
+    dba: leadObj.dba || '',
     uploadElectricityBill: normalizeBillFilenames(leadObj.uploadElectricityBill),
     mobileNumber: leadObj.mobileNumber || '',
     phone: leadObj.phone || '',

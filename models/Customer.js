@@ -13,6 +13,11 @@ const customerSchema = new mongoose.Schema({
     trim: true,
     default: '',
   },
+  dba: {
+    type: String,
+    trim: true,
+    default: '',
+  },
   leadId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Lead',
