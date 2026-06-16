@@ -102,6 +102,12 @@ const surveySchema = new mongoose.Schema({
       createdAt: { type: Date, default: Date.now },
     },
   ],
+  installationStatus: {
+    type: String,
+    trim: true,
+    enum: ['start', 'in_progress', 'continue', 'completed'],
+    default: 'start',
+  },
   markAsCompleted: { type: Boolean, default: false },
   verifyImages: [{ type: String, trim: true }],
   verifyQty: { type: Number, default: 0 },

@@ -137,58 +137,51 @@ function parseFixtureHeightInches(heightFt, heightIn) {
   return ft * 12 + inches;
 }
 
-function buildMaterialSummaryFromAreas(areas) {
-  const summaryMap = new Map();
+function buildMaterialSummary(areas, materialDelivery) {
+  const issuedBySku = new Map();
+  const usedBySku = new Map();
+
+  for (const delivery of materialDelivery || []) {
+    const plain = delivery?.toObject ? delivery.toObject() : delivery;
+    for (const item of plain.items || []) {
+      const sku = (item?.sku ?? '').toString().trim();
+      if (!sku) continue;
+      const issuedQty = Number(item?.issued_qty ?? item?.issuedQty ?? 0) || 0;
+      issuedBySku.set(sku, (issuedBySku.get(sku) || 0) + issuedQty);
+    }
+  }
 
   for (const area of areas || []) {
     for (const fixture of area.fixtures || []) {
       const product = fixture.product;
-      const productKey =
-        product?._id?.toString() ||
-        fixture.product_id?.toString?.() ||
-        fixture.product_id ||
-        fixture.existingFixtureType ||
-        'unknown';
-
       const sku =
-        product?.sku ||
-        product?.name ||
-        fixture.existingFixtureType ||
-        '';
-      const quantity =
-        parseFloat(fixture.proposedQty) || parseFloat(fixture.existingQty) || 0;
-      const heightInches = parseFixtureHeightInches(fixture.heightFt, fixture.heightIn);
+        (product?.sku ?? product?.name ?? fixture.existingFixtureType ?? '')
+          .toString()
+          .trim();
+      if (!sku) continue;
 
-      if (!summaryMap.has(productKey)) {
-        summaryMap.set(productKey, {
-          sku,
-          quantity: 0,
-          maxHeightInches: 0,
-          maxHeightFt: fixture.heightFt || '',
-          maxHeightIn: fixture.heightIn || '',
-        });
-      }
-
-      const entry = summaryMap.get(productKey);
-      entry.quantity += quantity;
-
-      if (heightInches >= entry.maxHeightInches) {
-        entry.maxHeightInches = heightInches;
-        entry.maxHeightFt = fixture.heightFt || '';
-        entry.maxHeightIn = fixture.heightIn || '';
-      }
-
+      const installedQty = Number(fixture?.report?.installed_qty ?? 0) || 0;
+      usedBySku.set(sku, (usedBySku.get(sku) || 0) + installedQty);
     }
   }
 
-  return Array.from(summaryMap.values()).map(
-    ({ sku, quantity, maxHeightFt, maxHeightIn }) => ({
-      sku,
-      quantity: String(Math.round(quantity)).padStart(2, '0'),
-      heightFt: (maxHeightFt ?? '').toString().trim() || '0',
-      heightIn: (maxHeightIn ?? '').toString().trim() || '0',
-    })
-  );
+  const allSkus = new Set([...issuedBySku.keys(), ...usedBySku.keys()]);
+
+  return Array.from(allSkus).map((sku) => {
+    const issued = issuedBySku.get(sku) || 0;
+    const used = usedBySku.get(sku) || 0;
+    const remaining = Math.max(issued - used, 0);
+
+    return {
+      itemName: sku,
+      issuedQuantity: String(Math.round(issued)).padStart(2, '0'),
+      usedQuantity: String(Math.round(used)).padStart(2, '0'),
+      remainingQuantity: String(Math.round(remaining)).padStart(2, '0'),
+      issued_qty: issued,
+      used_qty: used,
+      remaining_qty: remaining,
+    };
+  });
 }
 
 function parseMaterialDeliveryItems(body) {
@@ -1404,7 +1397,7 @@ exports.getCustomersByContractor = async (req, res) => {
         return {
           ...survey,
           customer_id: customerDetails,
-          materialSummary: buildMaterialSummaryFromAreas(survey.areas),
+          materialSummary: buildMaterialSummary(survey.areas, surveys[index].materialDelivery),
           materialDelivery: await formatMaterialDeliveryList(surveys[index].materialDelivery),
           materialDeliveryReturn: surveys[index].materialDeliveryReturn || [],
           deliverySummary: surveys[index].deliverySummary || [],
@@ -1470,7 +1463,7 @@ exports.getCustomersByPM = async (req, res) => {
         return {
           ...survey,
           customer_id: customerDetails,
-          materialSummary: buildMaterialSummaryFromAreas(survey.areas),
+          materialSummary: buildMaterialSummary(survey.areas, surveys[index].materialDelivery),
           materialDelivery: await formatMaterialDeliveryList(surveys[index].materialDelivery),
           materialDeliveryReturn: surveys[index].materialDeliveryReturn || [],
           deliverySummary: surveys[index].deliverySummary || [],
@@ -2653,29 +2646,32 @@ exports.addInspectionNote = async (req, res) => {
 
 exports.updateInstallationStatus = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    const allowedStatuses = ['start', 'in_progress', 'continue', 'completed'];
-    if (!allowedStatuses.includes(status)) {
-      return res.status(400).json({ message: `Invalid status. Allowed: ${allowedStatuses.join(', ')}` });
+    const surveyId = req.body.survey_id ?? req.body.surveyId;
+    if (!surveyId) {
+      return res.status(400).json({ message: 'survey_id is required.' });
     }
 
-    const customer = await Customer.findByIdAndUpdate(
-      id,
-      { installationStatus: status },
+    const survey = await Survey.findByIdAndUpdate(
+      surveyId,
+      { installationStatus: 'completed' },
       { new: true, runValidators: true }
     );
 
-    if (!customer) {
-      return res.status(404).json({ message: 'Customer not found.' });
+    if (!survey) {
+      return res.status(404).json({ message: 'Survey not found.' });
     }
 
-    await createLog(`Installation Status Updated to ${status}`, req.user.id, customer.name, 'Customer', customer._id);
+    await createLog(
+      'Survey Installation Status Updated to completed',
+      req.user.id,
+      survey.surveyName || 'Survey',
+      'Survey',
+      survey._id
+    );
 
     return res.status(200).json({
-      message: `Installation status updated to '${status}' successfully.`,
-      customer,
+      message: "Installation status updated to 'completed' successfully.",
+      survey,
     });
   } catch (error) {
     console.error('Update installation status error:', error);
