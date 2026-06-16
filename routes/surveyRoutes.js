@@ -45,6 +45,7 @@ router.post('/surveys/assign', verifyToken, surveyController.assignSurvey);
 router.post('/surveys/assign-contractor', verifyToken, surveyController.assignContractor);
 router.post('/surveys/name', verifyToken, surveyController.updateSurveyName);
 router.post('/surveys/notes', verifyToken, surveyController.updateSurveyNotes);
+router.post('/surveys/area-report', verifyToken, upload.any(), surveyController.saveAreaReport);
 router.post('/surveys/mark-completed', verifyToken, surveyController.markSurveyCompleted);
 router.post('/surveys/verify', verifyToken, upload.any(), surveyController.verifySurvey);
 router.post('/surveys/:id/confirm-verify', verifyToken, surveyController.confirmVerifySurvey);

@@ -29,6 +29,21 @@ const UPLOAD_DIR = path.join(__dirname, '../uploads/surveys');
 const COMPRESS_THRESHOLD = 800 * 1024;
 const SURVEY_IMAGE_BASE = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
 
+const normalizeFormFieldValue = (value) => {
+    if (value === undefined || value === null) return value;
+    if (typeof value !== 'string') return value;
+
+    let trimmed = value.trim();
+    if (
+        (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith("'") && trimmed.endsWith("'"))
+    ) {
+        trimmed = trimmed.slice(1, -1);
+    }
+
+    return trimmed;
+};
+
 const tryParseJson = (value) => {
     if (typeof value !== 'string') return value;
     const trimmed = value.trim();
@@ -38,6 +53,30 @@ const tryParseJson = (value) => {
     } catch {
         return value;
     }
+};
+
+const parseFormJsonInput = (value) => {
+    const normalized = normalizeFormFieldValue(value);
+    if (normalized === undefined || normalized === null || normalized === '') return normalized;
+    if (typeof normalized !== 'string') return normalized;
+
+    let attempt = normalized.replace(/\\"/g, '"');
+    let parsed = tryParseJson(attempt);
+    if (Array.isArray(parsed) || (parsed && typeof parsed === 'object')) {
+        return parsed;
+    }
+
+    if (
+        (attempt.startsWith('"') && attempt.endsWith('"')) ||
+        (attempt.startsWith("'") && attempt.endsWith("'"))
+    ) {
+        parsed = tryParseJson(attempt.slice(1, -1));
+        if (Array.isArray(parsed) || (parsed && typeof parsed === 'object')) {
+            return parsed;
+        }
+    }
+
+    return parsed;
 };
 
 const toSurveyImageUrl = (filename) =>
@@ -50,6 +89,12 @@ const mapSurveyImageUrls = (surveyObj) => {
         fixtures: (area.fixtures || []).map((fixture) => ({
             ...fixture,
             images: (fixture.images || []).map(toSurveyImageUrl),
+            report: fixture.report
+                ? {
+                    ...fixture.report,
+                    images: (fixture.report.images || []).map(toSurveyImageUrl),
+                }
+                : fixture.report,
         })),
     }));
     surveyObj.verifyImages = (surveyObj.verifyImages || []).map(toSurveyImageUrl);
@@ -290,6 +335,182 @@ const upsertSurveyAreas = (survey, incomingAreas) => {
     }
 
     survey.markModified('areas');
+};
+
+const parseAreaReportFixtureInput = (item) => {
+    const subdocId = getSubdocId(item);
+    const reportSource =
+        item?.report && typeof item.report === 'object' && !Array.isArray(item.report)
+            ? item.report
+            : item;
+    const result = {
+        ...(subdocId ? { _id: subdocId } : {}),
+        images: [],
+    };
+
+    if (reportSource?.installed_qty !== undefined || reportSource?.installedQty !== undefined) {
+        result.installed_qty = Number(
+            reportSource?.installed_qty ?? reportSource?.installedQty ?? 0
+        );
+    }
+    if (reportSource?.heightFt !== undefined || reportSource?.height_ft !== undefined) {
+        result.heightFt = (reportSource?.heightFt ?? reportSource?.height_ft ?? '')
+            .toString()
+            .trim();
+    }
+    if (reportSource?.heightIn !== undefined || reportSource?.height_in !== undefined) {
+        result.heightIn = (reportSource?.heightIn ?? reportSource?.height_in ?? '')
+            .toString()
+            .trim();
+    }
+    if (reportSource?.note !== undefined || reportSource?.fixture_note !== undefined) {
+        result.note = (reportSource?.note ?? reportSource?.fixture_note ?? '').toString().trim();
+    }
+
+    return result;
+};
+
+const parseIndexedReportFixturesFromBody = (body) => {
+    const byIndex = {};
+
+    for (const [key, value] of Object.entries(body || {})) {
+        const fieldMatch = key.match(/^fixtures?_(\d+)_(.+)$/i);
+        if (fieldMatch) {
+            const [, idx, field] = fieldMatch;
+            if (!byIndex[idx]) byIndex[idx] = {};
+            byIndex[idx][field] = value;
+            continue;
+        }
+
+        const blobMatch = key.match(/^fixtures?_(\d+)$/i);
+        if (!blobMatch) continue;
+
+        const idx = blobMatch[1];
+        const parsed = tryParseJson(value);
+        byIndex[idx] =
+            parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                ? parsed
+                : { id: value };
+    }
+
+    const indices = Object.keys(byIndex).sort((a, b) => Number(a) - Number(b));
+    if (!indices.length) return [];
+
+    return indices.map((idx) => parseAreaReportFixtureInput(byIndex[idx]));
+};
+
+const parseAreaReportFixturesInput = (body) => {
+    const { fixtures, installed_qty, installedQty, heightFt, height_ft, heightIn, height_in } = body;
+    const parsed = parseFormJsonInput(fixtures);
+    const fixtureId = body.fixture_id ?? body.fixtureId;
+
+    if (Array.isArray(parsed) && parsed.length) {
+        return parsed.map(parseAreaReportFixtureInput);
+    }
+
+    const indexedFixtures = parseIndexedReportFixturesFromBody(body);
+    if (indexedFixtures.length) {
+        return indexedFixtures;
+    }
+
+    const hasSingleFixtureFields =
+        fixtureId ||
+        body.id ||
+        body._id ||
+        installed_qty !== undefined ||
+        installedQty !== undefined ||
+        heightFt !== undefined ||
+        height_ft !== undefined ||
+        heightIn !== undefined ||
+        height_in !== undefined ||
+        body.fixture_note !== undefined;
+
+    if (hasSingleFixtureFields) {
+        return [
+            parseAreaReportFixtureInput({
+                ...body,
+                id: fixtureId ?? body.id ?? body._id,
+                note: body.fixture_note,
+            }),
+        ];
+    }
+
+    return [];
+};
+
+const parseReportUploadField = (fieldname) => {
+    const field = String(fieldname || '').trim();
+    const idMatch = field.match(/^(?:area_)?report_fixture_([a-f0-9]{24})$/i);
+    if (idMatch) return { fixtureId: idMatch[1] };
+
+    const idxMatch = field.match(/^(?:area_)?report_fixture_(\d+)$/i);
+    if (idxMatch) return { fixtureIdx: Number(idxMatch[1], 10) };
+
+    return null;
+};
+
+const attachReportFixtureImages = async (fixtures, files) => {
+    const fixtureImagesByIdx = {};
+    const fixtureImagesById = {};
+
+    for (const file of files || []) {
+        const parsed = parseReportUploadField(file.fieldname);
+        if (!parsed) continue;
+
+        if (parsed.fixtureId) {
+            if (!fixtureImagesById[parsed.fixtureId]) fixtureImagesById[parsed.fixtureId] = [];
+            fixtureImagesById[parsed.fixtureId].push(file);
+            continue;
+        }
+
+        if (!fixtureImagesByIdx[parsed.fixtureIdx]) fixtureImagesByIdx[parsed.fixtureIdx] = [];
+        fixtureImagesByIdx[parsed.fixtureIdx].push(file);
+    }
+
+    const result = [];
+    for (let fixtureIdx = 0; fixtureIdx < fixtures.length; fixtureIdx++) {
+        const fixture = fixtures[fixtureIdx];
+        const fixtureId = getSubdocId(fixture);
+        const filesForFixture = [
+            ...(fixtureImagesByIdx[fixtureIdx] || []),
+            ...(fixtureId ? fixtureImagesById[String(fixtureId)] || [] : []),
+        ];
+        const images = await processUploadedImages(filesForFixture);
+        result.push({
+            ...fixture,
+            images: [...(fixture.images || []), ...images],
+        });
+    }
+
+    return result;
+};
+
+const ensureFixtureReport = (fixture) => {
+    if (!fixture.report) {
+        fixture.report = {
+            installed_qty: 0,
+            heightFt: '',
+            heightIn: '',
+            note: '',
+            images: [],
+        };
+    }
+    if (!Array.isArray(fixture.report.images)) {
+        fixture.report.images = [];
+    }
+};
+
+const applyReportFixtureUpdates = (existingFixture, fixture) => {
+    ensureFixtureReport(existingFixture);
+    const report = existingFixture.report;
+
+    if (fixture.installed_qty !== undefined) report.installed_qty = fixture.installed_qty;
+    if (fixture.heightFt !== undefined) report.heightFt = fixture.heightFt;
+    if (fixture.heightIn !== undefined) report.heightIn = fixture.heightIn;
+    if (fixture.note !== undefined) report.note = fixture.note;
+    if (fixture.images?.length) {
+        report.images = [...(report.images || []), ...fixture.images];
+    }
 };
 
 const ensureUploadDir = async () => {
@@ -1000,5 +1221,95 @@ exports.installation = async (req, res) => {
     } catch (error) {
         console.error('List installations error:', error);
         return res.status(500).json({ message: 'Server error listing installations.' });
+    }
+};
+
+exports.saveAreaReport = async (req, res) => {
+    try {
+        const user_id = req.user.id;
+        const areaId = normalizeFormFieldValue(req.body.area_id ?? req.body.areaId);
+
+        if (!areaId) {
+            return res.status(400).json({ message: 'area_id is required.' });
+        }
+
+        const survey = await Survey.findOne({ 'areas._id': areaId });
+        if (!survey) {
+            return res.status(404).json({ message: 'Area not found.' });
+        }
+
+        const area = survey.areas.id(areaId);
+        if (!area) {
+            return res.status(404).json({ message: 'Area not found.' });
+        }
+
+        const rawReportNote = req.body.area_note ?? req.body.report_note ?? req.body.note;
+        if (rawReportNote !== undefined) {
+            area.report_note = normalizeFormFieldValue(rawReportNote).toString().trim();
+        }
+        if (area.report !== undefined) {
+            area.set('report', undefined);
+        }
+
+        const parsedFixtures = parseAreaReportFixturesInput(req.body);
+        const updatedFixtureIds = [];
+
+        if (parsedFixtures.length) {
+            const fixturesWithImages = await attachReportFixtureImages(parsedFixtures, req.files);
+
+            for (const fixture of fixturesWithImages) {
+                const fixtureId = getSubdocId(fixture);
+                if (!fixtureId) {
+                    return res.status(400).json({
+                        message: 'fixture id is required for each fixture update.',
+                    });
+                }
+
+                const existingFixture = area.fixtures.id(fixtureId);
+                if (!existingFixture) {
+                    return res.status(404).json({
+                        message: `Fixture not found: ${fixtureId}`,
+                    });
+                }
+
+                applyReportFixtureUpdates(existingFixture, fixture);
+                updatedFixtureIds.push(fixtureId);
+            }
+        }
+
+        survey.markModified('areas');
+        await survey.save();
+
+        const customer = survey.customer_id
+            ? await Customer.findById(survey.customer_id).select('name')
+            : null;
+
+        await createLog(
+            'Survey Area Report Saved',
+            user_id,
+            customer?.name || survey.surveyName || 'Survey',
+            'Survey',
+            survey._id
+        );
+
+        const surveyResponse = await formatSurveyResponse(survey.toObject());
+        const updatedArea = (surveyResponse.areas || []).find(
+            (item) => String(item._id) === String(areaId)
+        );
+        const updatedFixtures = (updatedArea?.fixtures || []).filter((fixture) =>
+            updatedFixtureIds.includes(String(fixture._id))
+        );
+
+        return res.status(200).json({
+            message: 'Area report saved successfully.',
+            survey_id: survey._id,
+            area_id: areaId,
+            area: updatedArea,
+            report_note: updatedArea?.report_note || '',
+            ...(updatedFixtureIds.length ? { updated_fixtures: updatedFixtures } : {}),
+        });
+    } catch (error) {
+        console.error('Save area report error:', error);
+        return res.status(500).json({ message: 'Server error saving area report.' });
     }
 };
