@@ -1587,14 +1587,14 @@ exports.addSurveyMaterialDelivery = async (req, res) => {
       return res.status(400).json({ message: 'At least one delivery item with sku is required.' });
     }
 
-    if (parsedItems?.length) {
-      const skus = parsedItems.map((item) => item.sku);
-      const foundProducts = await Product.find({ sku: { $in: skus } }).select('sku').lean();
-      const foundSkuSet = new Set(foundProducts.map((product) => product.sku));
-      if (!skus.every((skuValue) => foundSkuSet.has(skuValue))) {
-        return res.status(400).json({ message: 'One or more products not found.' });
-      }
-    }
+    // if (parsedItems?.length) {
+    //   const skus = parsedItems.map((item) => item.sku);
+    //   const foundProducts = await Product.find({ sku: { $in: skus } }).select('sku').lean();
+    //   const foundSkuSet = new Set(foundProducts.map((product) => product.sku));
+    //   if (!skus.every((skuValue) => foundSkuSet.has(skuValue))) {
+    //     return res.status(400).json({ message: 'One or more products not found.' });
+    //   }
+    // }
 
     const survey = await Survey.findById(surveyId);
     if (!survey) {
