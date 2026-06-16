@@ -1429,7 +1429,7 @@ exports.getCustomersByContractor = async (req, res) => {
     const surveys = await Survey.find({ assignToContractor: userId })
       .populate({
         path: 'customer_id',
-        select: 'name accountNumber mobileNumber email company dba leadSource createdAt convertedDate assignToContractor contractorStatus projectManagerStatus verifyStatus',
+        select: 'name accountNumber mobileNumber email company dba leadSource createdAt addresses convertedDate assignToContractor contractorStatus projectManagerStatus verifyStatus',
         populate: [
           { path: 'assignToContractor', select: 'fullName email mobileNumber userRole' },
           { path: 'assignedTo', select: 'fullName email mobileNumber userRole' },
