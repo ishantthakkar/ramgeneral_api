@@ -1442,6 +1442,8 @@ exports.getCustomersByContractor = async (req, res) => {
         ],
       })
       .populate('user_id', 'fullName email name userRole mobileNumber')
+      .populate('assignedTo', 'fullName email mobileNumber userRole')
+      .populate('assignToContractor', 'fullName email mobileNumber userRole')
       .sort({ createdAt: -1 });
 
     const formattedSurveys = await formatSurveysForResponse(surveys, surveyBaseUrl);
