@@ -177,6 +177,7 @@ router.post(
     upload.array('images', 10),
     customerController.markDeliveryAsCompleted
 );
+router.post('/surveys/verify-delivery-status', verifyToken, customerController.markDeliveryAsDelivered);
 router.post('/customers/:id/assign-to-contractor', verifyToken, customerController.assignToContractor);
 router.post('/customers/:id/verify', verifyToken, customerController.verifyCustomer);
 router.post('/:id/activities', verifyToken, customerController.addCustomerActivity);

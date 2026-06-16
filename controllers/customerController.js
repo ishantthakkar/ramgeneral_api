@@ -1700,6 +1700,85 @@ exports.markDeliveryAsCompleted = async (req, res) => {
   }
 };
 
+exports.markDeliveryAsDelivered = async (req, res) => {
+  try {
+    const user_id = req.user.id;
+    const deliveryId =
+      req.body.delivery_id ?? req.body.deliveryId ?? req.body.id ?? req.body._id;
+
+    const Admin = require('../models/Admin');
+    const isAdmin = await Admin.findById(user_id);
+    let isAuthorized = !!isAdmin;
+
+    if (!isAuthorized) {
+      const user = await User.findById(user_id);
+      if (
+        user &&
+        (user.userRole === 'Project Manager' || user.userRole === 'contractor')
+      ) {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({
+        message: 'Only admins, project managers, or contractors can mark delivery as delivered.',
+      });
+    }
+
+    if (!deliveryId) {
+      return res.status(400).json({ message: 'delivery_id is required.' });
+    }
+
+    const survey = await Survey.findOne({ 'materialDelivery._id': deliveryId });
+    if (!survey) {
+      return res.status(404).json({ message: 'Material delivery not found.' });
+    }
+
+    const delivery = survey.materialDelivery.id(deliveryId);
+    if (!delivery) {
+      return res.status(404).json({ message: 'Material delivery not found.' });
+    }
+
+    if (delivery.deliveryStatus === 'delivered') {
+      return res.status(400).json({ message: 'Delivery is already marked as delivered.' });
+    }
+
+    if (delivery.deliveryStatus !== 'pending') {
+      return res.status(400).json({
+        message: 'Only pending deliveries can be marked as delivered.',
+      });
+    }
+
+    delivery.deliveryStatus = 'delivered';
+    survey.markModified('materialDelivery');
+    await survey.save();
+
+    const customer = survey.customer_id
+      ? await Customer.findById(survey.customer_id).select('name')
+      : null;
+
+    await createLog(
+      'Survey Material Delivery Delivered',
+      user_id,
+      customer?.name || survey.surveyName || 'Survey',
+      'Survey',
+      survey._id
+    );
+
+    const [formattedDelivery] = await formatMaterialDeliveryList([delivery]);
+
+    return res.status(200).json({
+      message: 'Delivery marked as delivered successfully.',
+      survey_id: survey._id,
+      materialDelivery: formattedDelivery,
+    });
+  } catch (error) {
+    console.error('Mark delivery as delivered error:', error);
+    return res.status(500).json({ message: 'Server error marking delivery as delivered.' });
+  }
+};
+
 exports.assignToContractor = async (req, res) => {
   try {
     const user_id = req.user.id;

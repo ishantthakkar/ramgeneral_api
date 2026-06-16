@@ -2,6 +2,14 @@ const mongoose = require('mongoose');
 const { quotationFileFields } = require('../utils/quotationHelpers');
 const { coerceSurveyNotes, getRawSurveyNotes } = require('../utils/surveyNotes');
 
+const fixtureReportSchema = {
+  installed_qty: { type: Number, default: 0 },
+  heightFt: { type: String, trim: true, default: '' },
+  heightIn: { type: String, trim: true, default: '' },
+  note: { type: String, trim: true, default: '' },
+  images: [{ type: String, trim: true }],
+};
+
 const fixtureSchema = {
   product_id: {
     type: mongoose.Schema.Types.ObjectId,
@@ -16,6 +24,7 @@ const fixtureSchema = {
   proposedQty: { type: String, trim: true, default: '' },
   price: { type: String, trim: true, default: '' },
   images: [{ type: String, trim: true }],
+  report: fixtureReportSchema,
 };
 
 const materialDeliveryItemSchema = {
@@ -79,6 +88,7 @@ const surveySchema = new mongoose.Schema({
       note: { type: String, trim: true, default: '' },
       images: [{ type: String, trim: true }],
       fixtures: [fixtureSchema],
+      report_note: { type: String, trim: true, default: '' },
     },
   ],
   notes: [
