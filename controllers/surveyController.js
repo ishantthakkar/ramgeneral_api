@@ -1100,11 +1100,17 @@ exports.assignSurvey = async (req, res) => {
             return res.status(400).json({ message: 'Assigned user must be a contractor or project manager.' });
         }
 
+        const update = { assignedTo };
+        if (normalizeAssignRole(assignedUser.userRole) === 'contractor') {
+            update.assignToContractor = assignedTo;
+        }
+
         const survey = await Survey.findByIdAndUpdate(
             surveyId,
-            { assignedTo },
+            update,
             { new: true, runValidators: true }
-        ).populate('assignedTo', 'fullName email userRole');
+        ).populate('assignedTo', 'fullName email userRole')
+         .populate('assignToContractor', 'fullName email userRole');
 
         if (!survey) {
             return res.status(404).json({ message: 'Survey not found.' });

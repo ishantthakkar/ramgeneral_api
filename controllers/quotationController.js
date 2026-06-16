@@ -727,6 +727,10 @@ exports.approveQuotation = async (req, res) => {
       customer._id
     );
 
+    const { syncPayablesForCustomer } = require('../utils/payablesUtils');
+    await syncPayablesForCustomer(customer);
+    await customer.save();
+
     const quotationMeta = await formatSurveyQuotationMeta(updatedSurvey);
 
     return res.status(200).json({

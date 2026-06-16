@@ -32,6 +32,74 @@ function resolveSurveyDisplayName(survey) {
   return 'Survey';
 }
 
+function normalizeAssignRole(value) {
+  return String(value || '').trim().toLowerCase().replace(/_/g, ' ');
+}
+
+function resolvePopulatedUserName(user) {
+  if (!user || typeof user !== 'object') return '';
+  return String(user.fullName || user.name || '').trim();
+}
+
+function resolveSurveyContractorUser(survey, customer) {
+  const surveyContractor = survey?.assignToContractor;
+  if (surveyContractor) {
+    if (typeof surveyContractor === 'object' && surveyContractor._id) {
+      return surveyContractor;
+    }
+    return surveyContractor;
+  }
+
+  const assignedTo = survey?.assignedTo;
+  if (assignedTo && typeof assignedTo === 'object' && assignedTo._id) {
+    if (normalizeAssignRole(assignedTo.userRole) === 'contractor') {
+      return assignedTo;
+    }
+  }
+
+  const customerContractor = customer?.assignToContractor;
+  if (customerContractor) {
+    return customerContractor;
+  }
+
+  return null;
+}
+
+function resolveSurveyContractorName(survey, customer) {
+  const contractor = resolveSurveyContractorUser(survey, customer);
+  const name = resolvePopulatedUserName(contractor);
+  return name || 'Unassigned';
+}
+
+function resolveSurveyContractorId(survey, customer) {
+  const contractor = resolveSurveyContractorUser(survey, customer);
+  if (!contractor) return null;
+  if (typeof contractor === 'object' && contractor._id) {
+    return contractor._id;
+  }
+  return contractor;
+}
+
+function resolveSurveySalesPersonUser(survey, customer) {
+  if (survey?.user_id) return survey.user_id;
+  return customer?.user_id || null;
+}
+
+function resolveSurveySalesPersonName(survey, customer) {
+  const salesPerson = resolveSurveySalesPersonUser(survey, customer);
+  const name = resolvePopulatedUserName(salesPerson);
+  return name || 'Unassigned';
+}
+
+function resolveSurveySalesPersonId(survey, customer) {
+  const salesPerson = resolveSurveySalesPersonUser(survey, customer);
+  if (!salesPerson) return null;
+  if (typeof salesPerson === 'object' && salesPerson._id) {
+    return salesPerson._id;
+  }
+  return salesPerson;
+}
+
 function getLatestQuotationForSurvey(survey, customer) {
   const quotations = getGenerateQuotationsForSurvey(survey, customer) || [];
   if (!quotations.length) return null;
@@ -87,7 +155,7 @@ async function calculateSurveyPayables(survey, customer) {
     ...totals,
     quotationAmount,
     quotationNumber: latestQuotation?.quotationNumber || '',
-    confirmedDate: survey.confirmDate || survey.quotationApprovedAt || null,
+    confirmedDate: survey.quotationApprovedAt || survey.confirmDate || null,
     surveyName: resolveSurveyDisplayName(survey),
   };
 }
@@ -167,8 +235,8 @@ async function addPaymentToCommission(customer, { surveyId, payableFor, amount, 
     throw error;
   }
 
-  if (!isSurveyVerified(survey)) {
-    const error = new Error('Survey must be verified before recording payments.');
+  if (!isPayableSurvey(survey)) {
+    const error = new Error('Quotation must be approved before recording payments.');
     error.statusCode = 400;
     throw error;
   }
@@ -275,29 +343,31 @@ function buildCommissionEntry({
   };
 }
 
-function isSurveyVerified(survey) {
-  if (!survey?.confirmDate) return false;
-  const date = new Date(survey.confirmDate);
-  return !Number.isNaN(date.getTime());
+function isPayableSurvey(survey) {
+  return String(survey?.quotationStatus || '').toLowerCase() === 'approved';
 }
 
 async function syncPayablesForCustomer(customer) {
   const Survey = require('../models/Survey');
-  const surveys = await Survey.find({ customer_id: customer._id }).sort({ createdAt: -1 });
+  const surveys = await Survey.find({ customer_id: customer._id })
+    .populate('assignedTo', 'fullName email userRole')
+    .populate('assignToContractor', 'fullName email userRole')
+    .populate('user_id', 'fullName email name')
+    .sort({ createdAt: -1 });
 
   if (!surveys.length) return customer;
 
-  const verifiedSurveys = surveys.filter(isSurveyVerified);
-  const verifiedSurveyIds = new Set(
-    verifiedSurveys.map((survey) => survey._id.toString())
+  const payableSurveys = surveys.filter(isPayableSurvey);
+  const payableSurveyIds = new Set(
+    payableSurveys.map((survey) => survey._id.toString())
   );
 
   const nextCommissions = (customer.commissions || []).filter((entry) => {
     const entrySurveyId = entry.surveyId?.toString?.() || String(entry.surveyId || '');
-    return verifiedSurveyIds.has(entrySurveyId);
+    return payableSurveyIds.has(entrySurveyId);
   });
 
-  for (const survey of verifiedSurveys) {
+  for (const survey of payableSurveys) {
     const payables = await calculateSurveyPayables(survey, customer);
     const surveyId = survey._id;
 
@@ -305,12 +375,12 @@ async function syncPayablesForCustomer(customer) {
       {
         commissionType: 'Survey',
         amount: payables.salesCommission,
-        salesPerson: customer.user_id,
+        salesPerson: resolveSurveySalesPersonId(survey, customer),
       },
       {
         commissionType: 'Installation',
         amount: payables.contractorCommission,
-        contractor: customer.assignToContractor,
+        contractor: resolveSurveyContractorId(survey, customer),
       },
     ];
 
@@ -347,10 +417,12 @@ module.exports = {
   calculatePayablesFromAreas,
   calculateSurveyPayables,
   resolveSurveyDisplayName,
+  resolveSurveyContractorName,
+  resolveSurveySalesPersonName,
   getInstallDate,
   getPaymentTotals,
   findCommissionRecord,
-  isSurveyVerified,
+  isPayableSurvey,
   syncPayablesForCustomer,
   sumCommissionPayments,
   addPaymentToCommission,
