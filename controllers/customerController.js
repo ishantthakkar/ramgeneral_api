@@ -49,6 +49,8 @@ const {
   normalizePayableFor,
   sumCommissionPayments,
   findCommissionRecord,
+  resolveSurveyContractorName,
+  resolveSurveySalesPersonName,
 } = require('../utils/payablesUtils');
 
 function mapUserSummary(user) {
@@ -2115,10 +2117,14 @@ exports.updateCustomerCommissions = async (req, res) => {
 
 exports.customerCommissionList = async (req, res) => {
   try {
-    const approvedSurveys = await Survey.find({ quotationStatus: 'approved' }).sort({
-      quotationApprovedAt: -1,
-      createdAt: -1,
-    });
+    const approvedSurveys = await Survey.find({ quotationStatus: 'approved' })
+      .populate('assignedTo', 'fullName email userRole')
+      .populate('assignToContractor', 'fullName email userRole')
+      .populate('user_id', 'fullName email name')
+      .sort({
+        quotationApprovedAt: -1,
+        createdAt: -1,
+      });
 
     const customerIdSet = new Set(
       approvedSurveys
@@ -2177,15 +2183,14 @@ exports.customerCommissionList = async (req, res) => {
       const customerSurveys = surveysByCustomer.get(customerKey) || [];
       const legalName = customer.legalName || customer.name || '';
       const dba = customer.company || customer.leadId?.dba || '';
-      const salesPersonName =
-        customer.user_id?.fullName || customer.user_id?.name || 'Unassigned';
-      const contractorName = customer.assignToContractor?.fullName || 'Unassigned';
       const installDate = getInstallDate(customer);
 
       for (const survey of customerSurveys) {
         const payables = await calculateSurveyPayables(survey, customer);
         const surveyId = survey._id.toString();
         const jobNo = survey.job_id || '—';
+        const salesPersonName = resolveSurveySalesPersonName(survey, customer);
+        const contractorName = resolveSurveyContractorName(survey, customer);
 
         const salesPayments = getPaymentTotals(
           customer,
