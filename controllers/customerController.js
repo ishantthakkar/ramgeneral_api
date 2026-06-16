@@ -1458,8 +1458,18 @@ exports.getCustomersByContractor = async (req, res) => {
         return {
           ...survey,
           customer_id: customerDetails,
-          materialSummary: buildMaterialSummary(survey.areas, surveys[index].materialDelivery),
-          materialDelivery: await formatMaterialDeliveryList(surveys[index].materialDelivery),
+          materialSummary: (() => {
+            const delivered = (surveys[index].materialDelivery || []).filter(
+              (delivery) => delivery?.deliveryStatus === 'delivered'
+            );
+            return delivered.length ? buildMaterialSummary(survey.areas, delivered) : [];
+          })(),
+          materialDelivery: (() => {
+            const delivered = (surveys[index].materialDelivery || []).filter(
+              (delivery) => delivery?.deliveryStatus === 'delivered'
+            );
+            return delivered.length ? formatMaterialDeliveryList(delivered) : [];
+          })(),
           materialDeliveryReturn: surveys[index].materialDeliveryReturn || [],
           deliverySummary: surveys[index].deliverySummary || [],
         };
