@@ -138,6 +138,7 @@ const customerSchema = new mongoose.Schema({
             enum: ['Cash', 'ACH Transfer', 'Wire Transfer', 'Check', 'Credit Card', 'Debit Card', 'PayPal', 'Stripe', 'Other'],
             trim: true,
           },
+          note: { type: String, trim: true, default: '' },
           paymentDate: { type: Date, default: Date.now },
           createdAt: { type: Date, default: Date.now },
         },

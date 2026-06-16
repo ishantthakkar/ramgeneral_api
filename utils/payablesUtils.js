@@ -225,7 +225,7 @@ function normalizePayableFor(value) {
   return 'Survey';
 }
 
-async function addPaymentToCommission(customer, { surveyId, payableFor, amount, paymentMethod, paymentDate }) {
+async function addPaymentToCommission(customer, { surveyId, payableFor, amount, paymentMethod, paymentDate, note }) {
   const Survey = require('../models/Survey');
   const survey = await Survey.findOne({ _id: surveyId, customer_id: customer._id });
 
@@ -289,6 +289,7 @@ async function addPaymentToCommission(customer, { surveyId, payableFor, amount, 
   const nextPayment = {
     amount: paymentAmount,
     paymentMethod,
+    note: String(note || '').trim(),
     paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
     createdAt: new Date(),
   };

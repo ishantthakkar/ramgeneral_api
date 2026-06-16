@@ -2012,7 +2012,7 @@ exports.getCustomerPayableDetails = async (req, res) => {
 exports.addCommissionPayment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { surveyId, for: payableFor, amount, paymentMethod, paymentDate } = req.body;
+    const { surveyId, for: payableFor, amount, paymentMethod, paymentDate, note } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(404).json({ message: 'Customer not found.' });
@@ -2032,6 +2032,7 @@ exports.addCommissionPayment = async (req, res) => {
       amount,
       paymentMethod,
       paymentDate,
+      note,
     });
 
     await customer.save();
