@@ -107,9 +107,15 @@ async function formatSurveysForResponse(surveys, surveyBaseUrl) {
 async function formatCustomerForSurveyResponse(customer, materialBaseUrl) {
   if (!customer) return null;
 
-  const customerObj = stripCustomerLogFields(
-    customer.toObject ? customer.toObject() : customer
-  );
+  const source = customer.toObject ? customer.toObject() : customer;
+  const customerObj = stripCustomerLogFields(source);
+  const lead = source.leadId && typeof source.leadId === 'object' ? source.leadId : null;
+
+  customerObj.dba =
+    (source.dba ?? customerObj.dba ?? '').toString().trim() ||
+    (source.company ?? customerObj.company ?? '').toString().trim() ||
+    (lead?.dba ?? '').toString().trim() ||
+    '';
 
   if (customerObj.material && Array.isArray(customerObj.material)) {
     customerObj.material = customerObj.material.map((item) => ({
@@ -135,6 +141,58 @@ function parseFixtureHeightInches(heightFt, heightIn) {
   const ft = parseFloat(heightFt) || 0;
   const inches = parseFloat(heightIn) || 0;
   return ft * 12 + inches;
+}
+
+function buildMaterialSummaryFromAreas(areas) {
+  const summaryMap = new Map();
+
+  for (const area of areas || []) {
+    for (const fixture of area.fixtures || []) {
+      const product = fixture.product;
+      const productKey =
+        product?._id?.toString() ||
+        fixture.product_id?.toString?.() ||
+        fixture.product_id ||
+        fixture.existingFixtureType ||
+        'unknown';
+
+      const sku =
+        (product?.sku ?? product?.name ?? fixture.existingFixtureType ?? '')
+          .toString()
+          .trim();
+      if (!sku) continue;
+
+      const qty =
+        parseFloat(fixture.proposedQty) || parseFloat(fixture.existingQty) || 0;
+      const heightInches = parseFixtureHeightInches(fixture.heightFt, fixture.heightIn);
+
+      if (!summaryMap.has(productKey)) {
+        summaryMap.set(productKey, {
+          sku,
+          qty: 0,
+          maxHeightInches: 0,
+          heightFt: fixture.heightFt || '',
+          heightIn: fixture.heightIn || '',
+        });
+      }
+
+      const entry = summaryMap.get(productKey);
+      entry.qty += qty;
+
+      if (heightInches >= entry.maxHeightInches) {
+        entry.maxHeightInches = heightInches;
+        entry.heightFt = fixture.heightFt || '';
+        entry.heightIn = fixture.heightIn || '';
+      }
+    }
+  }
+
+  return Array.from(summaryMap.values()).map(({ sku, qty, heightFt, heightIn }) => ({
+    sku,
+    qty: String(Math.round(qty)).padStart(2, '0'),
+    heightFt: (heightFt ?? '').toString().trim() || '0',
+    heightIn: (heightIn ?? '').toString().trim() || '0',
+  }));
 }
 
 function buildMaterialSummary(areas, materialDelivery) {
@@ -1371,10 +1429,11 @@ exports.getCustomersByContractor = async (req, res) => {
     const surveys = await Survey.find({ assignToContractor: userId })
       .populate({
         path: 'customer_id',
-        select: 'name accountNumber mobileNumber email company leadSource createdAt convertedDate assignToContractor contractorStatus projectManagerStatus verifyStatus',
+        select: 'name accountNumber mobileNumber email company dba leadSource createdAt convertedDate assignToContractor contractorStatus projectManagerStatus verifyStatus',
         populate: [
           { path: 'assignToContractor', select: 'fullName email mobileNumber userRole' },
           { path: 'assignedTo', select: 'fullName email mobileNumber userRole' },
+          { path: 'leadId', select: 'dba leadName lead_id name' },
           {
             path: 'user_id',
             select: 'fullName name email userRole mobileNumber',
@@ -1438,6 +1497,7 @@ exports.getCustomersByPM = async (req, res) => {
         populate: [
           { path: 'assignToContractor', select: 'fullName email mobileNumber userRole' },
           { path: 'assignedTo', select: 'fullName email mobileNumber userRole' },
+          { path: 'leadId', select: 'dba leadName lead_id name' },
           {
             path: 'user_id',
             select: 'fullName name email userRole mobileNumber',
@@ -1463,7 +1523,7 @@ exports.getCustomersByPM = async (req, res) => {
         return {
           ...survey,
           customer_id: customerDetails,
-          materialSummary: buildMaterialSummary(survey.areas, surveys[index].materialDelivery),
+          materialSummary: buildMaterialSummaryFromAreas(survey.areas),
           materialDelivery: await formatMaterialDeliveryList(surveys[index].materialDelivery),
           materialDeliveryReturn: surveys[index].materialDeliveryReturn || [],
           deliverySummary: surveys[index].deliverySummary || [],
