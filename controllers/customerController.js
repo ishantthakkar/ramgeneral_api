@@ -1943,18 +1943,18 @@ exports.getCustomerPayableDetails = async (req, res) => {
       survey = await Survey.findOne({
         _id: surveyId,
         customer_id: id,
-        confirmDate: { $ne: null },
+        quotationStatus: 'approved',
       });
     }
     if (!survey) {
       survey = await Survey.findOne({
         customer_id: id,
-        confirmDate: { $ne: null },
-      }).sort({ createdAt: -1 });
+        quotationStatus: 'approved',
+      }).sort({ quotationApprovedAt: -1, createdAt: -1 });
     }
 
     if (!survey) {
-      return res.status(404).json({ message: 'No verified survey found for this customer.' });
+      return res.status(404).json({ message: 'No quotation-approved survey found for this customer.' });
     }
 
     const type = normalizePayableFor(payableFor);
@@ -2115,20 +2115,20 @@ exports.updateCustomerCommissions = async (req, res) => {
 
 exports.customerCommissionList = async (req, res) => {
   try {
-    const verifiedSurveys = await Survey.find({ confirmDate: { $ne: null } }).sort({
-      surveyDate: -1,
+    const approvedSurveys = await Survey.find({ quotationStatus: 'approved' }).sort({
+      quotationApprovedAt: -1,
       createdAt: -1,
     });
 
     const customerIdSet = new Set(
-      verifiedSurveys
+      approvedSurveys
         .map((survey) => survey.customer_id?.toString())
         .filter(Boolean)
     );
 
     if (!customerIdSet.size) {
       return res.status(200).json({
-        message: 'Verified survey payables retrieved successfully.',
+        message: 'Quotation-approved payables retrieved successfully.',
         salesPersons: [],
         contractors: [],
         overallSummary: {
@@ -2155,7 +2155,7 @@ exports.customerCommissionList = async (req, res) => {
 
     const surveysByCustomer = new Map();
 
-    for (const survey of verifiedSurveys) {
+    for (const survey of approvedSurveys) {
       const key = survey.customer_id?.toString();
       if (!key) continue;
       if (!surveysByCustomer.has(key)) surveysByCustomer.set(key, []);
@@ -2180,12 +2180,12 @@ exports.customerCommissionList = async (req, res) => {
       const salesPersonName =
         customer.user_id?.fullName || customer.user_id?.name || 'Unassigned';
       const contractorName = customer.assignToContractor?.fullName || 'Unassigned';
-      const jobNo = customer.accountNumber || customer.customerCode || '';
       const installDate = getInstallDate(customer);
 
       for (const survey of customerSurveys) {
         const payables = await calculateSurveyPayables(survey, customer);
         const surveyId = survey._id.toString();
+        const jobNo = survey.job_id || '—';
 
         const salesPayments = getPaymentTotals(
           customer,
@@ -2227,7 +2227,7 @@ exports.customerCommissionList = async (req, res) => {
           legalName,
           dba,
           contractor: contractorName,
-          jobNo: jobNo || '—',
+          jobNo,
           surveyName: payables.surveyName,
           installDate: installDate || '',
           totalCharges: payables.quotationAmount,
@@ -2243,7 +2243,7 @@ exports.customerCommissionList = async (req, res) => {
     }
 
     return res.status(200).json({
-      message: 'Verified survey payables retrieved successfully.',
+      message: 'Quotation-approved payables retrieved successfully.',
       salesPersons,
       contractors,
       overallSummary: {

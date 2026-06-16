@@ -87,7 +87,7 @@ async function calculateSurveyPayables(survey, customer) {
     ...totals,
     quotationAmount,
     quotationNumber: latestQuotation?.quotationNumber || '',
-    confirmedDate: survey.confirmDate || survey.quotationApprovedAt || null,
+    confirmedDate: survey.quotationApprovedAt || survey.confirmDate || null,
     surveyName: resolveSurveyDisplayName(survey),
   };
 }
@@ -167,8 +167,8 @@ async function addPaymentToCommission(customer, { surveyId, payableFor, amount, 
     throw error;
   }
 
-  if (!isSurveyVerified(survey)) {
-    const error = new Error('Survey must be verified before recording payments.');
+  if (!isPayableSurvey(survey)) {
+    const error = new Error('Quotation must be approved before recording payments.');
     error.statusCode = 400;
     throw error;
   }
@@ -275,10 +275,8 @@ function buildCommissionEntry({
   };
 }
 
-function isSurveyVerified(survey) {
-  if (!survey?.confirmDate) return false;
-  const date = new Date(survey.confirmDate);
-  return !Number.isNaN(date.getTime());
+function isPayableSurvey(survey) {
+  return String(survey?.quotationStatus || '').toLowerCase() === 'approved';
 }
 
 async function syncPayablesForCustomer(customer) {
@@ -287,17 +285,17 @@ async function syncPayablesForCustomer(customer) {
 
   if (!surveys.length) return customer;
 
-  const verifiedSurveys = surveys.filter(isSurveyVerified);
-  const verifiedSurveyIds = new Set(
-    verifiedSurveys.map((survey) => survey._id.toString())
+  const payableSurveys = surveys.filter(isPayableSurvey);
+  const payableSurveyIds = new Set(
+    payableSurveys.map((survey) => survey._id.toString())
   );
 
   const nextCommissions = (customer.commissions || []).filter((entry) => {
     const entrySurveyId = entry.surveyId?.toString?.() || String(entry.surveyId || '');
-    return verifiedSurveyIds.has(entrySurveyId);
+    return payableSurveyIds.has(entrySurveyId);
   });
 
-  for (const survey of verifiedSurveys) {
+  for (const survey of payableSurveys) {
     const payables = await calculateSurveyPayables(survey, customer);
     const surveyId = survey._id;
 
@@ -350,7 +348,7 @@ module.exports = {
   getInstallDate,
   getPaymentTotals,
   findCommissionRecord,
-  isSurveyVerified,
+  isPayableSurvey,
   syncPayablesForCustomer,
   sumCommissionPayments,
   addPaymentToCommission,
