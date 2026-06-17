@@ -172,6 +172,11 @@ router.post('/surveys/edit-status', verifyToken, customerController.updateSurvey
 router.post('/:surveyId/:status/update-status', verifyToken, customerController.updateCustomerSurveyStatus);
 router.post('/surveys/add-material-delivery', verifyToken, customerController.addSurveyMaterialDelivery);
 router.post(
+    '/surveys/add-material-delivery-return',
+    verifyToken,
+    customerController.addSurveyMaterialDeliveryReturn
+);
+router.post(
     '/surveys/delivery-mark-as-completed',
     verifyToken,
     upload.array('images', 10),

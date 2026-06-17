@@ -268,6 +268,77 @@ function parseMaterialDeliveryItems(body) {
   return [];
 }
 
+function getReturnItemName(item) {
+  return (item?.item_name ?? item?.itemName ?? item?.sku ?? '').toString().trim();
+}
+
+function parseMaterialDeliveryReturnItems(body) {
+  const { items, item_name, itemName, sku, returned_qty, returnedQty } = body;
+  const parsed = tryParseJson(items);
+
+  if (Array.isArray(parsed) && parsed.length) {
+    return parsed
+      .map((item) => ({
+        item_name: getReturnItemName(item),
+        returned_qty: Number(item?.returned_qty ?? item?.returnedQty ?? 0),
+      }))
+      .filter((item) => item.item_name);
+  }
+
+  const singleItemName = getReturnItemName({ item_name, itemName, sku });
+  if (singleItemName) {
+    return [
+      {
+        item_name: singleItemName,
+        returned_qty: Number(returned_qty ?? returnedQty ?? 0),
+      },
+    ];
+  }
+
+  return [];
+}
+
+async function formatMaterialDeliveryReturnList(returns) {
+  const list = Array.isArray(returns) ? returns : [];
+  const itemNames = [
+    ...new Set(
+      list.flatMap((entry) => {
+        const plain = entry?.toObject ? entry.toObject() : entry;
+        return (plain.items || []).map((item) => getReturnItemName(item)).filter(Boolean);
+      })
+    ),
+  ];
+
+  const products = itemNames.length
+    ? await Product.find({
+        $or: [{ sku: { $in: itemNames } }, { name: { $in: itemNames } }],
+      })
+        .select('name sku')
+        .lean()
+    : [];
+  const productMap = new Map();
+  for (const product of products) {
+    productMap.set(product.sku, product);
+    productMap.set(product.name, product);
+  }
+
+  return list.map((entry) => {
+    const plain = entry?.toObject ? entry.toObject() : { ...entry };
+    return {
+      ...plain,
+      items: (plain.items || []).map((item) => {
+        const itemName = getReturnItemName(item);
+        const product = itemName ? productMap.get(itemName) : null;
+        return {
+          item_name: itemName,
+          productName: product?.name || '',
+          returned_qty: Number(item.returned_qty) || 0,
+        };
+      }),
+    };
+  });
+}
+
 async function formatMaterialDeliveryList(deliveries) {
   const list = Array.isArray(deliveries) ? deliveries : [];
   const materialBaseUrl =
@@ -1455,22 +1526,22 @@ exports.getCustomersByContractor = async (req, res) => {
           materialBaseUrl
         );
 
+        const deliveredMaterial = (surveys[index].materialDelivery || []).filter(
+          (delivery) => delivery?.deliveryStatus === 'delivered'
+        );
+
         return {
           ...survey,
           customer_id: customerDetails,
-          materialSummary: (() => {
-            const delivered = (surveys[index].materialDelivery || []).filter(
-              (delivery) => delivery?.deliveryStatus === 'delivered'
-            );
-            return delivered.length ? buildMaterialSummary(survey.areas, delivered) : [];
-          })(),
-          materialDelivery: (() => {
-            const delivered = (surveys[index].materialDelivery || []).filter(
-              (delivery) => delivery?.deliveryStatus === 'delivered'
-            );
-            return delivered.length ? formatMaterialDeliveryList(delivered) : [];
-          })(),
-          materialDeliveryReturn: surveys[index].materialDeliveryReturn || [],
+          materialSummary: deliveredMaterial.length
+            ? buildMaterialSummary(survey.areas, deliveredMaterial)
+            : [],
+          materialDelivery: deliveredMaterial.length
+            ? await formatMaterialDeliveryList(deliveredMaterial)
+            : [],
+          materialDeliveryReturn: await formatMaterialDeliveryReturnList(
+            surveys[index].materialDeliveryReturn
+          ),
           deliverySummary: surveys[index].deliverySummary || [],
         };
       })
@@ -1537,7 +1608,9 @@ exports.getCustomersByPM = async (req, res) => {
           customer_id: customerDetails,
           materialSummary: buildMaterialSummaryFromAreas(survey.areas),
           materialDelivery: await formatMaterialDeliveryList(surveys[index].materialDelivery),
-          materialDeliveryReturn: surveys[index].materialDeliveryReturn || [],
+          materialDeliveryReturn: await formatMaterialDeliveryReturnList(
+            surveys[index].materialDeliveryReturn
+          ),
           deliverySummary: surveys[index].deliverySummary || [],
         };
       })
@@ -1690,6 +1763,148 @@ exports.addSurveyMaterialDelivery = async (req, res) => {
   } catch (error) {
     console.error('Add survey material delivery error:', error);
     return res.status(500).json({ message: 'Server error scheduling material delivery.' });
+  }
+};
+
+exports.addSurveyMaterialDeliveryReturn = async (req, res) => {
+  try {
+    const user_id = req.user.id;
+    const surveyId = req.body.survey_id ?? req.body.surveyId;
+    const returnId =
+      req.body.id ?? req.body._id ?? req.body.material_delivery_return_id ?? req.body.return_id;
+    const { date, return_date, time, time_slot, note } = req.body;
+
+    const Admin = require('../models/Admin');
+    const isAdmin = await Admin.findById(user_id);
+    let isAuthorized = !!isAdmin;
+
+    if (!isAuthorized) {
+      const user = await User.findById(user_id);
+      if (
+        user &&
+        (user.userRole === 'Project Manager' || user.userRole === 'contractor')
+      ) {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({
+        message: 'Only admins, project managers, or contractors can add material returns.',
+      });
+    }
+
+    if (!surveyId) {
+      return res.status(400).json({ message: 'survey_id is required.' });
+    }
+
+    const hasItemsInput =
+      req.body.items !== undefined ||
+      req.body.item_name !== undefined ||
+      req.body.itemName !== undefined ||
+      req.body.sku !== undefined;
+    const parsedItems = hasItemsInput ? parseMaterialDeliveryReturnItems(req.body) : null;
+
+    if (!returnId && (!parsedItems || !parsedItems.length)) {
+      return res.status(400).json({
+        message: 'At least one return item with item_name is required.',
+      });
+    }
+
+    const survey = await Survey.findById(surveyId);
+    if (!survey) {
+      return res.status(404).json({ message: 'Survey not found.' });
+    }
+
+    if (!isAdmin) {
+      const user = await User.findById(user_id).select('userRole');
+      const isContractor = user?.userRole === 'contractor';
+      const isPm = user?.userRole === 'Project Manager';
+
+      if (
+        isContractor &&
+        survey.assignToContractor?.toString() !== user_id.toString()
+      ) {
+        return res.status(403).json({
+          message: 'You are not assigned as contractor for this survey.',
+        });
+      }
+
+      if (isPm && survey.assignedTo?.toString() !== user_id.toString()) {
+        return res.status(403).json({
+          message: 'You are not assigned as project manager for this survey.',
+        });
+      }
+    }
+
+    let savedReturn;
+    let action = 'created';
+
+    if (returnId) {
+      const existingReturn = survey.materialDeliveryReturn.id(returnId);
+      if (!existingReturn) {
+        return res.status(404).json({ message: 'Material delivery return not found.' });
+      }
+
+      if (date !== undefined || return_date !== undefined) {
+        existingReturn.date = new Date(date || return_date);
+      }
+      if (time !== undefined || time_slot !== undefined) {
+        existingReturn.time = (time ?? time_slot ?? '').toString().trim();
+      }
+      if (note !== undefined) {
+        existingReturn.note = note.toString().trim();
+      }
+      if (parsedItems?.length) {
+        existingReturn.items = parsedItems;
+      }
+
+      savedReturn = existingReturn;
+      action = 'updated';
+    } else {
+      const returnEntry = {
+        date: date || return_date ? new Date(date || return_date) : new Date(),
+        time: (time ?? time_slot ?? '').toString().trim(),
+        items: parsedItems,
+        note: (note ?? '').toString().trim(),
+        createdBy: user_id,
+        createdAt: new Date(),
+      };
+
+      survey.materialDeliveryReturn.push(returnEntry);
+      savedReturn = survey.materialDeliveryReturn[survey.materialDeliveryReturn.length - 1];
+    }
+
+    survey.markModified('materialDeliveryReturn');
+    await survey.save();
+
+    const customer = survey.customer_id
+      ? await Customer.findById(survey.customer_id).select('name')
+      : null;
+
+    await createLog(
+      action === 'updated'
+        ? 'Survey Material Delivery Return Updated'
+        : 'Survey Material Delivery Return Added',
+      user_id,
+      customer?.name || survey.surveyName || 'Survey',
+      'Survey',
+      survey._id
+    );
+
+    const [formattedReturn] = await formatMaterialDeliveryReturnList([savedReturn]);
+
+    return res.status(200).json({
+      message:
+        action === 'updated'
+          ? 'Material delivery return updated successfully.'
+          : 'Material delivery return added successfully.',
+      survey_id: survey._id,
+      materialDeliveryReturn: formattedReturn,
+    });
+  } catch (error) {
+    console.error('Add survey material delivery return error:', error);
+    return res.status(500).json({ message: 'Server error adding material delivery return.' });
   }
 };
 

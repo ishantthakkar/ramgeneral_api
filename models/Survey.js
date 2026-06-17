@@ -50,6 +50,23 @@ const materialDeliverySchema = {
   createdAt: { type: Date, default: Date.now },
 };
 
+const materialDeliveryReturnItemSchema = {
+  item_name: { type: String, trim: true, default: '' },
+  returned_qty: { type: Number, default: 0 },
+};
+
+const materialDeliveryReturnSchema = {
+  date: { type: Date },
+  time: { type: String, trim: true, default: '' },
+  items: [materialDeliveryReturnItemSchema],
+  note: { type: String, trim: true, default: '' },
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  },
+  createdAt: { type: Date, default: Date.now },
+};
+
 const surveySchema = new mongoose.Schema({
   customer_id: {
     type: mongoose.Schema.Types.ObjectId,
@@ -141,7 +158,7 @@ const surveySchema = new mongoose.Schema({
     sparse: true,
   },
   materialDelivery: [materialDeliverySchema],
-  materialDeliveryReturn: { type: Array, default: [] },
+  materialDeliveryReturn: [materialDeliveryReturnSchema],
   deliverySummary: { type: Array, default: [] },
   generateQuotation: [quotationFileFields],
   uploadSignedQuotation: [quotationFileFields],
