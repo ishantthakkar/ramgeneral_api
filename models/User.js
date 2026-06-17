@@ -55,6 +55,13 @@ const userSchema = new mongoose.Schema({
     trim: true,
     default: '',
   },
+  workingSchedule: [
+    {
+      day: { type: String, trim: true },
+      from: { type: String, trim: true },
+      to: { type: String, trim: true },
+    },
+  ],
   status: {
     type: String,
     required: true,

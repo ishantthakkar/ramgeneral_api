@@ -223,9 +223,67 @@ const validateAndResolveReportsTo = async (userRoleName, reportsToId, userId = n
   return { reportsTo: null };
 };
 
+function parseWorkingScheduleInput(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return null;
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeWorkingScheduleEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+
+  const day = (entry.day || '').toString().trim();
+  const from = (entry.from || '').toString().trim();
+  const to = (entry.to || '').toString().trim();
+
+  if (!day || !from || !to) return null;
+  if (parseTimeToMinutes(from) === null || parseTimeToMinutes(to) === null) return null;
+
+  return { day, from, to };
+}
+
+function resolveWorkingHoursForDate(user, targetDate) {
+  const schedule = Array.isArray(user.workingSchedule) ? user.workingSchedule : [];
+
+  if (schedule.length > 0) {
+    const entry = schedule.find((item) => isWorkingDayMatch(item.day, targetDate));
+    return {
+      isWorkingDay: Boolean(entry),
+      workingFrom: entry?.from || '',
+      workingTo: entry?.to || '',
+    };
+  }
+
+  const isWorkingDay = (user.workingDays || []).some((d) => isWorkingDayMatch(d, targetDate));
+  return {
+    isWorkingDay,
+    workingFrom: user.workingFrom || '',
+    workingTo: user.workingTo || '',
+  };
+}
+
 const pickWorkingHoursFields = (body) => {
-  const { workingDays, workingFrom, workingTo } = body;
+  const { workingDays, workingFrom, workingTo, workingSchedule } = body;
   const fields = {};
+  const parsedSchedule = parseWorkingScheduleInput(workingSchedule);
+
+  if (parsedSchedule) {
+    const normalizedSchedule = parsedSchedule
+      .map((entry) => normalizeWorkingScheduleEntry(entry))
+      .filter(Boolean);
+
+    fields.workingSchedule = normalizedSchedule;
+    fields.workingDays = normalizedSchedule.map((entry) => entry.day);
+    fields.workingFrom = normalizedSchedule[0]?.from || '';
+    fields.workingTo = normalizedSchedule[0]?.to || '';
+    return fields;
+  }
 
   if (Array.isArray(workingDays)) {
     fields.workingDays = workingDays;
@@ -326,7 +384,7 @@ exports.getUserWorkingHours = async (req, res) => {
     }
 
     const user = await User.findById(id)
-      .select('workingDays workingFrom workingTo fullName')
+      .select('workingDays workingFrom workingTo workingSchedule fullName')
       .lean();
 
     if (!user) {
@@ -334,12 +392,11 @@ exports.getUserWorkingHours = async (req, res) => {
     }
 
     const dayName = DAY_NAMES[requestedDate.getDay()];
-    const isWorkingDay = (user.workingDays || []).some((d) =>
-      isWorkingDayMatch(d, requestedDate)
-    );
+    const resolvedHours = resolveWorkingHoursForDate(user, requestedDate);
+    const isWorkingDay = resolvedHours.isWorkingDay;
 
-    const fromMinutes = parseTimeToMinutes(user.workingFrom);
-    const toMinutes = parseTimeToMinutes(user.workingTo);
+    const fromMinutes = parseTimeToMinutes(resolvedHours.workingFrom);
+    const toMinutes = parseTimeToMinutes(resolvedHours.workingTo);
 
     const slot = [];
     for (let start = 0; start < 24 * 60; start += 60) {
@@ -365,9 +422,10 @@ exports.getUserWorkingHours = async (req, res) => {
       day: dayName,
       isWorkingDay,
       isToday: formatLocalDate(requestedDate) === today,
-      workingFrom: user.workingFrom || '',
-      workingTo: user.workingTo || '',
+      workingFrom: resolvedHours.workingFrom,
+      workingTo: resolvedHours.workingTo,
       workingDays: user.workingDays || [],
+      workingSchedule: user.workingSchedule || [],
       slot,
     });
   } catch (error) {
@@ -557,7 +615,7 @@ exports.getUser = async (req, res) => {
         }
 
         const directReports = await User.find({ reportsTo: user._id })
-            .select('fullName company email mobileNumber userRole status workingDays workingFrom workingTo')
+            .select('fullName company email mobileNumber userRole status workingDays workingFrom workingTo workingSchedule')
             .sort({ fullName: 1 })
             .lean();
 
