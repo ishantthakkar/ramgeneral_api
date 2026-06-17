@@ -10,6 +10,13 @@ const fixtureReportSchema = {
   images: [{ type: String, trim: true }],
 };
 
+const fixtureVerificationSchema = {
+  verified_qty: { type: Number, default: 0 },
+  issueFound: { type: String, trim: true, enum: ['yes', 'no'], default: 'no' },
+  comments: { type: String, trim: true, default: '' },
+  images: [{ type: String, trim: true }],
+};
+
 const fixtureSchema = {
   product_id: {
     type: mongoose.Schema.Types.ObjectId,
@@ -25,6 +32,7 @@ const fixtureSchema = {
   price: { type: String, trim: true, default: '' },
   images: [{ type: String, trim: true }],
   report: fixtureReportSchema,
+  verification: fixtureVerificationSchema,
 };
 
 const materialDeliveryItemSchema = {

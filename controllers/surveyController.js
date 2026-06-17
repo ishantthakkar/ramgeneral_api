@@ -95,6 +95,12 @@ const mapSurveyImageUrls = (surveyObj) => {
                     images: (fixture.report.images || []).map(toSurveyImageUrl),
                 }
                 : fixture.report,
+            verification: fixture.verification
+                ? {
+                    ...fixture.verification,
+                    images: (fixture.verification.images || []).map(toSurveyImageUrl),
+                }
+                : fixture.verification,
         })),
     }));
     surveyObj.verifyImages = (surveyObj.verifyImages || []).map(toSurveyImageUrl);
@@ -510,6 +516,196 @@ const applyReportFixtureUpdates = (existingFixture, fixture) => {
     if (fixture.note !== undefined) report.note = fixture.note;
     if (fixture.images?.length) {
         report.images = [...(report.images || []), ...fixture.images];
+    }
+};
+
+const normalizeIssueFound = (value) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    return String(value).trim().toLowerCase() === 'yes' ? 'yes' : 'no';
+};
+
+const parseFixtureVerificationInput = (item) => {
+    const subdocId = getSubdocId(item);
+    const verificationSource =
+        item?.verification && typeof item.verification === 'object' && !Array.isArray(item.verification)
+            ? item.verification
+            : item;
+    const result = {
+        ...(subdocId ? { _id: subdocId } : {}),
+        images: [],
+    };
+
+    if (
+        verificationSource?.verified_qty !== undefined ||
+        verificationSource?.verifyQty !== undefined ||
+        verificationSource?.verifiedQty !== undefined
+    ) {
+        result.verified_qty = Number(
+            verificationSource?.verified_qty ??
+                verificationSource?.verifyQty ??
+                verificationSource?.verifiedQty ??
+                0
+        );
+    }
+
+    const issueFound = normalizeIssueFound(
+        verificationSource?.issueFound ?? verificationSource?.issue_found
+    );
+    if (issueFound !== undefined) {
+        result.issueFound = issueFound;
+    }
+
+    if (
+        verificationSource?.comments !== undefined ||
+        verificationSource?.verificationComments !== undefined
+    ) {
+        result.comments = (
+            verificationSource?.comments ?? verificationSource?.verificationComments ?? ''
+        )
+            .toString()
+            .trim();
+    }
+
+    return result;
+};
+
+const parseIndexedVerificationFixturesFromBody = (body) => {
+    const byIndex = {};
+
+    for (const [key, value] of Object.entries(body || {})) {
+        const fieldMatch = key.match(/^fixtures?_(\d+)_(.+)$/i);
+        if (fieldMatch) {
+            const [, idx, field] = fieldMatch;
+            if (!byIndex[idx]) byIndex[idx] = {};
+            byIndex[idx][field] = value;
+            continue;
+        }
+
+        const blobMatch = key.match(/^fixtures?_(\d+)$/i);
+        if (!blobMatch) continue;
+
+        const idx = blobMatch[1];
+        const parsed = tryParseJson(value);
+        byIndex[idx] =
+            parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                ? parsed
+                : { id: value };
+    }
+
+    const indices = Object.keys(byIndex).sort((a, b) => Number(a) - Number(b));
+    if (!indices.length) return [];
+
+    return indices.map((idx) => parseFixtureVerificationInput(byIndex[idx]));
+};
+
+const parseFixtureVerificationInputFromBody = (body) => {
+    const { fixtures, verified_qty, verifyQty, verifiedQty, issue_found, issueFound, comments } =
+        body;
+    const parsed = parseFormJsonInput(fixtures);
+    const fixtureId = body.fixture_id ?? body.fixtureId;
+
+    if (Array.isArray(parsed) && parsed.length) {
+        return parsed.map(parseFixtureVerificationInput);
+    }
+
+    const indexedFixtures = parseIndexedVerificationFixturesFromBody(body);
+    if (indexedFixtures.length) {
+        return indexedFixtures;
+    }
+
+    const hasSingleFixtureFields =
+        fixtureId ||
+        body.id ||
+        body._id ||
+        verified_qty !== undefined ||
+        verifyQty !== undefined ||
+        verifiedQty !== undefined ||
+        issue_found !== undefined ||
+        issueFound !== undefined ||
+        comments !== undefined;
+
+    if (hasSingleFixtureFields) {
+        return [
+            parseFixtureVerificationInput({
+                ...body,
+                id: fixtureId ?? body.id ?? body._id,
+            }),
+        ];
+    }
+
+    return [];
+};
+
+const parseVerificationUploadField = (fieldname) => {
+    const field = String(fieldname || '').trim();
+    const idMatch = field.match(/^(?:area_)?verify_fixture_([a-f0-9]{24})$/i);
+    if (idMatch) return { fixtureId: idMatch[1] };
+
+    const idxMatch = field.match(/^(?:area_)?verify_fixture_(\d+)$/i);
+    if (idxMatch) return { fixtureIdx: Number(idxMatch[1], 10) };
+
+    return null;
+};
+
+const attachVerificationFixtureImages = async (fixtures, files) => {
+    const fixtureImagesByIdx = {};
+    const fixtureImagesById = {};
+
+    for (const file of files || []) {
+        const parsed = parseVerificationUploadField(file.fieldname);
+        if (!parsed) continue;
+
+        if (parsed.fixtureId) {
+            if (!fixtureImagesById[parsed.fixtureId]) fixtureImagesById[parsed.fixtureId] = [];
+            fixtureImagesById[parsed.fixtureId].push(file);
+            continue;
+        }
+
+        if (!fixtureImagesByIdx[parsed.fixtureIdx]) fixtureImagesByIdx[parsed.fixtureIdx] = [];
+        fixtureImagesByIdx[parsed.fixtureIdx].push(file);
+    }
+
+    const result = [];
+    for (let fixtureIdx = 0; fixtureIdx < fixtures.length; fixtureIdx++) {
+        const fixture = fixtures[fixtureIdx];
+        const fixtureId = getSubdocId(fixture);
+        const filesForFixture = [
+            ...(fixtureImagesByIdx[fixtureIdx] || []),
+            ...(fixtureId ? fixtureImagesById[String(fixtureId)] || [] : []),
+        ];
+        const images = await processUploadedImages(filesForFixture);
+        result.push({
+            ...fixture,
+            images: [...(fixture.images || []), ...images],
+        });
+    }
+
+    return result;
+};
+
+const ensureFixtureVerification = (fixture) => {
+    if (!fixture.verification) {
+        fixture.verification = {
+            verified_qty: 0,
+            issueFound: 'no',
+            comments: '',
+            images: [],
+        };
+    }
+    if (!Array.isArray(fixture.verification.images)) {
+        fixture.verification.images = [];
+    }
+};
+
+const applyFixtureVerificationUpdates = (existingFixture, fixture) => {
+    ensureFixtureVerification(existingFixture);
+    const verification = existingFixture.verification;
+
+    if (fixture.verified_qty !== undefined) verification.verified_qty = fixture.verified_qty;
+    if (fixture.issueFound !== undefined) verification.issueFound = fixture.issueFound;
+    if (fixture.comments !== undefined) verification.comments = fixture.comments;
+    if (fixture.images?.length) {
+        verification.images = [...(verification.images || []), ...fixture.images];
     }
 };
 
@@ -1315,5 +1511,92 @@ exports.saveAreaReport = async (req, res) => {
     } catch (error) {
         console.error('Save area report error:', error);
         return res.status(500).json({ message: 'Server error saving area report.' });
+    }
+};
+
+exports.saveAreaVerification = async (req, res) => {
+    try {
+        const user_id = req.user.id;
+        const areaId = normalizeFormFieldValue(req.body.area_id ?? req.body.areaId);
+
+        if (!areaId) {
+            return res.status(400).json({ message: 'area_id is required.' });
+        }
+
+        const survey = await Survey.findOne({ 'areas._id': areaId });
+        if (!survey) {
+            return res.status(404).json({ message: 'Area not found.' });
+        }
+
+        const area = survey.areas.id(areaId);
+        if (!area) {
+            return res.status(404).json({ message: 'Area not found.' });
+        }
+
+        const parsedFixtures = parseFixtureVerificationInputFromBody(req.body);
+        if (!parsedFixtures.length) {
+            return res.status(400).json({
+                message: 'At least one fixture with fixture id is required.',
+            });
+        }
+
+        const fixturesWithImages = await attachVerificationFixtureImages(
+            parsedFixtures,
+            req.files
+        );
+        const updatedFixtureIds = [];
+
+        for (const fixture of fixturesWithImages) {
+            const fixtureId = getSubdocId(fixture);
+            if (!fixtureId) {
+                return res.status(400).json({
+                    message: 'fixture id is required for each fixture update.',
+                });
+            }
+
+            const existingFixture = area.fixtures.id(fixtureId);
+            if (!existingFixture) {
+                return res.status(404).json({
+                    message: `Fixture not found: ${fixtureId}`,
+                });
+            }
+
+            applyFixtureVerificationUpdates(existingFixture, fixture);
+            updatedFixtureIds.push(fixtureId);
+        }
+
+        survey.markModified('areas');
+        await survey.save();
+
+        const customer = survey.customer_id
+            ? await Customer.findById(survey.customer_id).select('name')
+            : null;
+
+        await createLog(
+            'Survey Area Verification Saved',
+            user_id,
+            customer?.name || survey.surveyName || 'Survey',
+            'Survey',
+            survey._id
+        );
+
+        const surveyResponse = await formatSurveyResponse(survey.toObject());
+        const updatedArea = (surveyResponse.areas || []).find(
+            (item) => String(item._id) === String(areaId)
+        );
+        const updatedFixtures = (updatedArea?.fixtures || []).filter((fixture) =>
+            updatedFixtureIds.includes(String(fixture._id))
+        );
+
+        return res.status(200).json({
+            message: 'Area verification saved successfully.',
+            survey_id: survey._id,
+            area_id: areaId,
+            area: updatedArea,
+            ...(updatedFixtureIds.length ? { updated_fixtures: updatedFixtures } : {}),
+        });
+    } catch (error) {
+        console.error('Save area verification error:', error);
+        return res.status(500).json({ message: 'Server error saving area verification.' });
     }
 };
