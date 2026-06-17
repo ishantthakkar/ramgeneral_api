@@ -2022,12 +2022,6 @@ exports.markDeliveryAsDelivered = async (req, res) => {
       return res.status(400).json({ message: 'Delivery is already marked as verified.' });
     }
 
-    if (delivery.deliveryStatus !== 'pending') {
-      return res.status(400).json({
-        message: 'Only pending deliveries can be marked as delivered.',
-      });
-    }
-
     delivery.deliveryStatus = 'verified';
     survey.markModified('materialDelivery');
     survey.markModified('installationStatus');
