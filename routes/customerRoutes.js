@@ -189,6 +189,7 @@ router.post('/:id/activities', verifyToken, customerController.addCustomerActivi
 router.post('/customers/:id/commissions', verifyToken, customerController.updateCustomerCommissions);
 router.post('/:id/admin-approval', verifyToken, customerController.adminApprovalStatus);
 router.post('/:id/material-status', verifyToken, customerController.confirmMaterialStatus);
+router.post('/surveys/schedule-installation', verifyToken, customerController.scheduleInstallation);
 router.post('/surveys/installation-status', verifyToken, customerController.updateInstallationStatus);
 router.post('/:id/installation-notes', verifyToken, customerController.addInstallationNote);
 router.post('/:id/inspection-notes', verifyToken, customerController.addInspectionNote);

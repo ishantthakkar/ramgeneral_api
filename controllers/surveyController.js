@@ -1100,9 +1100,13 @@ exports.assignSurvey = async (req, res) => {
             return res.status(400).json({ message: 'Assigned user must be a contractor or project manager.' });
         }
 
+        const normalizedRole = normalizeAssignRole(assignedUser.userRole);
         const update = { assignedTo };
-        if (normalizeAssignRole(assignedUser.userRole) === 'contractor') {
+        if (normalizedRole === 'contractor') {
             update.assignToContractor = assignedTo;
+        }
+        if (normalizedRole === 'project manager') {
+            update.projectManagerStatus = 'new';
         }
 
         const survey = await Survey.findByIdAndUpdate(

@@ -1206,7 +1206,9 @@ exports.assignContractor = async (req, res) => {
     const survey = await Survey.findByIdAndUpdate(
       surveyId,
       { assignToContractor: contractorId },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
+      { projectManagerStatus: 'assigned' },
+      { installationStatus: 'new' }
     ).populate('assignToContractor', 'fullName email userRole mobileNumber');
 
     if (!survey) {
@@ -2034,6 +2036,8 @@ exports.markDeliveryAsDelivered = async (req, res) => {
 
     delivery.deliveryStatus = 'delivered';
     survey.markModified('materialDelivery');
+    survey.markModified('installationStatus');
+    survey.installationStatus = 'in_progress';
     await survey.save();
 
     const customer = survey.customer_id
@@ -2928,6 +2932,87 @@ exports.addInspectionNote = async (req, res) => {
   } catch (error) {
     console.error('Add inspection note error:', error);
     return res.status(500).json({ message: 'Server error adding inspection note.' });
+  }
+};
+
+exports.scheduleInstallation = async (req, res) => {
+  try {
+    const user_id = req.user.id;
+    const surveyId = req.body.survey_id ?? req.body.surveyId;
+    const {
+      date,
+      installation_date,
+      installationDate,
+      time,
+      time_slot,
+      installation_time,
+      installationTime,
+    } = req.body;
+
+    const Admin = require('../models/Admin');
+    const isAdmin = await Admin.findById(user_id);
+    let isAuthorized = !!isAdmin;
+
+    if (!isAuthorized) {
+      const user = await User.findById(user_id);
+      if (user && user.userRole === 'Project Manager') {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({
+        message: 'Only admins or project managers can schedule installation.',
+      });
+    }
+
+    if (!surveyId) {
+      return res.status(400).json({ message: 'survey_id is required.' });
+    }
+
+    const scheduleDate = date ?? installation_date ?? installationDate;
+    if (!scheduleDate) {
+      return res.status(400).json({ message: 'date is required.' });
+    }
+
+    const parsedDate = new Date(scheduleDate);
+    if (Number.isNaN(parsedDate.getTime())) {
+      return res.status(400).json({ message: 'Invalid date.' });
+    }
+
+    const survey = await Survey.findById(surveyId);
+    if (!survey) {
+      return res.status(404).json({ message: 'Survey not found.' });
+    }
+
+    survey.installationDate = parsedDate;
+    survey.installationTime = (time ?? time_slot ?? installation_time ?? installationTime ?? '')
+      .toString()
+      .trim();
+
+    await survey.save();
+
+    const customer = survey.customer_id
+      ? await Customer.findById(survey.customer_id).select('name')
+      : null;
+
+    await createLog(
+      'Survey Installation Scheduled',
+      user_id,
+      customer?.name || survey.surveyName || 'Survey',
+      'Survey',
+      survey._id
+    );
+
+    return res.status(200).json({
+      message: 'Installation scheduled successfully.',
+      survey_id: survey._id,
+      installationDate: survey.installationDate,
+      installationTime: survey.installationTime,
+    });
+  } catch (error) {
+    console.error('Schedule installation error:', error);
+    return res.status(500).json({ message: 'Server error scheduling installation.' });
   }
 };
 

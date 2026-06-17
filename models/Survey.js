@@ -86,6 +86,11 @@ const surveySchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
   },
+  installationStatus: {
+    type: String,
+    enum: ['new', 'start', 'in_progress', 'continue', 'completed', 'submitted'],
+    default: 'new',
+  },
   surveyDate: {
     type: Date,
     default: Date.now,
@@ -119,12 +124,15 @@ const surveySchema = new mongoose.Schema({
       createdAt: { type: Date, default: Date.now },
     },
   ],
+  projectManagerStatus: { type: String, trim: true, default: 'new' },
   installationStatus: {
     type: String,
     trim: true,
     enum: ['start', 'in_progress', 'continue', 'completed', 'submitted'],
     default: 'start',
   },
+  installationDate: { type: Date },
+  installationTime: { type: String, trim: true, default: '' },
   markAsCompleted: { type: Boolean, default: false },
   verifyImages: [{ type: String, trim: true }],
   verifyQty: { type: Number, default: 0 },
