@@ -122,7 +122,7 @@ const surveySchema = new mongoose.Schema({
   installationStatus: {
     type: String,
     trim: true,
-    enum: ['start', 'in_progress', 'continue', 'completed'],
+    enum: ['start', 'in_progress', 'continue', 'completed', 'submitted'],
     default: 'start',
   },
   markAsCompleted: { type: Boolean, default: false },

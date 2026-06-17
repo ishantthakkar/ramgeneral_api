@@ -2940,7 +2940,7 @@ exports.updateInstallationStatus = async (req, res) => {
 
     const survey = await Survey.findByIdAndUpdate(
       surveyId,
-      { installationStatus: 'completed' },
+      { installationStatus: 'submitted' },
       { new: true, runValidators: true }
     );
 
@@ -2957,7 +2957,7 @@ exports.updateInstallationStatus = async (req, res) => {
     );
 
     return res.status(200).json({
-      message: "Installation status updated to 'completed' successfully.",
+      message: "Installation status updated successfully.",
       survey,
     });
   } catch (error) {
