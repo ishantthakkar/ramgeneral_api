@@ -2004,12 +2004,6 @@ exports.markDeliveryAsDelivered = async (req, res) => {
       }
     }
 
-    if (!isAuthorized) {
-      return res.status(403).json({
-        message: 'Only admins, project managers, or contractors can mark delivery as delivered.',
-      });
-    }
-
     if (!deliveryId) {
       return res.status(400).json({ message: 'delivery_id is required.' });
     }
@@ -2802,67 +2796,53 @@ exports.inspectionListByUser = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Fetch customers
-    const customers = await Customer.find({
+    const surveyBaseUrl = 'https://ramgeneral-api.onrender.com/uploads/surveys/';
+    const materialBaseUrl = 'https://ramgeneral-api.onrender.com/uploads/materials/';
+
+    const surveys = await Survey.find({
       assignedTo: userId,
-      installationStatus: 'completed',
+      installationStatus: 'submitted',
     })
-      .populate('assignToContractor', 'fullName email mobileNumber')
-      .populate('assignedTo', 'fullName email mobileNumber')
-      .populate('user_id', 'fullName name email')
-      .sort({ updatedAt: -1 });
+      .populate({
+        path: 'customer_id',
+        select:
+          'name accountNumber mobileNumber email company dba leadSource createdAt addresses convertedDate assignToContractor contractorStatus projectManagerStatus verifyStatus',
+        populate: [
+          { path: 'assignToContractor', select: 'fullName email mobileNumber userRole' },
+          { path: 'assignedTo', select: 'fullName email mobileNumber userRole' },
+          { path: 'leadId', select: 'dba leadName lead_id name' },
+          {
+            path: 'user_id',
+            select: 'fullName name email userRole mobileNumber',
+            populate: { path: 'reportsTo', select: 'fullName userRole' },
+          },
+        ],
+      })
+      .populate('user_id', 'fullName email mobileNumber userRole')
+      .populate('assignedTo', 'fullName email mobileNumber userRole')
+      .populate('assignToContractor', 'fullName email mobileNumber userRole')
+      .sort({ updatedAt: -1, createdAt: -1 });
 
-    const materialBaseUrl =
-      'https://ramgeneral-api.onrender.com/uploads/materials/';
+    const formattedSurveys = await formatSurveysForResponse(surveys, surveyBaseUrl);
 
-    const surveyImageBaseUrl =
-      'https://ramgeneral-api.onrender.com/uploads/surveys/';
+    const surveysWithCustomerDetails = await Promise.all(
+      formattedSurveys.map(async (survey, index) => {
+        const customerDetails = await formatCustomerForSurveyResponse(
+          surveys[index].customer_id,
+          materialBaseUrl
+        );
 
-    // Attach surveys manually
-    const customerList = await Promise.all(
-      customers.map(async (customer) => {
-        const obj = customer.toObject();
-
-        // Material images
-        if (obj.material) {
-          obj.material = obj.material.map((item) => {
-            item.images = (item.images || []).map(
-              (img) => `${materialBaseUrl}${img}`
-            );
-            return item;
-          });
-        }
-
-        // Fetch surveys for this customer
-        const surveys = await Survey.find({
-          customer_id: customer._id,
-        })
-          .populate('user_id', 'fullName email mobileNumber')
-          .populate('assignedTo', 'fullName email mobileNumber')
-          .sort({ createdAt: -1 });
-
-        // Survey images
-        const formattedSurveys = surveys.map((survey) => {
-          const surveyObj = survey.toObject();
-
-          surveyObj.images = (surveyObj.images || []).map(
-            (img) => `${surveyImageBaseUrl}${img}`
-          );
-
-          return surveyObj;
-        });
-
-        // Add surveys into customer object
-        obj.surveys = formattedSurveys;
-
-        return obj;
+        return {
+          ...survey,
+          customer_id: customerDetails,
+        };
       })
     );
 
     return res.status(200).json({
       message: 'Inspection list retrieved successfully.',
-      total: customerList.length,
-      customers: customerList,
+      total: surveysWithCustomerDetails.length,
+      surveys: surveysWithCustomerDetails,
     });
 
   } catch (error) {
