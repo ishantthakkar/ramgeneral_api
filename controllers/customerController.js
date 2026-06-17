@@ -1528,8 +1528,8 @@ exports.getCustomersByContractor = async (req, res) => {
           materialBaseUrl
         );
 
-        const deliveredMaterial = (surveys[index].materialDelivery || []).filter(
-          (delivery) => delivery?.deliveryStatus === 'delivered'
+        const deliveredMaterial = (surveys[index].materialDelivery || []).filter((delivery) =>
+          ['delivered', 'verified'].includes(delivery?.deliveryStatus)
         );
 
         return {
