@@ -1946,8 +1946,8 @@ exports.markDeliveryAsCompleted = async (req, res) => {
       return res.status(404).json({ message: 'Material delivery not found.' });
     }
 
-    if (delivery.deliveryStatus === 'approved') {
-      return res.status(400).json({ message: 'Delivery is already approved.' });
+    if (delivery.deliveryStatus === 'delivered') {
+      return res.status(400).json({ message: 'Delivery is already delivered.' });
     }
 
     const uploadedImages = (req.files || []).map((file) => file.filename);
@@ -1955,7 +1955,7 @@ exports.markDeliveryAsCompleted = async (req, res) => {
       delivery.images = [...(delivery.images || []), ...uploadedImages];
     }
 
-    delivery.deliveryStatus = 'approved';
+    delivery.deliveryStatus = 'delivered';
     survey.markModified('materialDelivery');
     await survey.save();
 
@@ -1964,7 +1964,7 @@ exports.markDeliveryAsCompleted = async (req, res) => {
       : null;
 
     await createLog(
-      'Survey Material Delivery Approved',
+      'Survey Material Delivery delivered',
       user_id,
       customer?.name || survey.surveyName || 'Survey',
       'Survey',
