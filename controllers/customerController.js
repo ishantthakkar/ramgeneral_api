@@ -2043,7 +2043,7 @@ exports.markDeliveryAsDelivered = async (req, res) => {
     const [formattedDelivery] = await formatMaterialDeliveryList([delivery]);
 
     return res.status(200).json({
-      message: 'Delivery marked as delivered successfully.',
+      message: 'verify delivery successfully.',
       survey_id: survey._id,
       materialDelivery: formattedDelivery,
     });
