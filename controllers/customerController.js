@@ -1708,7 +1708,7 @@ exports.addSurveyMaterialDelivery = async (req, res) => {
       }
       if (deliveryStatus !== undefined || delivery_status !== undefined) {
         const status = (deliveryStatus ?? delivery_status).toString().trim().toLowerCase();
-        if (['pending', 'scheduled', 'delivered', 'cancelled', 'approved'].includes(status)) {
+        if (['pending', 'scheduled', 'delivered', 'cancelled', 'approved', 'verified'].includes(status)) {
           existingDelivery.deliveryStatus = status;
         }
       }
@@ -2018,8 +2018,8 @@ exports.markDeliveryAsDelivered = async (req, res) => {
       return res.status(404).json({ message: 'Material delivery not found.' });
     }
 
-    if (delivery.deliveryStatus === 'delivered') {
-      return res.status(400).json({ message: 'Delivery is already marked as delivered.' });
+    if (delivery.deliveryStatus === 'verified') {
+      return res.status(400).json({ message: 'Delivery is already marked as verified.' });
     }
 
     if (delivery.deliveryStatus !== 'pending') {
@@ -2028,7 +2028,7 @@ exports.markDeliveryAsDelivered = async (req, res) => {
       });
     }
 
-    delivery.deliveryStatus = 'delivered';
+    delivery.deliveryStatus = 'verified';
     survey.markModified('materialDelivery');
     survey.markModified('installationStatus');
     survey.installationStatus = 'in_progress';
