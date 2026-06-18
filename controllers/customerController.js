@@ -3107,7 +3107,10 @@ exports.updateInstallationStatus = async (req, res) => {
 
     const survey = await Survey.findByIdAndUpdate(
       surveyId,
-      { installationStatus: 'submitted' },
+      {
+        installationStatus: 'submitted',
+        inspectionStatus: 'confirm',
+      },
       { new: true, runValidators: true }
     );
 
@@ -3178,7 +3181,7 @@ exports.updateInspectionStatus = async (req, res) => {
     const Admin = require('../models/Admin');
     const isAdmin = await Admin.findById(user_id);
     if (!isAdmin) {
-      return res.status(403).json({ message: 'Only admins can confirm inspections.' });
+      return res.status(403).json({ message: 'Only admins can verify inspections.' });
     }
 
     const survey = await Survey.findById(surveyId);
@@ -3187,12 +3190,19 @@ exports.updateInspectionStatus = async (req, res) => {
     }
 
     if (survey.inspectionStatus === 'verified') {
-      return res.status(400).json({ message: 'Inspection is already confirmed.' });
+      return res.status(400).json({ message: 'Inspection is already verified.' });
     }
 
     if (survey.installationStatus !== 'submitted') {
       return res.status(400).json({
-        message: 'Installation must be submitted before confirming inspection.',
+        message: 'Installation must be submitted before verifying inspection.',
+      });
+    }
+
+    const allowedStatuses = ['confirm', 'in_progress', 'to-do', 'reopen'];
+    if (!allowedStatuses.includes(survey.inspectionStatus)) {
+      return res.status(400).json({
+        message: 'Inspection is not ready for admin verification.',
       });
     }
 
@@ -3206,7 +3216,7 @@ exports.updateInspectionStatus = async (req, res) => {
     }
 
     await createLog(
-      'Survey Inspection Confirmed by Admin',
+      'Survey Inspection Verified by Admin',
       user_id,
       survey.surveyName || 'Survey',
       'Survey',
@@ -3214,12 +3224,12 @@ exports.updateInspectionStatus = async (req, res) => {
     );
 
     return res.status(200).json({
-      message: 'Inspection confirmed successfully.',
+      message: 'Inspection verified successfully.',
       survey,
     });
   } catch (error) {
     console.error('Update inspection status error:', error);
-    return res.status(500).json({ message: 'Server error confirming inspection.' });
+    return res.status(500).json({ message: 'Server error verifying inspection.' });
   }
 };
 
