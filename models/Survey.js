@@ -17,6 +17,16 @@ const fixtureVerificationSchema = {
   images: [{ type: String, trim: true }],
 };
 
+const areaVerificationNoteSchema = {
+  title: { type: String, trim: true, default: '' },
+  note: { type: String, trim: true, required: true },
+  user_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  },
+  createdAt: { type: Date, default: Date.now },
+};
+
 const fixtureSchema = {
   product_id: {
     type: mongoose.Schema.Types.ObjectId,
@@ -119,6 +129,7 @@ const surveySchema = new mongoose.Schema({
       images: [{ type: String, trim: true }],
       fixtures: [fixtureSchema],
       report_note: { type: String, trim: true, default: '' },
+      verification_notes: [areaVerificationNoteSchema],
     },
   ],
   notes: [
@@ -141,6 +152,12 @@ const surveySchema = new mongoose.Schema({
   },
   installationDate: { type: Date },
   installationTime: { type: String, trim: true, default: '' },
+  inspectionStatus: {
+    type: String,
+    trim: true,
+    enum: ['to-do', 'reopen', 'in_progress', 'confirm', 'verified'],
+    default: 'to-do',
+  },
   markAsCompleted: { type: Boolean, default: false },
   verifyImages: [{ type: String, trim: true }],
   verifyQty: { type: Number, default: 0 },

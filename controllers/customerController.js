@@ -3060,29 +3060,32 @@ exports.confirmMaterialStatus = async (req, res) => {
 
 exports.updateInspectionStatus = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    const allowedStatuses = ['reopen', 'in_progress', 'confirm'];
-    if (!allowedStatuses.includes(status)) {
-      return res.status(400).json({ message: `Invalid status. Allowed: ${allowedStatuses.join(', ')}` });
+    const surveyId = req.body.survey_id ?? req.body.surveyId;
+    if (!surveyId) {
+      return res.status(400).json({ message: 'survey_id is required.' });
     }
 
-    const customer = await Customer.findByIdAndUpdate(
-      id,
-      { inspectionStatus: status },
+    const survey = await Survey.findByIdAndUpdate(
+      surveyId,
+      { inspectionStatus: 'verified' },
       { new: true, runValidators: true }
     );
 
-    if (!customer) {
-      return res.status(404).json({ message: 'Customer not found.' });
+    if (!survey) {
+      return res.status(404).json({ message: 'Survey not found.' });
     }
 
-    await createLog(`Inspection Status Updated to ${status}`, req.user.id, customer.name, 'Customer', customer._id);
+    await createLog(
+      'Survey Inspection Status Updated to verified',
+      req.user.id,
+      survey.surveyName || 'Survey',
+      'Survey',
+      survey._id
+    );
 
     return res.status(200).json({
-      message: `Inspection status updated to '${status}' successfully.`,
-      customer,
+      message: "Inspection status updated successfully.",
+      survey,
     });
   } catch (error) {
     console.error('Update inspection status error:', error);

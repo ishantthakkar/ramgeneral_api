@@ -193,7 +193,7 @@ router.post('/surveys/schedule-installation', verifyToken, customerController.sc
 router.post('/surveys/installation-status', verifyToken, customerController.updateInstallationStatus);
 router.post('/:id/installation-notes', verifyToken, customerController.addInstallationNote);
 router.post('/:id/inspection-notes', verifyToken, customerController.addInspectionNote);
-router.post('/:id/inspection-status', verifyToken, customerController.updateInspectionStatus);
+router.post('/surveys/inspection-status', verifyToken, customerController.updateInspectionStatus);
 router.get('/customers/:id/activities', verifyToken, customerController.getCustomerActivities);
 router.get('/:id/notes', verifyToken, customerController.getCustomerNotes);
 router.post('/:id/notes', verifyToken, customerController.addCustomerNote);

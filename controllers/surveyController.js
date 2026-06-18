@@ -110,6 +110,12 @@ const mapSurveyImageUrls = (surveyObj) => {
 const formatSurveyResponse = async (surveyObj) => {
     mapSurveyImageUrls(surveyObj);
     surveyObj.areas = await enrichAreasWithProducts(surveyObj.areas || []);
+    surveyObj.areas = await Promise.all(
+        (surveyObj.areas || []).map(async (area) => ({
+            ...area,
+            verification_notes: await enrichNotesWithAuthors(area.verification_notes || []),
+        }))
+    );
     surveyObj.notes = await enrichNotesWithAuthors(coerceSurveyNotes(surveyObj.notes));
     return surveyObj;
 };
@@ -707,6 +713,41 @@ const applyFixtureVerificationUpdates = (existingFixture, fixture) => {
     if (fixture.images?.length) {
         verification.images = [...(verification.images || []), ...fixture.images];
     }
+};
+
+const parseAreaVerificationNotesInput = (body, userId) => {
+    const { note, notes, title } = body;
+
+    if (note !== undefined && note !== null && String(note).trim()) {
+        return [
+            buildNoteEntry({
+                title,
+                note: normalizeFormFieldValue(note),
+                userId,
+            }),
+        ].filter(Boolean);
+    }
+
+    if (notes !== undefined && notes !== null) {
+        const parsed = parseFormJsonInput(notes);
+        const list = Array.isArray(parsed) ? parsed : normalizeNotes(notes);
+
+        return attachUserIdToNotes(
+            list
+                .map((item) =>
+                    buildNoteEntry({
+                        title: item?.title,
+                        note: item?.note,
+                        userId: item?.user_id ?? item?.userId ?? userId,
+                        createdAt: item?.createdAt,
+                    })
+                )
+                .filter(Boolean),
+            userId
+        );
+    }
+
+    return [];
 };
 
 const ensureUploadDir = async () => {
@@ -1533,17 +1574,24 @@ exports.saveAreaVerification = async (req, res) => {
             return res.status(404).json({ message: 'Area not found.' });
         }
 
+        const newNotes = parseAreaVerificationNotesInput(req.body, user_id);
+        if (newNotes.length) {
+            if (!Array.isArray(area.verification_notes)) {
+                area.verification_notes = [];
+            }
+            area.verification_notes.push(...newNotes);
+        }
+
         const parsedFixtures = parseFixtureVerificationInputFromBody(req.body);
-        if (!parsedFixtures.length) {
+        if (!parsedFixtures.length && !newNotes.length) {
             return res.status(400).json({
-                message: 'At least one fixture with fixture id is required.',
+                message: 'At least one fixture with fixture id or a note is required.',
             });
         }
 
-        const fixturesWithImages = await attachVerificationFixtureImages(
-            parsedFixtures,
-            req.files
-        );
+        const fixturesWithImages = parsedFixtures.length
+            ? await attachVerificationFixtureImages(parsedFixtures, req.files)
+            : [];
         const updatedFixtureIds = [];
 
         for (const fixture of fixturesWithImages) {
@@ -1593,6 +1641,7 @@ exports.saveAreaVerification = async (req, res) => {
             survey_id: survey._id,
             area_id: areaId,
             area: updatedArea,
+            verification_notes: updatedArea?.verification_notes || [],
             ...(updatedFixtureIds.length ? { updated_fixtures: updatedFixtures } : {}),
         });
     } catch (error) {
