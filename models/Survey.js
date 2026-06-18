@@ -147,8 +147,8 @@ const surveySchema = new mongoose.Schema({
   installationStatus: {
     type: String,
     trim: true,
-    enum: ['start', 'in_progress', 'continue', 'completed', 'submitted'],
-    default: 'start',
+    enum: ['new', 'start', 'in_progress', 'continue', 'completed', 'submitted'],
+    default: 'new',
   },
   installationDate: { type: Date },
   installationTime: { type: String, trim: true, default: '' },

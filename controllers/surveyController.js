@@ -1350,7 +1350,8 @@ exports.assignSurvey = async (req, res) => {
         const survey = await Survey.findByIdAndUpdate(
             surveyId,
             update,
-            { new: true, runValidators: true }
+            { new: true, runValidators: true },
+            { $set: { projectManagerStatus: 'new' } }
         ).populate('assignedTo', 'fullName email userRole')
          .populate('assignToContractor', 'fullName email userRole');
 
@@ -1414,6 +1415,7 @@ exports.assignContractor = async (req, res) => {
         const survey = await Survey.findByIdAndUpdate(
             surveyId,
             { assignToContractor: contractorId },
+            { $set: { installationStatus: 'new' } },
             { new: true, runValidators: true }
         ).populate('assignToContractor', 'fullName email userRole mobileNumber');
 
