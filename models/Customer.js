@@ -62,11 +62,6 @@ const customerSchema = new mongoose.Schema({
     required: false,
     trim: true,
   },
-  company: {
-    type: String,
-    required: false,
-    trim: true,
-  },
   mobileNumber: {
     type: String,
     required: false,
@@ -206,6 +201,12 @@ const customerSchema = new mongoose.Schema({
     type: String,
     enum: ['to-do', 'start', 'in_progress', 'continue', 'completed', 'reopen'],
     default: 'to-do',
+  },
+  electricCompany: {
+    type: String,
+    required: false,
+    trim: true,
+    default: '',
   },
   inspectionStatus: {
     type: String,
