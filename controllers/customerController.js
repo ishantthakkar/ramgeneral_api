@@ -241,7 +241,7 @@ function buildDeliverySummary(areas, materialDelivery) {
 
   for (const delivery of materialDelivery || []) {
     const plain = delivery?.toObject ? delivery.toObject() : delivery;
-    if (plain.deliveryStatus !== 'verified') continue;
+    if (plain.deliveryStatus !== 'delivered') continue;
 
     for (const item of plain.items || []) {
       const sku = (item?.sku ?? '').toString().trim();
