@@ -220,6 +220,53 @@ function buildMaterialSummaryFromAreas(areas) {
   }));
 }
 
+function buildDeliverySummary(areas, materialDelivery) {
+  const proposedBySku = new Map();
+  const deliveredBySku = new Map();
+
+  for (const area of areas || []) {
+    for (const fixture of area.fixtures || []) {
+      const product = fixture.product;
+      const sku =
+        (product?.sku ?? product?.name ?? fixture.existingFixtureType ?? '')
+          .toString()
+          .trim();
+      if (!sku) continue;
+
+      const proposedQty =
+        parseFloat(fixture.proposedQty) || parseFloat(fixture.existingQty) || 0;
+      proposedBySku.set(sku, (proposedBySku.get(sku) || 0) + proposedQty);
+    }
+  }
+
+  for (const delivery of materialDelivery || []) {
+    const plain = delivery?.toObject ? delivery.toObject() : delivery;
+    if (plain.deliveryStatus !== 'verified') continue;
+
+    for (const item of plain.items || []) {
+      const sku = (item?.sku ?? '').toString().trim();
+      if (!sku) continue;
+      const deliveredQty = Number(item?.issued_qty ?? item?.issuedQty ?? 0) || 0;
+      deliveredBySku.set(sku, (deliveredBySku.get(sku) || 0) + deliveredQty);
+    }
+  }
+
+  const allSkus = new Set([...proposedBySku.keys(), ...deliveredBySku.keys()]);
+
+  return Array.from(allSkus).map((sku) => {
+    const proposed = proposedBySku.get(sku) || 0;
+    const delivered = deliveredBySku.get(sku) || 0;
+    const remaining = Math.max(proposed - delivered, 0);
+
+    return {
+      itemName: sku,
+      proposedQuantity: String(Math.round(proposed)).padStart(2, '0'),
+      deliveredQuantity: String(Math.round(delivered)).padStart(2, '0'),
+      remainingQuantity: String(Math.round(remaining)).padStart(2, '0'),
+    };
+  });
+}
+
 function buildMaterialSummary(areas, materialDelivery) {
   const issuedBySku = new Map();
   const usedBySku = new Map();
@@ -1638,7 +1685,10 @@ exports.getCustomersByPM = async (req, res) => {
           materialDeliveryReturn: await formatMaterialDeliveryReturnList(
             surveys[index].materialDeliveryReturn
           ),
-          deliverySummary: surveys[index].deliverySummary || [],
+          deliverySummary: buildDeliverySummary(
+            survey.areas,
+            surveys[index].materialDelivery
+          ),
         };
       })
     );
