@@ -39,6 +39,7 @@ router.post('/add-area', verifyToken, upload.any(), surveyController.createSurve
 router.get('/surveys', verifyToken, surveyController.listSurveys);
 router.get('/surveys/products', verifyToken, surveyController.getSurveyProducts);
 router.get('/surveys/assigned', verifyToken, surveyController.listAssignedSurveys);
+router.get('/surveys/:id/installation-workflow', verifyToken, surveyController.getInstallationWorkflow);
 router.get('/surveys/:id', verifyToken, surveyController.getSurvey);
 router.put('/surveys/:id', verifyToken, surveyController.updateSurvey);
 router.post('/surveys/assign', verifyToken, surveyController.assignSurvey);

@@ -22,6 +22,11 @@ const {
     enrichAreasWithProducts,
 } = require('../utils/surveyProductUtils');
 const { buildFixtureTypeFilter } = require('../utils/productUtils');
+const {
+    LEAD_FIELDS_FOR_POPULATE,
+    stripCustomerLogFields,
+} = require('../utils/customerLeadHelpers');
+const { formatAddressForResponse } = require('../utils/subdocumentHelpers');
 
 const normalizeAssignRole = (value) =>
     (value || '').toString().trim().toLowerCase().replace(/_/g, ' ');
@@ -1039,6 +1044,48 @@ exports.getSurvey = async (req, res) => {
     } catch (error) {
         console.error('Get survey error:', error);
         return res.status(500).json({ message: 'Server error fetching survey.' });
+    }
+};
+
+exports.getInstallationWorkflow = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const survey = await Survey.findById(id)
+            .populate('assignToContractor', 'fullName email mobileNumber userRole')
+            .populate('assignedTo', 'fullName email mobileNumber userRole')
+            .populate('user_id', 'fullName name email userRole');
+
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found.' });
+        }
+
+        if (!survey.customer_id) {
+            return res.status(404).json({ message: 'Customer not found for this survey.' });
+        }
+
+        const customer = await Customer.findById(survey.customer_id)
+            .populate('leadId', LEAD_FIELDS_FOR_POPULATE)
+            .populate('user_id', 'fullName name email userRole');
+
+        if (!customer) {
+            return res.status(404).json({ message: 'Customer not found.' });
+        }
+
+        const surveyResponse = await formatSurveyResponse(survey.toObject());
+        const customerObj = stripCustomerLogFields(customer.toObject());
+        if (Array.isArray(customerObj.addresses)) {
+            customerObj.addresses = customerObj.addresses.map(formatAddressForResponse);
+        }
+
+        return res.status(200).json({
+            message: 'Installation workflow retrieved successfully.',
+            survey: surveyResponse,
+            customer: customerObj,
+        });
+    } catch (error) {
+        console.error('Get installation workflow error:', error);
+        return res.status(500).json({ message: 'Server error fetching installation workflow.' });
     }
 };
 
