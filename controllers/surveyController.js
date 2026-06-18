@@ -1497,7 +1497,7 @@ exports.installation = async (req, res) => {
         const surveys = await Survey.find({ quotationStatus: 'approved' })
             .populate({
                 path: 'customer_id',
-                select: 'accountNumber name company mobileNumber phone email customerCode installationStatus',
+                select: 'accountNumber name company dba mobileNumber phone email customerCode installationStatus',
                 populate: { path: 'leadId', select: 'lead_id leadName dba' },
             })
             .populate('user_id', 'fullName email mobileNumber userRole')
