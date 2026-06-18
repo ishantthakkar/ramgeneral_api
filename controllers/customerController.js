@@ -73,24 +73,49 @@ async function formatSurveysForResponse(surveys, surveyBaseUrl) {
     surveys.map(async (survey) => {
       const surveyObj = survey.toObject ? survey.toObject() : survey;
       surveyObj.areas = await enrichAreasWithProducts(surveyObj.areas || []);
-      surveyObj.areas = (surveyObj.areas || []).map((area) => ({
-        ...area,
-        images: (area.images || []).map((img) => {
-          const filename = String(img || '').replace(/^\//, '');
-          if (!filename) return img;
-          if (filename.startsWith('http')) return filename;
-          return `${surveyBaseUrl}${filename}`;
-        }),
-        fixtures: (area.fixtures || []).map((fixture) => ({
-          ...fixture,
-          images: (fixture.images || []).map((img) => {
+      surveyObj.areas = await Promise.all(
+        (surveyObj.areas || []).map(async (area) => ({
+          ...area,
+          images: (area.images || []).map((img) => {
             const filename = String(img || '').replace(/^\//, '');
             if (!filename) return img;
             if (filename.startsWith('http')) return filename;
             return `${surveyBaseUrl}${filename}`;
           }),
-        })),
-      }));
+          verification_notes: await enrichNotesWithAuthors(area.verification_notes || []),
+          fixtures: (area.fixtures || []).map((fixture) => ({
+            ...fixture,
+            images: (fixture.images || []).map((img) => {
+              const filename = String(img || '').replace(/^\//, '');
+              if (!filename) return img;
+              if (filename.startsWith('http')) return filename;
+              return `${surveyBaseUrl}${filename}`;
+            }),
+            report: fixture.report
+              ? {
+                  ...fixture.report,
+                  images: (fixture.report.images || []).map((img) => {
+                    const filename = String(img || '').replace(/^\//, '');
+                    if (!filename) return img;
+                    if (filename.startsWith('http')) return filename;
+                    return `${surveyBaseUrl}${filename}`;
+                  }),
+                }
+              : fixture.report,
+            verification: fixture.verification
+              ? {
+                  ...fixture.verification,
+                  images: (fixture.verification.images || []).map((img) => {
+                    const filename = String(img || '').replace(/^\//, '');
+                    if (!filename) return img;
+                    if (filename.startsWith('http')) return filename;
+                    return `${surveyBaseUrl}${filename}`;
+                  }),
+                }
+              : fixture.verification,
+          })),
+        }))
+      );
       if (Array.isArray(surveyObj.images)) {
         surveyObj.images = surveyObj.images.map((img) => {
           const filename = String(img || '').replace(/^\//, '');
