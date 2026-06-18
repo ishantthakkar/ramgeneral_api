@@ -1338,11 +1338,12 @@ exports.assignSurvey = async (req, res) => {
         }
 
         const normalizedRole = normalizeAssignRole(assignedUser.userRole);
-        const update = { assignedTo };
+        const update = {};
+
         if (normalizedRole === 'contractor') {
             update.assignToContractor = assignedTo;
-        }
-        if (normalizedRole === 'project manager') {
+        } else if (normalizedRole === 'project manager') {
+            update.assignedTo = assignedTo;
             update.projectManagerStatus = 'new';
         }
 
@@ -1452,6 +1453,7 @@ exports.installation = async (req, res) => {
             })
             .populate('user_id', 'fullName email mobileNumber userRole')
             .populate('assignedTo', 'fullName email mobileNumber userRole')
+            .populate('assignToContractor', 'fullName email mobileNumber userRole')
             .sort({ quotationApprovedAt: -1, updatedAt: -1 });
 
         return res.status(200).json({
