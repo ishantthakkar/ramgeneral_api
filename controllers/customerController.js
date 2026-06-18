@@ -726,7 +726,7 @@ exports.getCustomer = async (req, res) => {
 
     // ✅ Get customer
     const customer = await Customer.findById(id)
-      .populate('leadId', LEAD_FIELDS_FOR_POPULATE)
+    .populate('leadId', `${LEAD_FIELDS_FOR_POPULATE} dba electricCompany`)
       .populate('assignToContractor', 'fullName email mobileNumber')
       .populate('assignedTo', 'fullName email mobileNumber')
       .populate('user_id', 'fullName name email userRole');
