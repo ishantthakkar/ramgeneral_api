@@ -207,6 +207,12 @@ const customerSchema = new mongoose.Schema({
     enum: ['to-do', 'start', 'in_progress', 'continue', 'completed', 'reopen'],
     default: 'to-do',
   },
+  electricCompany: {
+    type: String,
+    required: false,
+    trim: true,
+    default: '',
+  },
   inspectionStatus: {
     type: String,
     enum: ['to-do','reopen', 'in_progress', 'confirm'],
