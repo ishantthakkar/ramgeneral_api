@@ -3168,36 +3168,58 @@ exports.confirmMaterialStatus = async (req, res) => {
 
 exports.updateInspectionStatus = async (req, res) => {
   try {
+    const user_id = req.user.id;
     const surveyId = req.body.survey_id ?? req.body.surveyId;
+
     if (!surveyId) {
       return res.status(400).json({ message: 'survey_id is required.' });
     }
 
-    const survey = await Survey.findByIdAndUpdate(
-      surveyId,
-      { inspectionStatus: 'verified' },
-      { new: true, runValidators: true }
-    );
+    const Admin = require('../models/Admin');
+    const isAdmin = await Admin.findById(user_id);
+    if (!isAdmin) {
+      return res.status(403).json({ message: 'Only admins can confirm inspections.' });
+    }
 
+    const survey = await Survey.findById(surveyId);
     if (!survey) {
       return res.status(404).json({ message: 'Survey not found.' });
     }
 
+    if (survey.inspectionStatus === 'verified') {
+      return res.status(400).json({ message: 'Inspection is already confirmed.' });
+    }
+
+    if (survey.installationStatus !== 'submitted') {
+      return res.status(400).json({
+        message: 'Installation must be submitted before confirming inspection.',
+      });
+    }
+
+    survey.inspectionStatus = 'verified';
+    await survey.save();
+
+    if (survey.customer_id) {
+      await Customer.findByIdAndUpdate(survey.customer_id, {
+        inspectionStatus: 'confirm',
+      });
+    }
+
     await createLog(
-      'Survey Inspection Status Updated to verified',
-      req.user.id,
+      'Survey Inspection Confirmed by Admin',
+      user_id,
       survey.surveyName || 'Survey',
       'Survey',
       survey._id
     );
 
     return res.status(200).json({
-      message: "Inspection status updated successfully.",
+      message: 'Inspection confirmed successfully.',
       survey,
     });
   } catch (error) {
     console.error('Update inspection status error:', error);
-    return res.status(500).json({ message: 'Server error updating inspection status.' });
+    return res.status(500).json({ message: 'Server error confirming inspection.' });
   }
 };
 
