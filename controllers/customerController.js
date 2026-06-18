@@ -241,7 +241,7 @@ function buildDeliverySummary(areas, materialDelivery) {
 
   for (const delivery of materialDelivery || []) {
     const plain = delivery?.toObject ? delivery.toObject() : delivery;
-    if (plain.deliveryStatus !== 'verified') continue;
+    if (plain.deliveryStatus !== 'delivered') continue;
 
     for (const item of plain.items || []) {
       const sku = (item?.sku ?? '').toString().trim();
@@ -256,7 +256,7 @@ function buildDeliverySummary(areas, materialDelivery) {
   return Array.from(allSkus).map((sku) => {
     const proposed = proposedBySku.get(sku) || 0;
     const delivered = deliveredBySku.get(sku) || 0;
-    const remaining = Math.max(proposed - delivered, 0);
+    const remaining = Math.max(delivered - proposed, 0);
 
     return {
       itemName: sku,
@@ -3035,6 +3035,7 @@ exports.scheduleInstallation = async (req, res) => {
     }
 
     survey.installationDate = parsedDate;
+    survey.projectManagerStatus = 'scheduled';
     survey.installationTime = (time ?? time_slot ?? installation_time ?? installationTime ?? '')
       .toString()
       .trim();
