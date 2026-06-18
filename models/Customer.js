@@ -62,11 +62,6 @@ const customerSchema = new mongoose.Schema({
     required: false,
     trim: true,
   },
-  company: {
-    type: String,
-    required: false,
-    trim: true,
-  },
   mobileNumber: {
     type: String,
     required: false,

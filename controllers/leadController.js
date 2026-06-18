@@ -337,7 +337,6 @@ exports.createLead = async (req, res) => {
       id,
       leadName,
       name,
-      company,
       dba,
       legalName,
       accountNumber,
@@ -401,7 +400,6 @@ exports.createLead = async (req, res) => {
       // Update basic fields
       if (leadName !== undefined) lead.leadName = leadName;
       if (name !== undefined) lead.name = name;
-      if (company !== undefined) lead.company = company;
       if (dba !== undefined) lead.dba = dba;
       if (legalName !== undefined) lead.legalName = legalName;
       if (accountNumber !== undefined || account_number !== undefined) {
@@ -531,7 +529,6 @@ exports.createLead = async (req, res) => {
       const leadData = {
         leadName: leadName ?? '',
         name,
-        company,
         dba: dba || '',
         legalName: legalName || '',
         accountNumber: resolvedAccountNumber,
@@ -1205,7 +1202,6 @@ const buildCustomerPayloadFromLead = (lead, userId, accountNumberOverride) => {
     name: leadObj.name || leadObj.leadName || '',
     legalName: leadObj.legalName || '',
     accountNumber,
-    company: leadObj.company || '',
     dba: leadObj.dba || '',
     electricCompany: leadObj.electricCompany || '',
     uploadElectricityBill: normalizeBillFilenames(leadObj.uploadElectricityBill),
