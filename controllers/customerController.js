@@ -726,7 +726,7 @@ exports.getCustomer = async (req, res) => {
 
     // ✅ Get customer
     const customer = await Customer.findById(id)
-    .populate('leadId', `${LEAD_FIELDS_FOR_POPULATE} dba electricCompany`)
+    .populate('leadId', LEAD_FIELDS_FOR_POPULATE)
       .populate('assignToContractor', 'fullName email mobileNumber')
       .populate('assignedTo', 'fullName email mobileNumber')
       .populate('user_id', 'fullName name email userRole');
@@ -750,6 +750,12 @@ exports.getCustomer = async (req, res) => {
 
     // ✅ Convert material image to full URLs
     const updatedCustomer = stripCustomerLogFields(customer.toObject());
+    const leadFields = flattenPopulatedLead(customer.leadId, customer);
+    updatedCustomer.dba =
+      (customer.dba ?? updatedCustomer.dba ?? '').toString().trim() ||
+      (updatedCustomer.company ?? '').toString().trim() ||
+      leadFields.dba ||
+      '';
     if (updatedCustomer.material && Array.isArray(updatedCustomer.material)) {
       updatedCustomer.material = updatedCustomer.material.map(item => {
         item.images = (item.images || []).map(img => `${materialBaseUrl}${img}`);
@@ -1497,6 +1503,19 @@ exports.getCustomersByUser = async (req, res) => {
       ? await Survey.find({ customer_id: { $in: customerIds } })
       : [];
 
+    const activities = customerIds.length
+      ? await CustomerActivity.find({ customer_id: { $in: customerIds } })
+          .populate('user_id', 'fullName email mobileNumber userRole')
+          .sort({ date: -1, createdAt: -1 })
+      : [];
+
+    const activityMap = {};
+    activities.forEach((activity) => {
+      const customerId = activity.customer_id.toString();
+      if (!activityMap[customerId]) activityMap[customerId] = [];
+      activityMap[customerId].push(activity.toObject ? activity.toObject() : activity);
+    });
+
     const customersWithSurveys = await Promise.all(
       customers.map(async (customer) => {
         const customerObj = customer.toObject();
@@ -1526,6 +1545,7 @@ exports.getCustomersByUser = async (req, res) => {
             convertedToCustomer: lead.convertedToCustomer ?? true,
           }
           : null;
+        customerObj.customerActivity = activityMap[customer._id.toString()] || [];
 
         stripCustomerQuotationFields(customerObj);
 
