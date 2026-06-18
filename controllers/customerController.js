@@ -73,49 +73,24 @@ async function formatSurveysForResponse(surveys, surveyBaseUrl) {
     surveys.map(async (survey) => {
       const surveyObj = survey.toObject ? survey.toObject() : survey;
       surveyObj.areas = await enrichAreasWithProducts(surveyObj.areas || []);
-      surveyObj.areas = await Promise.all(
-        (surveyObj.areas || []).map(async (area) => ({
-          ...area,
-          images: (area.images || []).map((img) => {
+      surveyObj.areas = (surveyObj.areas || []).map((area) => ({
+        ...area,
+        images: (area.images || []).map((img) => {
+          const filename = String(img || '').replace(/^\//, '');
+          if (!filename) return img;
+          if (filename.startsWith('http')) return filename;
+          return `${surveyBaseUrl}${filename}`;
+        }),
+        fixtures: (area.fixtures || []).map((fixture) => ({
+          ...fixture,
+          images: (fixture.images || []).map((img) => {
             const filename = String(img || '').replace(/^\//, '');
             if (!filename) return img;
             if (filename.startsWith('http')) return filename;
             return `${surveyBaseUrl}${filename}`;
           }),
-          verification_notes: await enrichNotesWithAuthors(area.verification_notes || []),
-          fixtures: (area.fixtures || []).map((fixture) => ({
-            ...fixture,
-            images: (fixture.images || []).map((img) => {
-              const filename = String(img || '').replace(/^\//, '');
-              if (!filename) return img;
-              if (filename.startsWith('http')) return filename;
-              return `${surveyBaseUrl}${filename}`;
-            }),
-            report: fixture.report
-              ? {
-                  ...fixture.report,
-                  images: (fixture.report.images || []).map((img) => {
-                    const filename = String(img || '').replace(/^\//, '');
-                    if (!filename) return img;
-                    if (filename.startsWith('http')) return filename;
-                    return `${surveyBaseUrl}${filename}`;
-                  }),
-                }
-              : fixture.report,
-            verification: fixture.verification
-              ? {
-                  ...fixture.verification,
-                  images: (fixture.verification.images || []).map((img) => {
-                    const filename = String(img || '').replace(/^\//, '');
-                    if (!filename) return img;
-                    if (filename.startsWith('http')) return filename;
-                    return `${surveyBaseUrl}${filename}`;
-                  }),
-                }
-              : fixture.verification,
-          })),
-        }))
-      );
+        })),
+      }));
       if (Array.isArray(surveyObj.images)) {
         surveyObj.images = surveyObj.images.map((img) => {
           const filename = String(img || '').replace(/^\//, '');
@@ -218,53 +193,6 @@ function buildMaterialSummaryFromAreas(areas) {
     heightFt: (heightFt ?? '').toString().trim() || '0',
     heightIn: (heightIn ?? '').toString().trim() || '0',
   }));
-}
-
-function buildDeliverySummary(areas, materialDelivery) {
-  const proposedBySku = new Map();
-  const deliveredBySku = new Map();
-
-  for (const area of areas || []) {
-    for (const fixture of area.fixtures || []) {
-      const product = fixture.product;
-      const sku =
-        (product?.sku ?? product?.name ?? fixture.existingFixtureType ?? '')
-          .toString()
-          .trim();
-      if (!sku) continue;
-
-      const proposedQty =
-        parseFloat(fixture.proposedQty) || parseFloat(fixture.existingQty) || 0;
-      proposedBySku.set(sku, (proposedBySku.get(sku) || 0) + proposedQty);
-    }
-  }
-
-  for (const delivery of materialDelivery || []) {
-    const plain = delivery?.toObject ? delivery.toObject() : delivery;
-    if (plain.deliveryStatus !== 'verified') continue;
-
-    for (const item of plain.items || []) {
-      const sku = (item?.sku ?? '').toString().trim();
-      if (!sku) continue;
-      const deliveredQty = Number(item?.issued_qty ?? item?.issuedQty ?? 0) || 0;
-      deliveredBySku.set(sku, (deliveredBySku.get(sku) || 0) + deliveredQty);
-    }
-  }
-
-  const allSkus = new Set([...proposedBySku.keys(), ...deliveredBySku.keys()]);
-
-  return Array.from(allSkus).map((sku) => {
-    const proposed = proposedBySku.get(sku) || 0;
-    const delivered = deliveredBySku.get(sku) || 0;
-    const remaining = Math.max(proposed - delivered, 0);
-
-    return {
-      itemName: sku,
-      proposedQuantity: String(Math.round(proposed)).padStart(2, '0'),
-      deliveredQuantity: String(Math.round(delivered)).padStart(2, '0'),
-      remainingQuantity: String(Math.round(remaining)).padStart(2, '0'),
-    };
-  });
 }
 
 function buildMaterialSummary(areas, materialDelivery) {
@@ -736,7 +664,11 @@ exports.getCustomer = async (req, res) => {
     }
 
     // ✅ Get all surveys of this customer
-    const surveys = await Survey.find({ customer_id: id }).sort({ createdAt: -1 });
+    const surveys = await Survey.find({ customer_id: id })
+      .populate('assignToContractor', 'fullName email mobileNumber userRole')
+      .populate('assignedTo', 'fullName email mobileNumber userRole')
+      .populate('user_id', 'fullName name email userRole')
+      .sort({ createdAt: -1 });
 
     // ✅ Get all activities of this customer
     const activitiesList = await CustomerActivity.find({ customer_id: id })
@@ -748,7 +680,6 @@ exports.getCustomer = async (req, res) => {
 
     const surveysWithFullUrls = await formatSurveysForResponse(surveys, surveyBaseUrl);
 
-    // ✅ Convert material image to full URLs
     const updatedCustomer = stripCustomerLogFields(customer.toObject());
     if (updatedCustomer.material && Array.isArray(updatedCustomer.material)) {
       updatedCustomer.material = updatedCustomer.material.map(item => {
@@ -1685,10 +1616,7 @@ exports.getCustomersByPM = async (req, res) => {
           materialDeliveryReturn: await formatMaterialDeliveryReturnList(
             surveys[index].materialDeliveryReturn
           ),
-          deliverySummary: buildDeliverySummary(
-            survey.areas,
-            surveys[index].materialDelivery
-          ),
+          deliverySummary: surveys[index].deliverySummary || [],
         };
       })
     );
