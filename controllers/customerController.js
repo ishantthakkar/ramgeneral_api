@@ -2005,6 +2005,17 @@ exports.addSurveyMaterialDeliveryReturn = async (req, res) => {
   }
 };
 
+function setDeliveryCurrentTimestamp(delivery) {
+  const now = new Date();
+  delivery.date = now;
+  delivery.time = now.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+}
+
 exports.markDeliveryAsCompleted = async (req, res) => {
   try {
     const user_id = req.user.id;
@@ -2050,6 +2061,7 @@ exports.markDeliveryAsCompleted = async (req, res) => {
       delivery.images = [...(delivery.images || []), ...uploadedImages];
     }
 
+    setDeliveryCurrentTimestamp(delivery);
     delivery.deliveryStatus = 'delivered';
     survey.markModified('materialDelivery');
     await survey.save();
