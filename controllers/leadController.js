@@ -1191,13 +1191,17 @@ exports.getLead = async (req, res) => {
 
 const buildCustomerPayloadFromLead = (lead, userId, accountNumberOverride) => {
   const leadObj = lead.toObject ? lead.toObject() : lead;
+  const accountNumber =
+    accountNumberOverride !== undefined
+      ? normalizeAccountNumber(accountNumberOverride)
+      : normalizeAccountNumber(leadObj.accountNumber);
 
   return {
     leadId: leadObj._id,
     user_id: leadObj.user_id || userId,
     name: leadObj.name || leadObj.leadName || '',
     legalName: leadObj.legalName || '',
-    accountNumber: leadObj.accountNumber || '',
+    accountNumber,
     dba: leadObj.dba || '',
     electricCompany: leadObj.electricCompany || '',
     uploadElectricityBill: normalizeBillFilenames(leadObj.uploadElectricityBill),
