@@ -61,7 +61,6 @@ function applySurveyInvoiceStatusFilter(surveyFilter, statusFilter) {
 
   if (statusFilter === 'pending') {
     surveyFilter.$or = [
-      { invoiceStatus: 'pending' },
       { invoiceStatus: { $exists: false } },
       { invoiceStatus: null },
     ];

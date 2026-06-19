@@ -300,12 +300,14 @@ async function attachQuotationFieldsToSurvey(surveyObj, customer) {
 
 async function attachSurveysWithQuotations(surveys, customer) {
   const { enrichSurveyNotesInObject } = require('./surveyNotes');
+  const { attachInvoiceFieldsToSurvey } = require('./invoiceHelpers');
 
   return Promise.all(
     (surveys || []).map(async (survey) => {
       const surveyObj = survey?.toObject ? survey.toObject() : { ...survey };
       const quotationFields = await attachQuotationFieldsToSurvey(surveyObj, customer);
-      return enrichSurveyNotesInObject({ ...surveyObj, ...quotationFields });
+      const invoiceFields = attachInvoiceFieldsToSurvey(surveyObj);
+      return enrichSurveyNotesInObject({ ...surveyObj, ...quotationFields, ...invoiceFields });
     })
   );
 }

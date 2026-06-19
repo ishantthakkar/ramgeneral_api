@@ -1716,7 +1716,7 @@ exports.saveAreaReport = async (req, res) => {
         });
     } catch (error) {
         console.error('Save area report error:', error);
-        return res.status(500).json({ message: 'Server error saving area report.' });
+        return res.status(500).json({ message: 'Server error saving area report.', error: error.message });
     }
 };
 
