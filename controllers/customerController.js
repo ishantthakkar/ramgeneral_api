@@ -3185,7 +3185,10 @@ exports.updateInspectionStatus = async (req, res) => {
       });
     }
 
-    const survey = await Survey.findById(surveyId);
+    const survey = await Survey.findById(surveyId).select(
+      'inspectionStatus customer_id surveyName'
+    );
+
     if (!survey) {
       return res.status(404).json({ message: 'Survey not found.' });
     }
@@ -3194,20 +3197,35 @@ exports.updateInspectionStatus = async (req, res) => {
       return res.status(400).json({ message: 'Inspection is already verified.' });
     }
 
-    survey.inspectionStatus = 'submitted';
-    survey.inspectionDate = new Date();
-    if (requestedStatus === 'verified') {
-      survey.inspectionStatus = 'verified';
-    } else {
-      survey.inspectionStatus = 'submitted';
+    const currentStatus = (survey.inspectionStatus || '').toString().trim().toLowerCase();
+
+    if (requestedStatus === 'verified' && !['submitted', 'confirm'].includes(currentStatus)) {
+      return res.status(400).json({
+        message: 'Inspection is not ready for admin approval yet.',
+      });
     }
 
-    await survey.save();
+    const nextStatus = requestedStatus === 'verified' ? 'verified' : 'submitted';
+    const updateFields = {
+      inspectionStatus: nextStatus,
+      inspectionDate: new Date(),
+    };
+
+    const updatedSurvey = await Survey.findByIdAndUpdate(
+      surveyId,
+      { $set: updateFields },
+      { new: true, runValidators: true }
+    );
 
     if (survey.customer_id) {
-      await Customer.findByIdAndUpdate(survey.customer_id, {
-        inspectionStatus: survey.inspectionStatus,
-      });
+      try {
+        await Customer.updateOne(
+          { _id: survey.customer_id },
+          { $set: { inspectionStatus: nextStatus } }
+        );
+      } catch (customerErr) {
+        console.warn('Customer inspectionStatus sync warning:', customerErr.message);
+      }
     }
 
     await createLog(
@@ -3225,11 +3243,19 @@ exports.updateInspectionStatus = async (req, res) => {
         requestedStatus === 'verified'
           ? 'Inspection verified successfully.'
           : 'Inspection status update successfully.',
-      survey,
+      survey: updatedSurvey,
     });
   } catch (error) {
     console.error('Update inspection status error:', error);
-    return res.status(500).json({ message: 'Server error verifying inspection.' });
+    const validationMessage =
+      error?.name === 'ValidationError'
+        ? Object.values(error.errors || {})
+            .map((entry) => entry.message)
+            .join(' ')
+        : error?.message || '';
+    return res.status(500).json({
+      message: validationMessage || 'Server error verifying inspection.',
+    });
   }
 };
 
