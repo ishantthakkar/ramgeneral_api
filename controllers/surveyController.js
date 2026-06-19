@@ -1074,7 +1074,7 @@ exports.getSurvey = async (req, res) => {
         return res.status(200).json({ survey: surveyResponse });
     } catch (error) {
         console.error('Get survey error:', error);
-        return res.status(500).json({ message: 'Server error fetching survey.' });
+        return res.status(500).json({ message: 'Server error fetching survey.', error: error.message });
     }
 };
 
