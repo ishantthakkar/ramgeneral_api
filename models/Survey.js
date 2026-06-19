@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const { quotationFileFields } = require('../utils/quotationHelpers');
 const { coerceSurveyNotes, getRawSurveyNotes } = require('../utils/surveyNotes');
+const { coerceGenerateInvoice } = require('../utils/invoiceHelpers');
 
 const fixtureReportSchema = {
   installed_qty: { type: Number, default: 0 },
@@ -202,8 +203,9 @@ const surveySchema = new mongoose.Schema({
   timestamps: true,
 });
 
-surveySchema.pre('validate', function normalizeLegacySurveyNotes(next) {
+surveySchema.pre('validate', function normalizeLegacySurveyFields(next) {
   this.set('notes', coerceSurveyNotes(getRawSurveyNotes(this)));
+  this.set('generateInvoice', coerceGenerateInvoice(this.get('generateInvoice')));
   next();
 });
 
