@@ -3173,9 +3173,16 @@ exports.updateInspectionStatus = async (req, res) => {
   try {
     const user_id = req.user.id;
     const surveyId = req.body.survey_id ?? req.body.surveyId;
+    const requestedStatus = (req.body.status ?? 'submitted').toString().trim().toLowerCase();
 
     if (!surveyId) {
       return res.status(400).json({ message: 'survey_id is required.' });
+    }
+
+    if (!['submitted', 'verified'].includes(requestedStatus)) {
+      return res.status(400).json({
+        message: 'Invalid inspection status. Allowed values: submitted, verified.',
+      });
     }
 
     const survey = await Survey.findById(surveyId);
@@ -3187,11 +3194,30 @@ exports.updateInspectionStatus = async (req, res) => {
       return res.status(400).json({ message: 'Inspection is already verified.' });
     }
 
-    survey.inspectionStatus = 'submitted';
+    if (requestedStatus === 'verified') {
+      const currentStatus = (survey.inspectionStatus || '').toString().trim().toLowerCase();
+      if (!['submitted', 'confirm'].includes(currentStatus)) {
+        return res.status(400).json({
+          message: 'Inspection is not ready for admin approval yet.',
+        });
+      }
+      survey.inspectionStatus = 'verified';
+    } else {
+      survey.inspectionStatus = 'submitted';
+    }
+
     await survey.save();
 
+    if (survey.customer_id) {
+      await Customer.findByIdAndUpdate(survey.customer_id, {
+        inspectionStatus: survey.inspectionStatus,
+      });
+    }
+
     await createLog(
-      'Inspection status update successfully',
+      requestedStatus === 'verified'
+        ? 'Inspection verified by admin'
+        : 'Inspection status update successfully',
       user_id,
       survey.surveyName || 'Survey',
       'Survey',
@@ -3199,7 +3225,10 @@ exports.updateInspectionStatus = async (req, res) => {
     );
 
     return res.status(200).json({
-      message: 'Inspection status update successfully.',
+      message:
+        requestedStatus === 'verified'
+          ? 'Inspection verified successfully.'
+          : 'Inspection status update successfully.',
       survey,
     });
   } catch (error) {
