@@ -1,16 +1,16 @@
 const Customer = require('../models/Customer');
 const Survey = require('../models/Survey');
-const User = require('../models/User');
 const { createLog } = require('../utils/logger');
 const { generatePdfBuffer, saveInvoicePdf } = require('../utils/quotationPdf');
 const {
-  buildGenerateInvoiceRecord,
   generateUniqueInvoiceNumber,
-  getGenerateInvoicesForSurvey,
+  getGenerateInvoiceForSurvey,
   surveyInvoiceDataFilter,
   applySurveyInvoiceStatusFilter,
   attachInvoiceFieldsToSurvey,
+  toInvoicePdfUrl,
 } = require('../utils/invoiceHelpers');
+const { getLatestQuotationNumberForSurvey } = require('../utils/quotationHelpers');
 const {
   resolveSurveyById,
   buildQuotationPreviewData,
@@ -20,42 +20,19 @@ const {
 
 const API_BASE_URL = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
 
-function toInvoicePdfUrls(items) {
-  return (items || [])
-    .map((item) => {
-      const plain = item?.toObject ? item.toObject() : item;
-      return (plain.url || '').trim();
-    })
-    .filter(Boolean);
-}
-
-function formatInvoiceRecords(invoices) {
-  return (invoices || []).map((invoice) => {
-    const plain = invoice?.toObject ? invoice.toObject() : invoice;
-    return {
-      invoiceNumber: plain.invoiceNumber || '',
-      url: plain.url || '',
-      filename: plain.filename || '',
-      grandTotal: plain.grandTotal ?? 0,
-      createdAt: plain.createdAt || null,
-      uploadedByName: plain.uploadedByName || '',
-    };
-  });
-}
-
 function buildSurveyInvoicesList(surveys, customerMap) {
   return surveys.map((survey) => {
     const customer = customerMap.get(survey.customer_id?.toString());
-    const invoices = getGenerateInvoicesForSurvey(survey);
+    const invoiceFilename = getGenerateInvoiceForSurvey(survey);
 
     return {
       customerId: survey.customer_id,
       customerName: getCustomerDisplayName(customer),
       survey_id: survey._id,
       surveyName: (survey.surveyName || survey.areaName || '').trim(),
+      invoiceNumber: survey.invoiceNumber || '',
       invoiceStatus: survey.invoiceStatus || 'pending',
-      generateInvoice: toInvoicePdfUrls(invoices),
-      invoices: formatInvoiceRecords(invoices),
+      generateInvoice: invoiceFilename ? toInvoicePdfUrl(invoiceFilename) : '',
     };
   });
 }
@@ -104,7 +81,7 @@ async function fetchSurveyInvoicesList(req) {
   }
 
   const surveys = await Survey.find(surveyFilter)
-    .select('customer_id surveyName areaName status generateInvoice invoiceStatus')
+    .select('customer_id surveyName areaName status generateInvoice invoiceNumber invoiceStatus')
     .sort({ updatedAt: -1 })
     .lean();
 
@@ -169,11 +146,12 @@ exports.previewInvoice = async (req, res) => {
       return res.status(400).json({ message: preview.error });
     }
 
-    const invoiceFields = await attachInvoiceFieldsToSurvey(survey);
+    const invoiceFields = attachInvoiceFieldsToSurvey(survey);
     const { flatLineItems, ...estimate } = preview;
 
     return res.status(200).json({
       message: 'Invoice preview retrieved successfully.',
+      invoiceNumber: invoiceFields.invoiceNumber,
       invoiceStatus: invoiceFields.invoiceStatus,
       generateInvoice: invoiceFields.generateInvoice,
       estimate,
@@ -211,6 +189,7 @@ exports.createInvoice = async (req, res) => {
     }
 
     const invoiceNumber = await generateUniqueInvoiceNumber();
+    const quotationNumber = getLatestQuotationNumberForSurvey(survey, customer);
 
     const { flatLineItems, ...previewFields } = preview;
     const pdfData = {
@@ -218,30 +197,21 @@ exports.createInvoice = async (req, res) => {
       lineItems: flatLineItems,
       documentType: 'invoice',
       invoiceNumber,
+      quotationNumber,
     };
 
     const pdfBuffer = await generatePdfBuffer(pdfData);
     const { filename, relativePath } = await saveInvoicePdf(pdfBuffer, survey._id);
     const pdfUrl = `${API_BASE_URL}/${relativePath}`;
 
-    const generator = req.user?.id
-      ? await User.findById(req.user.id).select('fullName email').lean()
-      : null;
-
-    const invoiceRecord = buildGenerateInvoiceRecord({
-      customer_id: customerId,
-      invoiceNumber,
-      url: pdfUrl,
-      filename,
-      surveyId: survey._id,
-      grandTotal: preview.grandTotal,
-      uploadedBy: req.user?.id,
-      uploadedByName: generator?.fullName || '',
-    });
-
     const updatedSurvey = await Survey.findByIdAndUpdate(
       survey._id,
-      { $push: { generateInvoice: invoiceRecord } },
+      {
+        $set: {
+          invoiceNumber,
+          generateInvoice: filename,
+        },
+      },
       { new: true }
     );
 
@@ -255,19 +225,11 @@ exports.createInvoice = async (req, res) => {
       );
     }
 
-    const savedInvoice = updatedSurvey.generateInvoice[updatedSurvey.generateInvoice.length - 1];
-    const invoiceFields = await attachInvoiceFieldsToSurvey(updatedSurvey);
-    const { flatLineItems: _flatLineItems, ...estimate } = preview;
-
     return res.status(201).json({
       message: 'Invoice generated successfully.',
-      survey_id: updatedSurvey._id,
-      customerId: updatedSurvey.customer_id,
-      invoiceNumber: savedInvoice.invoiceNumber,
-      invoiceStatus: invoiceFields.invoiceStatus,
-      pdfUrl: savedInvoice.url,
-      generateInvoice: toInvoicePdfUrls([savedInvoice]),
-      estimate,
+      invoiceNumber: updatedSurvey.invoiceNumber,
+      pdfUrl,
+      filename,
     });
   } catch (error) {
     console.error('Create invoice error:', error);
@@ -300,13 +262,14 @@ exports.getSurveyInvoiceDetails = async (req, res) => {
       return res.status(400).json({ message: preview.error });
     }
 
-    const invoiceFields = await attachInvoiceFieldsToSurvey(survey);
+    const invoiceFields = attachInvoiceFieldsToSurvey(survey);
     const { flatLineItems, ...estimate } = preview;
 
     return res.status(200).json({
       message: 'Survey invoice details retrieved successfully.',
       survey_id: survey._id,
       customerId: survey.customer_id,
+      invoiceNumber: invoiceFields.invoiceNumber,
       invoiceStatus: invoiceFields.invoiceStatus,
       generateInvoice: invoiceFields.generateInvoice,
       estimate,

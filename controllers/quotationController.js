@@ -18,6 +18,8 @@ const {
   generateUniqueQuotationNumber,
   buildUploadSignedQuotationRecord,
   getGenerateQuotationsForSurvey,
+  getSurveyGenerateQuotation,
+  formatGenerateQuotationSummary,
   getUploadSignedQuotationsForSurvey,
   formatQuotationListForResponse,
   formatQuotationListWithUserMap,
@@ -517,7 +519,7 @@ exports.createQuotation = async (req, res) => {
 
     const updatedSurvey = await Survey.findByIdAndUpdate(
       survey._id,
-      { $push: { generateQuotation: quotationRecord } },
+      { $set: { generateQuotation: [quotationRecord] } },
       { new: true }
     );
 
@@ -531,16 +533,18 @@ exports.createQuotation = async (req, res) => {
       );
     }
 
-    const savedQuotation =
-      updatedSurvey.generateQuotation[updatedSurvey.generateQuotation.length - 1];
+    const savedQuotation = updatedSurvey.generateQuotation?.[0];
+    const quotationSummary =
+      formatGenerateQuotationSummary(savedQuotation) ||
+      formatGenerateQuotationSummary(quotationRecord);
 
     return res.status(201).json({
       message: 'Quotation generated successfully.',
       survey_id: updatedSurvey._id,
       customerId: updatedSurvey.customer_id,
-      quotationNumber: savedQuotation.quotationNumber,
-      pdfUrl: savedQuotation.url,
-      generateQuotation: toQuotationPdfUrls([savedQuotation]),
+      quotationNumber: quotationSummary?.quotationNumber || quotationNumber,
+      pdfUrl: quotationSummary?.url || pdfUrl,
+      generateQuotation: quotationSummary ? [quotationSummary] : [],
     });
   } catch (error) {
     console.error('Create quotation error:', error);

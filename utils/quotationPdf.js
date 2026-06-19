@@ -294,8 +294,20 @@ async function generatePdfBuffer(data) {
         { width: pageWidth - 40, align: 'right' }
       );
     }
+    if (isInvoice && data.quotationNumber) {
+      doc.fontSize(10).font('Helvetica-Bold').text(
+        `Quotation #: ${data.quotationNumber}`,
+        0,
+        titleY + (documentNumber ? 50 : 36),
+        { width: pageWidth - 40, align: 'right' }
+      );
+    }
 
-    const rightHeaderBottom = documentNumber ? titleY + 50 : titleY + 34;
+    let rightHeaderBottom = titleY + 34;
+    if (documentNumber) rightHeaderBottom = titleY + 50;
+    if (isInvoice && data.quotationNumber) {
+      rightHeaderBottom = documentNumber ? titleY + 64 : titleY + 50;
+    }
     let y = Math.max(130, leftHeaderBottom + 16, rightHeaderBottom);
 
     function drawLabelBox(x, boxWidth, label, lines) {

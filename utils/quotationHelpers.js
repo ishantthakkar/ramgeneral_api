@@ -151,8 +151,46 @@ function getGenerateQuotationsForSurvey(survey, customer) {
   const surveyPlain = survey?.toObject ? survey.toObject() : survey;
   const surveyId = getSurveyIdString(surveyPlain);
   const fromSurvey = surveyPlain?.generateQuotation || [];
-  if (fromSurvey.length) return fromSurvey;
-  return getLegacyCustomerGenerateQuotations(customer, surveyId);
+
+  if (fromSurvey.length) {
+    const latest = pickLatestQuotationItem(fromSurvey);
+    return latest ? [latest] : [];
+  }
+
+  const legacy = getLegacyCustomerGenerateQuotations(customer, surveyId);
+  const latestLegacy = pickLatestQuotationItem(legacy);
+  return latestLegacy ? [latestLegacy] : [];
+}
+
+function pickLatestQuotationItem(items) {
+  const sorted = (items || [])
+    .map((item) => (item?.toObject ? item.toObject() : item))
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+  return sorted[0] || null;
+}
+
+function getSurveyGenerateQuotation(survey, customer) {
+  return pickLatestQuotationItem(getGenerateQuotationsForSurvey(survey, customer));
+}
+
+function getLatestQuotationNumberForSurvey(survey, customer) {
+  return String(getSurveyGenerateQuotation(survey, customer)?.quotationNumber || '').trim();
+}
+
+function formatGenerateQuotationSummary(quotation) {
+  const plain = quotation?.toObject ? quotation.toObject() : quotation;
+  if (!plain) return null;
+
+  return {
+    quotationNumber: plain.quotationNumber || '',
+    url: plain.url || '',
+    filename: plain.filename || '',
+    pdfName: plain.pdfName || plain.filename || '',
+    grandTotal: plain.grandTotal ?? 0,
+    createdAt: plain.createdAt || null,
+    uploadedByName: plain.uploadedByName || '',
+  };
 }
 
 function getUploadSignedQuotationsForSurvey(survey, customer) {
@@ -331,6 +369,9 @@ module.exports = {
   buildGenerateQuotationRecord,
   buildUploadSignedQuotationRecord,
   getGenerateQuotationsForSurvey,
+  getSurveyGenerateQuotation,
+  getLatestQuotationNumberForSurvey,
+  formatGenerateQuotationSummary,
   getUploadSignedQuotationsForSurvey,
   hasUploadSignedQuotationForSurvey,
   formatQuotationListForResponse,
