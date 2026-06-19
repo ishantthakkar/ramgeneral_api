@@ -3109,7 +3109,7 @@ exports.updateInstallationStatus = async (req, res) => {
       surveyId,
       {
         installationStatus: 'submitted',
-        inspectionStatus: 'confirm',
+        inspectionStatus: 'to-do',
       },
       { new: true, runValidators: true }
     );
@@ -3207,7 +3207,7 @@ exports.updateInspectionStatus = async (req, res) => {
 
     const nextStatus = requestedStatus === 'verified' ? 'verified' : 'submitted';
     const updateFields = {
-      inspectionStatus: nextStatus,
+      inspectionStatus: 'submitted',
       inspectionDate: new Date(),
     };
 
