@@ -3191,7 +3191,7 @@ exports.updateInspectionStatus = async (req, res) => {
     await survey.save();
 
     await createLog(
-      'Survey Inspection Verified by Admin',
+      'Inspection status update successfully',
       user_id,
       survey.surveyName || 'Survey',
       'Survey',
@@ -3199,7 +3199,7 @@ exports.updateInspectionStatus = async (req, res) => {
     );
 
     return res.status(200).json({
-      message: 'Inspection verified successfully.',
+      message: 'Inspection status update successfully.',
       survey,
     });
   } catch (error) {
