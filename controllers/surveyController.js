@@ -26,7 +26,38 @@ const {
     LEAD_FIELDS_FOR_POPULATE,
     stripCustomerLogFields,
 } = require('../utils/customerLeadHelpers');
-const { formatAddressForResponse } = require('../utils/subdocumentHelpers');
+const { formatAddressForResponse, formatContactForResponse } = require('../utils/subdocumentHelpers');
+
+const WORKFLOW_SURVEY_STATUSES = [
+    'submitted',
+    'completed',
+    'reopened',
+    'reopen',
+    'pending_edit_approval',
+];
+
+const normalizeWorkflowSurveyStatus = (value) =>
+    (value || '').toString().trim().toLowerCase();
+
+const isWorkflowSurveyStatus = (value) =>
+    WORKFLOW_SURVEY_STATUSES.includes(normalizeWorkflowSurveyStatus(value));
+
+const filterWorkflowSurveysForList = (surveys, verifiedCustomerIds) =>
+    surveys.filter((survey) => {
+        const customerRef = survey.customer_id;
+        const customerId =
+            customerRef?._id?.toString?.() || customerRef?.toString?.() || '';
+
+        if (verifiedCustomerIds.has(customerId)) {
+            return true;
+        }
+
+        if (survey.confirmDate) {
+            return true;
+        }
+
+        return isWorkflowSurveyStatus(survey.status);
+    });
 
 const normalizeAssignRole = (value) =>
     (value || '').toString().trim().toLowerCase().replace(/_/g, ' ');
@@ -1074,8 +1105,21 @@ exports.getInstallationWorkflow = async (req, res) => {
 
         const surveyResponse = await formatSurveyResponse(survey.toObject());
         const customerObj = stripCustomerLogFields(customer.toObject());
+        const lead =
+            customer.leadId && typeof customer.leadId === 'object' ? customer.leadId : null;
+        customerObj.dba =
+            (customer.dba ?? customerObj.dba ?? '').toString().trim() ||
+            (customerObj.company ?? '').toString().trim() ||
+            (lead?.dba ?? '').toString().trim() ||
+            '';
         if (Array.isArray(customerObj.addresses)) {
             customerObj.addresses = customerObj.addresses.map(formatAddressForResponse);
+        }
+        if (Array.isArray(customerObj.contactInfo)) {
+            customerObj.contactInfo = customerObj.contactInfo.map(formatContactForResponse);
+        }
+        if (Array.isArray(customerObj.notes)) {
+            customerObj.notes = await enrichNotesWithAuthors(customerObj.notes);
         }
 
         return res.status(200).json({
@@ -1489,6 +1533,76 @@ exports.assignContractor = async (req, res) => {
     } catch (error) {
         console.error('Assign contractor error:', error);
         return res.status(500).json({ message: 'Server error assigning contractor.' });
+    }
+};
+
+exports.listWorkflowSurveys = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const admin = await Admin.findById(userId).select('_id').lean();
+
+        const customerFilter = {
+            leadId: { $ne: null },
+            $or: [
+                { verifyStatus: 'verified' },
+                { status: { $in: WORKFLOW_SURVEY_STATUSES } },
+            ],
+        };
+
+        if (!admin) {
+            const user = await User.findById(userId).select('userRole').lean();
+            if (user?.userRole === 'Project Manager') {
+                customerFilter.assignedTo = userId;
+            }
+        }
+
+        const customers = await Customer.find(customerFilter)
+            .select('_id verifyStatus')
+            .lean();
+
+        const customerIds = customers.map((customer) => customer._id);
+        if (!customerIds.length) {
+            return res.status(200).json({
+                message: 'Workflow surveys retrieved successfully.',
+                total: 0,
+                surveys: [],
+            });
+        }
+
+        const verifiedCustomerIds = new Set(
+            customers
+                .filter((customer) => customer.verifyStatus === 'verified')
+                .map((customer) => customer._id.toString())
+        );
+
+        const surveys = await Survey.find({ customer_id: { $in: customerIds } })
+            .populate({
+                path: 'customer_id',
+                select:
+                    'accountNumber name company dba mobileNumber phone email customerCode status verifyStatus',
+                populate: [
+                    { path: 'leadId', select: 'lead_id leadName dba' },
+                    {
+                        path: 'user_id',
+                        select: 'fullName email userRole',
+                        populate: { path: 'reportsTo', select: 'fullName userRole' },
+                    },
+                ],
+            })
+            .populate('user_id', 'fullName email mobileNumber userRole')
+            .sort({ updatedAt: -1, createdAt: -1 })
+            .lean();
+
+        const filteredSurveys = filterWorkflowSurveysForList(surveys, verifiedCustomerIds);
+
+        return res.status(200).json({
+            message: 'Workflow surveys retrieved successfully.',
+            total: filteredSurveys.length,
+            surveys: filteredSurveys,
+        });
+    } catch (error) {
+        console.error('List workflow surveys error:', error);
+        return res.status(500).json({ message: 'Server error listing workflow surveys.' });
     }
 };
 

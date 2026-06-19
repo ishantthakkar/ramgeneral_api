@@ -51,6 +51,7 @@ router.post('/surveys/area-verification', verifyToken, upload.any(), surveyContr
 router.post('/surveys/mark-completed', verifyToken, surveyController.markSurveyCompleted);
 router.post('/surveys/verify', verifyToken, upload.any(), surveyController.verifySurvey);
 router.post('/surveys/:id/confirm-verify', verifyToken, surveyController.confirmVerifySurvey);
+router.get('/workflow-surveys', verifyToken, surveyController.listWorkflowSurveys);
 router.get('/installation', verifyToken, surveyController.installation);
 
 module.exports = router;

@@ -15,6 +15,53 @@ const WORKFLOW_SURVEY_STATUSES = [
   'pending_edit_approval',
 ];
 
+const normalizeWorkflowSurveyStatus = (value) =>
+  (value || '').toString().trim().toLowerCase();
+
+async function countWorkflowSurveys(userId, admin) {
+  const customerFilter = {
+    leadId: { $ne: null },
+    $or: [
+      { verifyStatus: 'verified' },
+      { status: { $in: WORKFLOW_SURVEY_STATUSES } },
+    ],
+  };
+
+  if (!admin) {
+    const user = await User.findById(userId).select('userRole').lean();
+    if (user?.userRole === 'Project Manager') {
+      customerFilter.assignedTo = userId;
+    }
+  }
+
+  const customers = await Customer.find(customerFilter).select('_id verifyStatus').lean();
+  const customerIds = customers.map((customer) => customer._id);
+  if (!customerIds.length) {
+    return 0;
+  }
+
+  const verifiedCustomerIds = new Set(
+    customers
+      .filter((customer) => customer.verifyStatus === 'verified')
+      .map((customer) => customer._id.toString())
+  );
+
+  const surveys = await Survey.find({ customer_id: { $in: customerIds } })
+    .select('customer_id status confirmDate')
+    .lean();
+
+  return surveys.filter((survey) => {
+    const customerId = survey.customer_id?.toString?.() || '';
+    if (verifiedCustomerIds.has(customerId)) {
+      return true;
+    }
+    if (survey.confirmDate) {
+      return true;
+    }
+    return WORKFLOW_SURVEY_STATUSES.includes(normalizeWorkflowSurveyStatus(survey.status));
+  }).length;
+}
+
 async function countScopedSurveyQuotations(userId, admin) {
   const surveyFilter = surveyQuotationDataFilter();
 
@@ -94,23 +141,8 @@ exports.getWorkflowStats = async (req, res) => {
     const userId = req.user.id;
     const admin = await Admin.findById(userId).select('_id').lean();
 
-    const surveyFilter = {
-      leadId: { $ne: null },
-      $or: [
-        { verifyStatus: 'verified' },
-        { status: { $in: WORKFLOW_SURVEY_STATUSES } },
-      ],
-    };
-
-    if (!admin) {
-      const user = await User.findById(userId).select('userRole').lean();
-      if (user?.userRole === 'Project Manager') {
-        surveyFilter.assignedTo = userId;
-      }
-    }
-
     const [totalSurveys, totalInstallations, totalInspections] = await Promise.all([
-      Customer.countDocuments(surveyFilter),
+      countWorkflowSurveys(userId, admin),
       Survey.countDocuments({ quotationStatus: 'approved' }),
       Customer.countDocuments({
         material: { $exists: true, $not: { $size: 0 } },
