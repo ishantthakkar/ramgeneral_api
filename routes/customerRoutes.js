@@ -1,6 +1,7 @@
 const express = require('express');
 const customerController = require('../controllers/customerController');
 const quotationController = require('../controllers/quotationController');
+const invoiceController = require('../controllers/invoiceController');
 const { verifyToken } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -148,6 +149,13 @@ router.post(
     uploadQuotation.array('quotations', 20),
     quotationController.uploadQuotation
 );
+router.get('/survey-invoices-list', verifyToken, invoiceController.listSurveyInvoicesByUser);
+router.get('/invoices-list', verifyToken, invoiceController.listSurveyInvoicesByUser);
+router.post('/invoice/preview', verifyToken, invoiceController.previewInvoice);
+router.get('/invoice/preview', verifyToken, invoiceController.previewInvoice);
+router.get('/invoice/details', verifyToken, invoiceController.getSurveyInvoiceDetails);
+router.post('/invoice/details', verifyToken, invoiceController.getSurveyInvoiceDetails);
+router.post('/invoice', verifyToken, invoiceController.createInvoice);
 router.post('/customers/reassign-salesperson', verifyToken, customerController.reassignSalesPerson);
 router.post('/notes', verifyToken, customerController.addCustomerNote);
 router.get('/customers/:id/notes', verifyToken, customerController.getCustomerNotes);

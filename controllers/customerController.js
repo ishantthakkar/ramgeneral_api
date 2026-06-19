@@ -3188,6 +3188,7 @@ exports.updateInspectionStatus = async (req, res) => {
     }
 
     survey.inspectionStatus = 'submitted';
+    survey.inspectionDate = new Date();
     await survey.save();
 
     await createLog(

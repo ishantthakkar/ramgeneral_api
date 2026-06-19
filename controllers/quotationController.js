@@ -748,3 +748,8 @@ exports.approveQuotation = async (req, res) => {
     return res.status(500).json({ message: 'Server error approving quotation.' });
   }
 };
+
+exports.resolveSurveyById = resolveSurveyById;
+exports.buildQuotationPreviewData = buildQuotationPreviewData;
+exports.getCustomerDisplayName = getCustomerDisplayName;
+exports.resolveSurveyQuotationListScope = resolveSurveyQuotationListScope;

@@ -273,8 +273,12 @@ async function generatePdfBuffer(data) {
 
     const leftHeaderBottom = companyTextY + 36;
     const titleY = headerTop + Math.max(0, (logoDisplayHeight - 36) / 2);
+    const isInvoice = data.documentType === 'invoice';
+    const documentTitle = isInvoice ? 'INVOICE' : 'LIGHTING QUOTATION';
+    const documentNumber = isInvoice ? data.invoiceNumber : data.quotationNumber;
+    const documentNumberLabel = isInvoice ? 'Invoice #' : 'Quotation #';
 
-    doc.fillColor(TEXT_DARK).fontSize(18).font('Helvetica-Bold').text('LIGHTING QUOTATION', 0, titleY, {
+    doc.fillColor(TEXT_DARK).fontSize(18).font('Helvetica-Bold').text(documentTitle, 0, titleY, {
       width: pageWidth - 40,
       align: 'right',
     });
@@ -282,16 +286,16 @@ async function generatePdfBuffer(data) {
       width: pageWidth - 40,
       align: 'right',
     });
-    if (data.quotationNumber) {
+    if (documentNumber) {
       doc.fontSize(10).font('Helvetica-Bold').text(
-        `Quotation #: ${data.quotationNumber}`,
+        `${documentNumberLabel}: ${documentNumber}`,
         0,
         titleY + 36,
         { width: pageWidth - 40, align: 'right' }
       );
     }
 
-    const rightHeaderBottom = data.quotationNumber ? titleY + 50 : titleY + 34;
+    const rightHeaderBottom = documentNumber ? titleY + 50 : titleY + 34;
     let y = Math.max(130, leftHeaderBottom + 16, rightHeaderBottom);
 
     function drawLabelBox(x, boxWidth, label, lines) {
@@ -330,11 +334,10 @@ async function generatePdfBuffer(data) {
 
     y += 70;
 
-    const colArea = 90;
-    const colFixture = 180;
+    const colFixture = 270;
     const colQty = 70;
     const colUnit = 90;
-    const colTotal = contentWidth - colArea - colFixture - colQty - colUnit;
+    const colTotal = contentWidth - colFixture - colQty - colUnit;
     const tableX = 40;
     const tableRight = tableX + contentWidth;
     const pad = 8;
@@ -342,16 +345,15 @@ async function generatePdfBuffer(data) {
     const rowH = 24;
     const borderColor = '#CCCCCC';
     const colX = {
-      area: tableX,
-      fixture: tableX + colArea,
-      qty: tableX + colArea + colFixture,
-      unit: tableX + colArea + colFixture + colQty,
-      total: tableX + colArea + colFixture + colQty + colUnit,
+      fixture: tableX,
+      qty: tableX + colFixture,
+      unit: tableX + colFixture + colQty,
+      total: tableX + colFixture + colQty + colUnit,
       right: tableRight,
     };
 
     let activeTableTop = y;
-    const areaGroups = groupLineItemsByArea(data.lineItems);
+    const lineItems = data.lineItems || [];
 
     function strokeH(x1, x2, lineY) {
       doc.moveTo(x1, lineY).lineTo(x2, lineY).strokeColor(borderColor).lineWidth(0.5).stroke();
@@ -365,7 +367,6 @@ async function generatePdfBuffer(data) {
       doc.rect(tableX, activeTableTop, contentWidth, headerH).fill(LIGHT_GRAY);
       doc.fillColor(TEXT_DARK).fontSize(8).font('Helvetica-Bold');
       const textY = activeTableTop + 8;
-      doc.text('AREA', colX.area + pad, textY, { width: colArea - pad * 2 });
       doc.text('PROPOSED FIXTURE', colX.fixture + pad, textY, { width: colFixture - pad * 2 });
       doc.text('QUANTITY', colX.qty, textY, { width: colQty, align: 'center' });
       doc.text('UNIT PRICE', colX.unit, textY, { width: colUnit - pad, align: 'right' });
@@ -373,7 +374,7 @@ async function generatePdfBuffer(data) {
 
       const headerBottom = activeTableTop + headerH;
       strokeH(tableX, tableRight, headerBottom);
-      [colX.fixture, colX.qty, colX.unit, colX.total].forEach((x) => {
+      [colX.qty, colX.unit, colX.total].forEach((x) => {
         strokeV(x, activeTableTop, headerBottom);
       });
       strokeV(tableX, activeTableTop, headerBottom);
@@ -397,53 +398,26 @@ async function generatePdfBuffer(data) {
       });
     }
 
-    function drawMergedAreaCell(areaName, groupTop, groupBottom) {
-      const cellHeight = groupBottom - groupTop;
-      doc.rect(colX.area, groupTop, colArea, cellHeight).strokeColor(borderColor).lineWidth(0.5).stroke();
-
-      doc.fillColor(TEXT_DARK).font('Helvetica').fontSize(9);
-      const textHeight = doc.heightOfString(areaName, { width: colArea - pad * 2 });
-      const textY = groupTop + Math.max(pad, (cellHeight - textHeight) / 2);
-      doc.text(areaName, colX.area + pad, textY, { width: colArea - pad * 2, align: 'left' });
-    }
-
     drawHeader();
     let bodyY = activeTableTop + headerH;
     const pageBottom = doc.page.height - 160;
 
-    for (let g = 0; g < areaGroups.length; g++) {
-      const group = areaGroups[g];
-      const groupHeight = group.items.length * rowH;
-
-      if (bodyY + groupHeight > pageBottom) {
+    for (let i = 0; i < lineItems.length; i++) {
+      if (bodyY + rowH > pageBottom) {
         doc.addPage();
         activeTableTop = 40;
         drawHeader();
         bodyY = activeTableTop + headerH;
       }
 
-      const groupTop = bodyY;
+      const rowTop = bodyY;
+      drawRowCells(lineItems[i], rowTop);
+      bodyY = rowTop + rowH;
 
-      for (let i = 0; i < group.items.length; i++) {
-        const rowTop = bodyY;
-        drawRowCells(group.items[i], rowTop);
-        bodyY = rowTop + rowH;
-
-        if (i < group.items.length - 1) {
-          strokeH(colX.fixture, tableRight, bodyY);
-          strokeV(colX.qty, rowTop, bodyY);
-          strokeV(colX.unit, rowTop, bodyY);
-          strokeV(colX.total, rowTop, bodyY);
-        }
-      }
-
-      const groupBottom = bodyY;
-      drawMergedAreaCell(group.area, groupTop, groupBottom);
-      strokeV(colX.fixture, groupTop, groupBottom);
-      strokeV(colX.qty, groupTop, groupBottom);
-      strokeV(colX.unit, groupTop, groupBottom);
-      strokeV(colX.total, groupTop, groupBottom);
-      strokeH(tableX, tableRight, groupBottom);
+      strokeH(colX.fixture, tableRight, bodyY);
+      strokeV(colX.qty, rowTop, bodyY);
+      strokeV(colX.unit, rowTop, bodyY);
+      strokeV(colX.total, rowTop, bodyY);
     }
 
     const tableBottom = bodyY;
@@ -489,6 +463,16 @@ async function saveQuotationPdf(buffer, customerId) {
   return { filename, filePath, relativePath };
 }
 
+async function saveInvoicePdf(buffer, surveyId) {
+  const dir = path.join(__dirname, '../uploads/invoices');
+  fs.mkdirSync(dir, { recursive: true });
+  const filename = `invoice-${surveyId}-${Date.now()}.pdf`;
+  const filePath = path.join(dir, filename);
+  await fs.promises.writeFile(filePath, buffer);
+  const relativePath = `uploads/invoices/${filename}`;
+  return { filename, filePath, relativePath };
+}
+
 module.exports = {
   formatMoney,
   formatAddressLines,
@@ -496,4 +480,5 @@ module.exports = {
   groupLineItemsByArea,
   generatePdfBuffer,
   saveQuotationPdf,
+  saveInvoicePdf,
 };

@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { quotationFileFields } = require('../utils/quotationHelpers');
+const { invoiceFileFields } = require('../utils/invoiceHelpers');
 const { coerceSurveyNotes, getRawSurveyNotes } = require('../utils/surveyNotes');
 
 const fixtureReportSchema = {
@@ -158,6 +159,7 @@ const surveySchema = new mongoose.Schema({
     enum: ['to-do', 'reopen', 'in_progress', 'confirm', 'verified', 'submitted'],
     default: 'to-do',
   },
+  inspectionDate: { type: Date },
   markAsCompleted: { type: Boolean, default: false },
   verifyImages: [{ type: String, trim: true }],
   verifyQty: { type: Number, default: 0 },
@@ -183,6 +185,11 @@ const surveySchema = new mongoose.Schema({
     ref: 'User',
   },
   quotationApprovedAt: { type: Date },
+  invoiceStatus: {
+    type: String,
+    enum: ['pending', 'approved'],
+    default: 'pending',
+  },
   confirmDate: { type: Date },
   job_id: {
     type: String,
@@ -195,6 +202,7 @@ const surveySchema = new mongoose.Schema({
   deliverySummary: { type: Array, default: [] },
   generateQuotation: [quotationFileFields],
   uploadSignedQuotation: [quotationFileFields],
+  generateInvoice: [invoiceFileFields],
 }, {
   timestamps: true,
 });
