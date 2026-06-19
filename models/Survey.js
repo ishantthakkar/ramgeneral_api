@@ -155,7 +155,7 @@ const surveySchema = new mongoose.Schema({
   inspectionStatus: {
     type: String,
     trim: true,
-    enum: ['to-do', 'reopen', 'in_progress', 'confirm', 'verified'],
+    enum: ['to-do', 'reopen', 'in_progress', 'confirm', 'verified', 'submitted'],
     default: 'to-do',
   },
   markAsCompleted: { type: Boolean, default: false },

@@ -3193,27 +3193,8 @@ exports.updateInspectionStatus = async (req, res) => {
       return res.status(400).json({ message: 'Inspection is already verified.' });
     }
 
-    if (survey.installationStatus !== 'submitted') {
-      return res.status(400).json({
-        message: 'Installation must be submitted before verifying inspection.',
-      });
-    }
-
-    const allowedStatuses = ['confirm', 'in_progress', 'to-do', 'reopen'];
-    if (!allowedStatuses.includes(survey.inspectionStatus)) {
-      return res.status(400).json({
-        message: 'Inspection is not ready for admin verification.',
-      });
-    }
-
-    survey.inspectionStatus = 'verified';
+    survey.inspectionStatus = 'submitted';
     await survey.save();
-
-    if (survey.customer_id) {
-      await Customer.findByIdAndUpdate(survey.customer_id, {
-        inspectionStatus: 'confirm',
-      });
-    }
 
     await createLog(
       'Survey Inspection Verified by Admin',
