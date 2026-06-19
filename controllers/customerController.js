@@ -3178,12 +3178,6 @@ exports.updateInspectionStatus = async (req, res) => {
       return res.status(400).json({ message: 'survey_id is required.' });
     }
 
-    const Admin = require('../models/Admin');
-    const isAdmin = await Admin.findById(user_id);
-    if (!isAdmin) {
-      return res.status(403).json({ message: 'Only admins can verify inspections.' });
-    }
-
     const survey = await Survey.findById(surveyId);
     if (!survey) {
       return res.status(404).json({ message: 'Survey not found.' });
@@ -3193,30 +3187,11 @@ exports.updateInspectionStatus = async (req, res) => {
       return res.status(400).json({ message: 'Inspection is already verified.' });
     }
 
-    if (survey.installationStatus !== 'submitted') {
-      return res.status(400).json({
-        message: 'Installation must be submitted before verifying inspection.',
-      });
-    }
-
-    const allowedStatuses = ['confirm', 'in_progress', 'to-do', 'reopen'];
-    if (!allowedStatuses.includes(survey.inspectionStatus)) {
-      return res.status(400).json({
-        message: 'Inspection is not ready for admin verification.',
-      });
-    }
-
-    survey.inspectionStatus = 'verified';
+    survey.inspectionStatus = 'submitted';
     await survey.save();
 
-    if (survey.customer_id) {
-      await Customer.findByIdAndUpdate(survey.customer_id, {
-        inspectionStatus: 'confirm',
-      });
-    }
-
     await createLog(
-      'Survey Inspection Verified by Admin',
+      'Inspection status update successfully',
       user_id,
       survey.surveyName || 'Survey',
       'Survey',
@@ -3224,7 +3199,7 @@ exports.updateInspectionStatus = async (req, res) => {
     );
 
     return res.status(200).json({
-      message: 'Inspection verified successfully.',
+      message: 'Inspection status update successfully.',
       survey,
     });
   } catch (error) {
