@@ -15,6 +15,26 @@ const productSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    utilityPrice: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    directPrice: {
+      type: Number,
+      min: 0,
+      default: 0,
+    }, 
+    agentCommission: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    managerCommission: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
     salesPrice: {
       type: Number,
       required: true,

@@ -51,6 +51,9 @@ const {
   findCommissionRecord,
   resolveSurveyContractorName,
   resolveSurveySalesPersonName,
+  resolveSurveySalesManagerName,
+  resolvePayableAmount,
+  getCommissionMilestones,
 } = require('../utils/payablesUtils');
 
 function mapUserSummary(user) {
@@ -2432,15 +2435,18 @@ exports.getCustomerPayableDetails = async (req, res) => {
 
     if (survey) {
       payables = await calculateSurveyPayables(survey, customer);
-      dynamicCommission =
-        type === 'Installation' ? payables.contractorCommission : payables.salesCommission;
+      dynamicCommission = resolvePayableAmount(payables, type);
       quotationNumber = payables.quotationNumber || '';
       quotationAmount = payables.quotationAmount || 0;
     }
 
     const record = survey ? findCommissionRecord(customer, survey._id, type) : null;
-    const paid = sumCommissionPayments(record);
-    const pending = Math.max(0, dynamicCommission - paid);
+    const totals = survey
+      ? getPaymentTotals(customer, survey, type, dynamicCommission)
+      : { amount: 0, eligible: 0, paid: 0, pending: 0, locked: 0, balance: 0 };
+    const milestones = survey
+      ? getCommissionMilestones(type, dynamicCommission, customer, survey)
+      : { projectApproved: false, invoiceFullyPaid: false, schedule: [] };
 
     return res.status(200).json({
       message: 'Payable details retrieved successfully.',
@@ -2449,9 +2455,13 @@ exports.getCustomerPayableDetails = async (req, res) => {
         surveyId: survey?._id || null,
         commissionId: record?._id || null,
         legalName: customer.legalName || customer.name || '',
-        commission: dynamicCommission,
-        paid,
-        pending,
+        commission: totals.amount,
+        eligible: totals.eligible,
+        paid: totals.paid,
+        pending: totals.pending,
+        locked: totals.locked,
+        balance: totals.balance,
+        milestones,
         leadId: leadFields.lead_id || '',
         leadSource: customer.leadSource || '',
         quotationNumber: quotationNumber || '—',
@@ -2502,8 +2512,12 @@ exports.addCommissionPayment = async (req, res) => {
         customerId: customer._id,
         surveyId,
         commission: result.dynamicAmount,
+        eligible: result.eligible,
         paid: result.paid,
         pending: result.pending,
+        locked: result.locked,
+        balance: result.balance,
+        milestones: result.milestones,
         quotationNumber: result.quotationNumber || '—',
         quotationAmount: result.quotationAmount || 0,
         payments: (result.commission.payments || []).map((payment) =>
@@ -2550,6 +2564,8 @@ exports.updateCustomerCommissions = async (req, res) => {
 
       if (formattedComm.commissionType === 'Survey') {
         formattedComm.salesPerson = comm.sales_person || comm.salesPerson;
+      } else if (formattedComm.commissionType === 'Sales Manager') {
+        formattedComm.salesManager = comm.sales_manager || comm.salesManager;
       } else if (formattedComm.commissionType === 'Installation') {
         formattedComm.contractor = comm.contractor_id || comm.contractor;
       } else if (formattedComm.commissionType === 'Other') {
@@ -2595,9 +2611,11 @@ exports.customerCommissionList = async (req, res) => {
       return res.status(200).json({
         message: 'Quotation-approved payables retrieved successfully.',
         salesPersons: [],
+        salesManagers: [],
         contractors: [],
         overallSummary: {
           salesPersons: { totalCommission: 0, totalPaid: 0, totalPending: 0 },
+          salesManagers: { totalCommission: 0, totalPaid: 0, totalPending: 0 },
           contractors: { totalCommission: 0, totalPaid: 0, totalPending: 0 },
         },
       });
@@ -2605,8 +2623,16 @@ exports.customerCommissionList = async (req, res) => {
 
     const customers = await Customer.find({ _id: { $in: [...customerIdSet] } })
       .populate('assignToContractor', 'fullName email')
-      .populate('user_id', 'fullName email name')
-      .populate('leadId', 'dba leadName')
+      .populate({
+        path: 'user_id',
+        select: 'fullName email name userRole',
+        populate: { path: 'reportsTo', select: 'fullName email userRole' },
+      })
+      .populate({
+        path: 'leadId',
+        select: 'dba leadName assignedBy',
+        populate: { path: 'assignedBy', select: 'fullName email userRole' },
+      })
       .sort({ createdAt: -1 });
 
     for (const customer of customers) {
@@ -2628,11 +2654,15 @@ exports.customerCommissionList = async (req, res) => {
     }
 
     const salesPersons = [];
+    const salesManagers = [];
     const contractors = [];
 
     let salesTotalCommission = 0;
     let salesTotalPaid = 0;
     let salesTotalPending = 0;
+    let managerTotalCommission = 0;
+    let managerTotalPaid = 0;
+    let managerTotalPending = 0;
     let contractorTotalCommission = 0;
     let contractorTotalPaid = 0;
     let contractorTotalPending = 0;
@@ -2649,17 +2679,24 @@ exports.customerCommissionList = async (req, res) => {
         const surveyId = survey._id.toString();
         const jobNo = survey.job_id || '—';
         const salesPersonName = resolveSurveySalesPersonName(survey, customer);
+        const salesManagerName = resolveSurveySalesManagerName(survey, customer);
         const contractorName = resolveSurveyContractorName(survey, customer);
 
         const salesPayments = getPaymentTotals(
           customer,
-          surveyId,
+          survey,
           'Survey',
           payables.salesCommission
         );
+        const managerPayments = getPaymentTotals(
+          customer,
+          survey,
+          'Sales Manager',
+          payables.managerCommission
+        );
         const contractorPayments = getPaymentTotals(
           customer,
-          surveyId,
+          survey,
           'Installation',
           payables.contractorCommission
         );
@@ -2683,6 +2720,26 @@ exports.customerCommissionList = async (req, res) => {
         salesTotalCommission += salesPayments.amount;
         salesTotalPaid += salesPayments.paid;
         salesTotalPending += salesPayments.pending;
+
+        salesManagers.push({
+          id: `${customerKey}-${surveyId}-manager`,
+          customerId: customerKey,
+          surveyId,
+          legalName,
+          salesManager: salesManagerName,
+          surveyName: payables.surveyName,
+          surveyDate: survey.surveyDate || survey.createdAt,
+          quotationNumber: payables.quotationNumber || '—',
+          confirmed: payables.confirmedDate || '',
+          quotationAmount: payables.quotationAmount,
+          commission: managerPayments.amount,
+          paid: managerPayments.paid,
+          pending: managerPayments.pending,
+        });
+
+        managerTotalCommission += managerPayments.amount;
+        managerTotalPaid += managerPayments.paid;
+        managerTotalPending += managerPayments.pending;
 
         contractors.push({
           id: `${customerKey}-${surveyId}`,
@@ -2709,12 +2766,18 @@ exports.customerCommissionList = async (req, res) => {
     return res.status(200).json({
       message: 'Quotation-approved payables retrieved successfully.',
       salesPersons,
+      salesManagers,
       contractors,
       overallSummary: {
         salesPersons: {
           totalCommission: salesTotalCommission,
           totalPaid: salesTotalPaid,
           totalPending: salesTotalPending,
+        },
+        salesManagers: {
+          totalCommission: managerTotalCommission,
+          totalPaid: managerTotalPaid,
+          totalPending: managerTotalPending,
         },
         contractors: {
           totalCommission: contractorTotalCommission,

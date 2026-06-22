@@ -8,14 +8,40 @@ const {
   buildFixtureTypeFilter,
 } = require('../utils/productUtils');
 
+function resolveUtilityPrice(product) {
+  const utilityPrice = product.utilityPrice ?? product.salesPrice ?? product.price ?? 0;
+  return Number(utilityPrice) || 0;
+}
+
+function resolveDirectPrice(product) {
+  return Number(product.directPrice ?? 0) || 0;
+}
+
+function resolveAgentCommission(product) {
+  return Number(product.agentCommission ?? product.commission ?? 0) || 0;
+}
+
+function resolveManagerCommission(product) {
+  return Number(product.managerCommission ?? 0) || 0;
+}
+
 function formatProduct(doc) {
   const p = doc.toObject ? doc.toObject() : doc;
+  const utilityPrice = resolveUtilityPrice(p);
+  const directPrice = resolveDirectPrice(p);
+  const agentCommission = resolveAgentCommission(p);
+  const managerCommission = resolveManagerCommission(p);
+
   return {
     _id: p._id,
     sku: p.sku,
     name: p.name,
-    salesPrice: p.salesPrice ?? p.price ?? 0,
-    commission: p.commission ?? 0,
+    utilityPrice,
+    directPrice,
+    agentCommission,
+    managerCommission,
+    salesPrice: utilityPrice,
+    commission: agentCommission,
     installationCost: p.installationCost ?? 0,
     productType: p.productType || 'Proposed Fixture',
     category: p.category || null,
@@ -48,23 +74,47 @@ function generateExistingFixtureSku() {
 }
 
 function parseProposedProductPayload(body, resolvedFixtureType) {
-  const { sku, name, salesPrice, commission, installationCost, price } = body;
+  const {
+    sku,
+    name,
+    utilityPrice,
+    directPrice,
+    agentCommission,
+    managerCommission,
+    installationCost,
+    salesPrice,
+    commission,
+    price,
+  } = body;
 
   if (!sku || !name) {
     return { error: 'SKU and name are required.' };
   }
 
-  const salesPriceResult = parseMoney(
-    salesPrice !== undefined ? salesPrice : price,
-    'Sales price'
+  const utilityPriceResult = parseMoney(
+    utilityPrice !== undefined ? utilityPrice : salesPrice !== undefined ? salesPrice : price,
+    'Utility price'
   );
-  if (salesPriceResult.error) {
-    return { error: salesPriceResult.error };
+  if (utilityPriceResult.error) {
+    return { error: utilityPriceResult.error };
   }
 
-  const commissionResult = parseMoney(commission ?? 0, 'Commission');
-  if (commissionResult.error) {
-    return { error: commissionResult.error };
+  const directPriceResult = parseMoney(directPrice ?? 0, 'Direct price');
+  if (directPriceResult.error) {
+    return { error: directPriceResult.error };
+  }
+
+  const agentCommissionResult = parseMoney(
+    agentCommission !== undefined ? agentCommission : commission ?? 0,
+    'Agent commission'
+  );
+  if (agentCommissionResult.error) {
+    return { error: agentCommissionResult.error };
+  }
+
+  const managerCommissionResult = parseMoney(managerCommission ?? 0, 'Manager commission');
+  if (managerCommissionResult.error) {
+    return { error: managerCommissionResult.error };
   }
 
   const installationCostResult = parseMoney(installationCost ?? 0, 'Installation cost');
@@ -76,8 +126,12 @@ function parseProposedProductPayload(body, resolvedFixtureType) {
     value: {
       sku: sku.trim(),
       name: name.trim(),
-      salesPrice: salesPriceResult.value,
-      commission: commissionResult.value,
+      utilityPrice: utilityPriceResult.value,
+      directPrice: directPriceResult.value,
+      agentCommission: agentCommissionResult.value,
+      managerCommission: managerCommissionResult.value,
+      salesPrice: utilityPriceResult.value,
+      commission: agentCommissionResult.value,
       installationCost: installationCostResult.value,
       productType: resolvedFixtureType,
     },
@@ -148,6 +202,10 @@ async function findProductByName(name, excludeId = null, productType = null) {
 function applyProductFields(product, payload) {
   product.sku = payload.sku;
   product.name = payload.name;
+  product.utilityPrice = payload.utilityPrice;
+  product.directPrice = payload.directPrice;
+  product.agentCommission = payload.agentCommission;
+  product.managerCommission = payload.managerCommission;
   product.salesPrice = payload.salesPrice;
   product.commission = payload.commission;
   product.installationCost = payload.installationCost;
