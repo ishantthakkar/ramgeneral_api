@@ -156,6 +156,7 @@ router.get('/invoice/preview', verifyToken, invoiceController.previewInvoice);
 router.get('/invoice/details', verifyToken, invoiceController.getSurveyInvoiceDetails);
 router.post('/invoice/details', verifyToken, invoiceController.getSurveyInvoiceDetails);
 router.post('/invoice', verifyToken, invoiceController.createInvoice);
+router.post('/invoice/mark-paid', verifyToken, invoiceController.markInvoiceFullyPaid);
 router.post('/customers/reassign-salesperson', verifyToken, customerController.reassignSalesPerson);
 router.post('/notes', verifyToken, customerController.addCustomerNote);
 router.get('/customers/:id/notes', verifyToken, customerController.getCustomerNotes);

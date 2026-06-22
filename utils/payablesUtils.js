@@ -1,5 +1,6 @@
 const { enrichAreasWithProducts, flattenAreaFixtures } = require('./surveyProductUtils');
 const { getGenerateQuotationsForSurvey } = require('./quotationHelpers');
+const { isSalesManagerRole } = require('../constants/userRoles');
 
 function parseQuantity(value) {
   const qty = parseFloat(value);
@@ -100,6 +101,44 @@ function resolveSurveySalesPersonId(survey, customer) {
   return salesPerson;
 }
 
+function resolveSurveySalesManagerUser(survey, customer) {
+  const salesPerson = resolveSurveySalesPersonUser(survey, customer);
+  if (salesPerson && typeof salesPerson === 'object') {
+    const supervisor = salesPerson.reportsTo;
+    if (supervisor) {
+      if (typeof supervisor === 'object' && supervisor._id) {
+        if (!supervisor.userRole || isSalesManagerRole(supervisor.userRole)) {
+          return supervisor;
+        }
+      } else {
+        return supervisor;
+      }
+    }
+  }
+
+  const lead = customer?.leadId;
+  if (lead && typeof lead === 'object' && lead.assignedBy) {
+    return lead.assignedBy;
+  }
+
+  return null;
+}
+
+function resolveSurveySalesManagerName(survey, customer) {
+  const salesManager = resolveSurveySalesManagerUser(survey, customer);
+  const name = resolvePopulatedUserName(salesManager);
+  return name || 'Unassigned';
+}
+
+function resolveSurveySalesManagerId(survey, customer) {
+  const salesManager = resolveSurveySalesManagerUser(survey, customer);
+  if (!salesManager) return null;
+  if (typeof salesManager === 'object' && salesManager._id) {
+    return salesManager._id;
+  }
+  return salesManager;
+}
+
 function getLatestQuotationForSurvey(survey, customer) {
   const quotations = getGenerateQuotationsForSurvey(survey, customer) || [];
   if (!quotations.length) return null;
@@ -110,8 +149,21 @@ function getLatestQuotationForSurvey(survey, customer) {
   })[0];
 }
 
+function resolveProductAgentCommission(product) {
+  const agent = parseFloat(product?.agentCommission);
+  if (Number.isFinite(agent) && agent >= 0) return agent;
+  const legacy = parseFloat(product?.commission);
+  return Number.isFinite(legacy) && legacy >= 0 ? legacy : 0;
+}
+
+function resolveProductManagerCommission(product) {
+  const manager = parseFloat(product?.managerCommission);
+  return Number.isFinite(manager) && manager >= 0 ? manager : 0;
+}
+
 function calculatePayablesFromAreas(areas) {
   let salesCommission = 0;
+  let managerCommission = 0;
   let contractorCommission = 0;
   let quotationAmount = 0;
 
@@ -120,16 +172,19 @@ function calculatePayablesFromAreas(areas) {
     if (!quantity) continue;
 
     const unitPrice = parseUnitPrice(area);
-    const productCommission = parseFloat(area.product?.commission) || 0;
+    const agentCommission = resolveProductAgentCommission(area.product);
+    const productManagerCommission = resolveProductManagerCommission(area.product);
     const installationCost = parseFloat(area.product?.installationCost) || 0;
 
     quotationAmount += quantity * unitPrice;
-    salesCommission += quantity * productCommission;
+    salesCommission += quantity * agentCommission;
+    managerCommission += quantity * productManagerCommission;
     contractorCommission += quantity * installationCost;
   }
 
   return {
     salesCommission: roundMoney(salesCommission),
+    managerCommission: roundMoney(managerCommission),
     contractorCommission: roundMoney(contractorCommission),
     quotationAmount: roundMoney(quotationAmount),
   };
@@ -192,13 +247,105 @@ function sumCommissionPayments(record) {
   return roundMoney(record.paidAmount || 0);
 }
 
-function getPaymentTotals(customer, surveyId, commissionType, calculatedAmount) {
+function isProjectAdminApproved(customer) {
+  return String(customer?.adminApproval || '').trim().toLowerCase() === 'approved';
+}
+
+function isInvoiceFullyPaid(survey) {
+  const status = String(survey?.invoiceStatus || '').trim().toLowerCase();
+  return status === 'fully_paid' || status === 'fully paid';
+}
+
+function getCommissionEligibleAmount(commissionType, totalAmount, customer, survey) {
+  const total = roundMoney(totalAmount);
+
+  if (commissionType === 'Installation') {
+    return total;
+  }
+
+  if (commissionType === 'Sales Manager') {
+    return isInvoiceFullyPaid(survey) ? total : 0;
+  }
+
+  if (commissionType === 'Survey') {
+    let eligible = 0;
+    if (isProjectAdminApproved(customer)) {
+      eligible += roundMoney(total * 0.5);
+    }
+    if (isInvoiceFullyPaid(survey)) {
+      eligible += roundMoney(total * 0.5);
+    }
+    return roundMoney(eligible);
+  }
+
+  return total;
+}
+
+function getCommissionMilestones(commissionType, totalAmount, customer, survey) {
+  const total = roundMoney(totalAmount);
+
+  if (commissionType === 'Survey') {
+    const half = roundMoney(total * 0.5);
+    const projectApproved = isProjectAdminApproved(customer);
+    const invoiceFullyPaid = isInvoiceFullyPaid(survey);
+
+    return {
+      projectApproved,
+      invoiceFullyPaid,
+      schedule: [
+        {
+          key: 'project_approval',
+          label: 'Project admin approval',
+          share: '50%',
+          amount: half,
+          unlocked: projectApproved,
+        },
+        {
+          key: 'invoice_paid',
+          label: 'Invoice fully paid',
+          share: '50%',
+          amount: half,
+          unlocked: invoiceFullyPaid,
+        },
+      ],
+    };
+  }
+
+  if (commissionType === 'Sales Manager') {
+    const invoiceFullyPaid = isInvoiceFullyPaid(survey);
+    return {
+      projectApproved: false,
+      invoiceFullyPaid,
+      schedule: [
+        {
+          key: 'invoice_paid',
+          label: 'Invoice fully paid',
+          share: '100%',
+          amount: total,
+          unlocked: invoiceFullyPaid,
+        },
+      ],
+    };
+  }
+
+  return {
+    projectApproved: isProjectAdminApproved(customer),
+    invoiceFullyPaid: isInvoiceFullyPaid(survey),
+    schedule: [],
+  };
+}
+
+function getPaymentTotals(customer, survey, commissionType, calculatedAmount) {
+  const surveyId = survey?._id || survey;
   const record = findCommissionRecord(customer, surveyId, commissionType);
   const amount = roundMoney(calculatedAmount);
+  const eligible = getCommissionEligibleAmount(commissionType, amount, customer, survey);
   const paid = sumCommissionPayments(record);
-  const pending = roundMoney(Math.max(0, amount - paid));
+  const pending = roundMoney(Math.max(0, eligible - paid));
+  const locked = roundMoney(Math.max(0, amount - eligible));
+  const balance = roundMoney(Math.max(0, amount - paid));
 
-  return { amount, paid, pending, record };
+  return { amount, eligible, paid, pending, locked, balance, record };
 }
 
 const VALID_PAYMENT_METHODS = [
@@ -222,7 +369,21 @@ function normalizePayableFor(value) {
   ) {
     return 'Installation';
   }
+  if (
+    normalized === 'sales manager' ||
+    normalized === 'salesmanager' ||
+    normalized === 'sales-manager' ||
+    normalized === 'manager'
+  ) {
+    return 'Sales Manager';
+  }
   return 'Survey';
+}
+
+function resolvePayableAmount(payables, commissionType) {
+  if (commissionType === 'Installation') return payables.contractorCommission;
+  if (commissionType === 'Sales Manager') return payables.managerCommission;
+  return payables.salesCommission;
 }
 
 async function addPaymentToCommission(customer, { surveyId, payableFor, amount, paymentMethod, paymentDate, note }) {
@@ -243,9 +404,9 @@ async function addPaymentToCommission(customer, { surveyId, payableFor, amount, 
 
   const type = normalizePayableFor(payableFor);
   const payables = await calculateSurveyPayables(survey, customer);
-  const dynamicAmount =
-    type === 'Installation' ? payables.contractorCommission : payables.salesCommission;
+  const dynamicAmount = resolvePayableAmount(payables, type);
 
+  await ensureCustomerPayableRelations(customer);
   await syncPayablesForCustomer(customer);
 
   const commissionIndex = (customer.commissions || []).findIndex((entry) => {
@@ -276,11 +437,18 @@ async function addPaymentToCommission(customer, { surveyId, payableFor, amount, 
   }
 
   const paidSoFar = sumCommissionPayments(plain);
-  const pendingBefore = roundMoney(Math.max(0, dynamicAmount - paidSoFar));
+  const eligibleAmount = getCommissionEligibleAmount(type, dynamicAmount, customer, survey);
+  const pendingBefore = roundMoney(Math.max(0, eligibleAmount - paidSoFar));
+
+  if (eligibleAmount <= 0) {
+    const error = new Error('No commission amount is payable yet. Required milestones have not been reached.');
+    error.statusCode = 400;
+    throw error;
+  }
 
   if (paymentAmount > pendingBefore) {
     const error = new Error(
-      `Payment exceeds pending commission. Maximum payable amount is ${pendingBefore}.`
+      `Payment exceeds payable commission. Maximum payable amount is ${pendingBefore}.`
     );
     error.statusCode = 400;
     throw error;
@@ -296,7 +464,7 @@ async function addPaymentToCommission(customer, { surveyId, payableFor, amount, 
 
   const payments = [...(plain.payments || []), nextPayment];
   const paid = roundMoney(paidSoFar + paymentAmount);
-  const pending = roundMoney(Math.max(0, dynamicAmount - paid));
+  const totals = getPaymentTotals(customer, survey, type, dynamicAmount);
 
   customer.commissions[commissionIndex] = {
     ...plain,
@@ -307,15 +475,19 @@ async function addPaymentToCommission(customer, { surveyId, payableFor, amount, 
     paidAmount: paid,
     paymentMethod,
     paymentDate: nextPayment.paymentDate,
-    paymentStatus: pending <= 0 ? 'paid' : 'payment pending',
+    paymentStatus: paid >= dynamicAmount ? 'paid' : 'payment pending',
   };
 
   return {
     commission: customer.commissions[commissionIndex],
     payment: nextPayment,
     dynamicAmount,
+    eligible: totals.eligible,
     paid,
-    pending,
+    pending: totals.pending,
+    locked: totals.locked,
+    balance: totals.balance,
+    milestones: getCommissionMilestones(type, dynamicAmount, customer, survey),
     quotationNumber: payables.quotationNumber,
     quotationAmount: payables.quotationAmount,
   };
@@ -326,6 +498,7 @@ function buildCommissionEntry({
   commissionType,
   amount,
   salesPerson,
+  salesManager,
   contractor,
   existing,
 }) {
@@ -334,6 +507,8 @@ function buildCommissionEntry({
     commissionType,
     amount: roundMoney(amount),
     salesPerson: commissionType === 'Survey' ? salesPerson || existing?.salesPerson : undefined,
+    salesManager:
+      commissionType === 'Sales Manager' ? salesManager || existing?.salesManager : undefined,
     contractor: commissionType === 'Installation' ? contractor || existing?.contractor : undefined,
     paidAmount: existing ? sumCommissionPayments(existing) : 0,
     payments: existing?.payments || [],
@@ -348,8 +523,28 @@ function isPayableSurvey(survey) {
   return String(survey?.quotationStatus || '').toLowerCase() === 'approved';
 }
 
+async function ensureCustomerPayableRelations(customer) {
+  if (!customer.populated('user_id')) {
+    await customer.populate({
+      path: 'user_id',
+      select: 'fullName email name userRole',
+      populate: { path: 'reportsTo', select: 'fullName email userRole' },
+    });
+  }
+
+  if (customer.leadId && !customer.populated('leadId')) {
+    await customer.populate({
+      path: 'leadId',
+      select: 'assignedBy',
+      populate: { path: 'assignedBy', select: 'fullName email userRole' },
+    });
+  }
+}
+
 async function syncPayablesForCustomer(customer) {
   const Survey = require('../models/Survey');
+  await ensureCustomerPayableRelations(customer);
+
   const surveys = await Survey.find({ customer_id: customer._id })
     .populate('assignedTo', 'fullName email userRole')
     .populate('assignToContractor', 'fullName email userRole')
@@ -379,6 +574,11 @@ async function syncPayablesForCustomer(customer) {
         salesPerson: resolveSurveySalesPersonId(survey, customer),
       },
       {
+        commissionType: 'Sales Manager',
+        amount: payables.managerCommission,
+        salesManager: resolveSurveySalesManagerId(survey, customer),
+      },
+      {
         commissionType: 'Installation',
         amount: payables.contractorCommission,
         contractor: resolveSurveyContractorId(survey, customer),
@@ -397,6 +597,7 @@ async function syncPayablesForCustomer(customer) {
         commissionType: item.commissionType,
         amount: item.amount,
         salesPerson: item.salesPerson,
+        salesManager: item.salesManager,
         contractor: item.contractor,
         existing,
       });
@@ -420,6 +621,12 @@ module.exports = {
   resolveSurveyDisplayName,
   resolveSurveyContractorName,
   resolveSurveySalesPersonName,
+  resolveSurveySalesManagerName,
+  resolvePayableAmount,
+  isProjectAdminApproved,
+  isInvoiceFullyPaid,
+  getCommissionEligibleAmount,
+  getCommissionMilestones,
   getInstallDate,
   getPaymentTotals,
   findCommissionRecord,

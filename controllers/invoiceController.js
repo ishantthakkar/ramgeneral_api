@@ -41,8 +41,8 @@ async function fetchSurveyInvoicesList(req) {
   const { invoiceStatus, hasInvoices } = req.query;
   const statusFilter = invoiceStatus ? invoiceStatus.toString().trim().toLowerCase() : 'all';
 
-  if (!['pending', 'approved', 'all'].includes(statusFilter)) {
-    return { error: 'Invalid invoiceStatus. Allowed: pending, approved, all.', status: 400 };
+  if (!['pending', 'approved', 'fully_paid', 'all'].includes(statusFilter)) {
+    return { error: 'Invalid invoiceStatus. Allowed: pending, approved, fully_paid, all.', status: 400 };
   }
 
   const scope = await resolveSurveyQuotationListScope(req);
@@ -210,6 +210,7 @@ exports.createInvoice = async (req, res) => {
         $set: {
           invoiceNumber,
           generateInvoice: filename,
+          invoiceStatus: 'approved',
         },
       },
       { new: true }
@@ -237,6 +238,63 @@ exports.createInvoice = async (req, res) => {
   }
 };
 
+exports.markInvoiceFullyPaid = async (req, res) => {
+  try {
+    const surveyId = req.body?.surveyId || req.body?.survey_id;
+
+    const surveyResult = await resolveSurveyById(surveyId);
+    if (surveyResult.error) {
+      return res.status(404).json({ message: surveyResult.error });
+    }
+
+    const { survey } = surveyResult;
+    const invoiceFilename = getGenerateInvoiceForSurvey(survey);
+
+    if (!invoiceFilename) {
+      return res.status(400).json({ message: 'Generate an invoice before marking it as fully paid.' });
+    }
+
+    if (String(survey.invoiceStatus || '').toLowerCase() === 'fully_paid') {
+      return res.status(400).json({ message: 'Invoice is already marked as fully paid.' });
+    }
+
+    const paidAt = new Date();
+    const updatedSurvey = await Survey.findByIdAndUpdate(
+      survey._id,
+      {
+        $set: {
+          invoiceStatus: 'fully_paid',
+          invoicePaidAt: paidAt,
+        },
+      },
+      { new: true }
+    );
+
+    const customer = survey.customer_id
+      ? await Customer.findById(survey.customer_id)
+      : null;
+
+    if (req.user?.id && customer) {
+      await createLog(
+        'Invoice Marked Fully Paid',
+        req.user.id,
+        getCustomerDisplayName(customer),
+        'Customer',
+        customer._id
+      );
+    }
+
+    return res.status(200).json({
+      message: 'Invoice marked as fully paid successfully.',
+      survey_id: updatedSurvey._id,
+      invoiceStatus: updatedSurvey.invoiceStatus,
+      invoicePaidAt: updatedSurvey.invoicePaidAt,
+    });
+  } catch (error) {
+    console.error('Mark invoice fully paid error:', error);
+    return res.status(500).json({ message: 'Server error marking invoice as fully paid.' });
+  }
+};
 exports.getSurveyInvoiceDetails = async (req, res) => {
   try {
     const surveyId = req.body?.surveyId || req.body?.survey_id || req.query?.surveyId || req.query?.survey_id;

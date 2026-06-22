@@ -186,6 +186,13 @@ const surveySchema = new mongoose.Schema({
   },
   quotationApprovedAt: { type: Date },
   invoiceNumber: { type: String, trim: true, default: '' },
+  invoiceStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'fully_paid'],
+    default: 'pending',
+    trim: true,
+  },
+  invoicePaidAt: { type: Date },
   confirmDate: { type: Date },
   job_id: {
     type: String,
