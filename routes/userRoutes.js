@@ -3,7 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const userController = require('../controllers/userController');
-const { verifyToken } = require('../middleware/authMiddleware');
+const { verifyToken, requireAdmin } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -45,6 +45,13 @@ router.post(
   verifyToken,
   uploadProfileImage.single('image'),
   userController.uploadProfileImage
+);
+router.post(
+  '/:id([0-9a-fA-F]{24})/profile/image',
+  verifyToken,
+  requireAdmin,
+  uploadProfileImage.single('image'),
+  userController.uploadUserProfileImage
 );
 router.get('/working-hours', verifyToken, userController.getUserWorkingHours);
 router.post('/working-hours', verifyToken, userController.getUserWorkingHours);

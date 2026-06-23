@@ -623,6 +623,7 @@ exports.getUser = async (req, res) => {
             ...user,
             ...roleMetrics,
             reportsTo: formatReportsTo(user.reportsTo),
+            profileImage: toProfileImageUrl(user.profileImage),
         };
 
         return res.status(200).json({
@@ -686,6 +687,7 @@ exports.listUsers = async (req, res) => {
 
             return {
                 ...user,
+                profileImage: toProfileImageUrl(user.profileImage),
                 reportsTo: formatReportsTo(user.reportsTo),
                 ...roleMetrics,
             };
@@ -723,6 +725,7 @@ exports.listContractors = async (req, res) => {
 
             return {
                 ...user,
+                profileImage: toProfileImageUrl(user.profileImage),
                 ...roleMetrics
             };
         }));
@@ -756,6 +759,7 @@ exports.listSalesPersons = async (req, res) => {
             company: u.company || '',
             status: u.status || '',
             userRole: u.userRole,
+            profileImage: toProfileImageUrl(u.profileImage),
         }));
         return res.status(200).json({ salesPersons: mapped, users: mapped, count: mapped.length });
     } catch (error) {
@@ -800,6 +804,50 @@ exports.uploadProfileImage = async (req, res) => {
         });
     } catch (error) {
         console.error('Upload profile image error:', error);
+        return res.status(500).json({ message: 'Server error uploading profile image.' });
+    }
+};
+
+exports.uploadUserProfileImage = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: 'Invalid user ID.' });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ message: 'Profile image file is required.' });
+        }
+
+        const user = await User.findById(id);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+
+        const previousImage = user.profileImage;
+        const savedFilename = path.basename(req.file.path);
+
+        user.profileImage = savedFilename;
+        await user.save();
+
+        if (previousImage && previousImage !== savedFilename) {
+            const previousPath = path.join(PROFILE_UPLOAD_DIR, path.basename(previousImage));
+            fs.promises.unlink(previousPath).catch(() => {});
+        }
+
+        return res.status(200).json({
+            message: 'Profile image uploaded successfully.',
+            profileImage: toProfileImageUrl(savedFilename),
+            user: {
+                _id: user._id,
+                fullName: user.fullName,
+                email: user.email,
+                profileImage: toProfileImageUrl(savedFilename),
+            },
+        });
+    } catch (error) {
+        console.error('Upload user profile image error:', error);
         return res.status(500).json({ message: 'Server error uploading profile image.' });
     }
 };
