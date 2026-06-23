@@ -11,7 +11,7 @@ function parseSiteRowKey(rowId) {
   if (!rowId) return null;
   const match = String(rowId).trim().match(SITE_ROW_KEY);
   if (!match) return null;
-  return { surveyId: match[1], index: Number(match[2], 10) };
+  return { surveyId: match[1], index: Number.parseInt(match[2], 10) };
 }
 
 function parseHeightDisplay(value) {
@@ -129,6 +129,16 @@ function mapSiteRowToArea(row, existingArea = {}) {
  * @param {string} customerId
  * @param {unknown} surveysPayload - SiteDetailRow[] from admin UI
  */
+function resolveSourceAreaIndex(row) {
+  const raw = row?._sourceAreaIndex ?? row?._source_area_index;
+  const parsed = Number(raw);
+  if (Number.isFinite(parsed) && parsed >= 0) {
+    return parsed;
+  }
+  const key = parseSiteRowKey(row?._id);
+  return key ? key.index : 0;
+}
+
 async function applySurveySiteUpdates(customerId, surveysPayload) {
   const rows = tryParseJson(surveysPayload);
   if (!Array.isArray(rows) || rows.length === 0) {
@@ -145,22 +155,21 @@ async function applySurveySiteUpdates(customerId, surveysPayload) {
     if (!grouped.has(key.surveyId)) {
       grouped.set(key.surveyId, []);
     }
-    grouped.get(key.surveyId).push({ row, index: key.index });
+    grouped.get(key.surveyId).push({ row, key });
   }
 
   let updated = 0;
 
   for (const [surveyId, items] of grouped) {
-    items.sort((a, b) => a.index - b.index);
-
     const survey = await Survey.findById(surveyId);
     if (!survey) continue;
     if (survey.customer_id?.toString() !== customerIdStr) continue;
 
     const existingAreas = survey.areas || [];
-    const newAreas = items.map(({ row, index }) =>
-      mapSiteRowToArea(row, existingAreas[index] || {})
-    );
+    const newAreas = items.map(({ row }) => {
+      const sourceIndex = resolveSourceAreaIndex(row);
+      return mapSiteRowToArea(row, existingAreas[sourceIndex] || {});
+    });
 
     survey.areas = newAreas;
     survey.markModified('areas');
