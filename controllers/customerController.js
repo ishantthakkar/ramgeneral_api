@@ -343,6 +343,14 @@ function parseMaterialDeliveryItems(body) {
   return [];
 }
 
+function normalizeDeliveryType(value) {
+  const normalized = String(value ?? 'delivery').trim().toLowerCase();
+  if (!['pickup', 'delivery'].includes(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
 function getReturnItemName(item) {
   return (item?.item_name ?? item?.itemName ?? item?.sku ?? '').toString().trim();
 }
@@ -439,6 +447,7 @@ async function formatMaterialDeliveryList(deliveries) {
     return {
       ...plain,
       deliveryStatus: plain.deliveryStatus || 'pending',
+      deliveryType: plain.deliveryType || 'delivery',
       images: (plain.images || []).map((img) => {
         const filename = String(img || '').replace(/^\//, '');
         if (!filename) return img;
@@ -1743,6 +1752,8 @@ exports.addSurveyMaterialDelivery = async (req, res) => {
       note,
       deliveryStatus,
       delivery_status,
+      deliveryType,
+      delivery_type,
     } = req.body;
 
     const Admin = require('../models/Admin');
@@ -1772,14 +1783,15 @@ exports.addSurveyMaterialDelivery = async (req, res) => {
       return res.status(400).json({ message: 'At least one delivery item with sku is required.' });
     }
 
-    // if (parsedItems?.length) {
-    //   const skus = parsedItems.map((item) => item.sku);
-    //   const foundProducts = await Product.find({ sku: { $in: skus } }).select('sku').lean();
-    //   const foundSkuSet = new Set(foundProducts.map((product) => product.sku));
-    //   if (!skus.every((skuValue) => foundSkuSet.has(skuValue))) {
-    //     return res.status(400).json({ message: 'One or more products not found.' });
-    //   }
-    // }
+    const typeInput = deliveryType ?? delivery_type;
+    const normalizedDeliveryType =
+      typeInput !== undefined && typeInput !== null && String(typeInput).trim()
+        ? normalizeDeliveryType(typeInput)
+        : null;
+
+    if (typeInput !== undefined && typeInput !== null && String(typeInput).trim() && !normalizedDeliveryType) {
+      return res.status(400).json({ message: "Invalid deliveryType. Allowed: pickup, delivery." });
+    }
 
     const survey = await Survey.findById(surveyId);
     if (!survey) {
@@ -1813,6 +1825,9 @@ exports.addSurveyMaterialDelivery = async (req, res) => {
       if (parsedItems?.length) {
         existingDelivery.items = parsedItems;
       }
+      if (normalizedDeliveryType) {
+        existingDelivery.deliveryType = normalizedDeliveryType;
+      }
 
       savedDelivery = existingDelivery;
       action = 'updated';
@@ -1820,6 +1835,7 @@ exports.addSurveyMaterialDelivery = async (req, res) => {
       const deliveryEntry = {
         date: date || delivery_date ? new Date(date || delivery_date) : new Date(),
         time: (time ?? time_slot ?? '').toString().trim(),
+        deliveryType: normalizedDeliveryType || 'delivery',
         items: parsedItems,
         note: (note ?? '').toString().trim(),
         deliveryStatus: (deliveryStatus ?? delivery_status ?? 'pending').toString().trim().toLowerCase(),

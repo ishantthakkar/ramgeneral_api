@@ -73,6 +73,12 @@ function formatDate(date) {
   return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
+function formatSurveyTypeLabel(surveyType) {
+  const normalized = String(surveyType || 'direct').trim().toLowerCase();
+  if (normalized === 'utility') return 'Utility';
+  return 'Direct';
+}
+
 function normalizeAddressTitle(title) {
   return (title || '').toString().trim().toLowerCase();
 }
@@ -345,6 +351,21 @@ async function generatePdfBuffer(data) {
     });
 
     y += 70;
+
+    doc.fillColor(ORANGE).fontSize(8).font('Helvetica-Bold').text('SURVEY TYPE', 40, y);
+    doc.fillColor(TEXT_DARK).fontSize(10).font('Helvetica-Bold').text(
+      formatSurveyTypeLabel(data.surveyType),
+      40,
+      y + 12
+    );
+    if (data.surveyName) {
+      doc.fillColor(ORANGE).fontSize(8).font('Helvetica-Bold').text('SURVEY NAME', 40 + colWidth + 20, y);
+      doc.fillColor(TEXT_DARK).fontSize(10).font('Helvetica-Bold').text(data.surveyName, 40 + colWidth + 20, y + 12, {
+        width: colWidth,
+      });
+    }
+
+    y += 34;
 
     const colFixture = 270;
     const colQty = 70;

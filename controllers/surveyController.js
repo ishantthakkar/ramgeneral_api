@@ -27,6 +27,14 @@ const {
     stripCustomerLogFields,
 } = require('../utils/customerLeadHelpers');
 const { formatAddressForResponse, formatContactForResponse } = require('../utils/subdocumentHelpers');
+const {
+    parseExtraExpensesInput,
+    sumExtraExpenses,
+    coerceUploadReceipts,
+    toReceiptUrl,
+    formatUploadReceiptsForResponse,
+    formatExtraExpensesForResponse,
+} = require('../utils/extraExpenseHelpers');
 
 const WORKFLOW_SURVEY_STATUSES = [
     'submitted',
@@ -140,6 +148,7 @@ const mapSurveyImageUrls = (surveyObj) => {
         })),
     }));
     surveyObj.verifyImages = (surveyObj.verifyImages || []).map(toSurveyImageUrl);
+    surveyObj.uploadReceipts = formatUploadReceiptsForResponse(surveyObj.uploadReceipts);
     return surveyObj;
 };
 
@@ -234,6 +243,42 @@ const parseAreasInput = (areas) => {
 
     return parsed.map(parseAreaInput);
 };
+
+const RECEIPT_UPLOAD_FIELD_NAMES = [
+    'upload_receipts',
+    'uploadReceipts',
+    'upload_receipt',
+    'uploadReceipt',
+    'receipt',
+];
+
+function resolveReceiptUploads(req) {
+    const uploads = [];
+
+    const addFile = (file) => {
+        if (file?.filename) uploads.push(file);
+    };
+
+    if (req.file) addFile(req.file);
+
+    const files = req.files;
+    if (Array.isArray(files)) {
+        files.forEach((file) => {
+            if (RECEIPT_UPLOAD_FIELD_NAMES.includes(file.fieldname)) {
+                addFile(file);
+            }
+        });
+        if (!uploads.length) {
+            files.forEach(addFile);
+        }
+    } else if (files && typeof files === 'object') {
+        for (const fieldName of RECEIPT_UPLOAD_FIELD_NAMES) {
+            (files[fieldName] || []).forEach(addFile);
+        }
+    }
+
+    return uploads;
+}
 
 const validateAreasForCustomer = async (areas, customerId) => {
     if (!areas?.length || !customerId) return { valid: true };
@@ -1812,5 +1857,141 @@ exports.saveAreaVerification = async (req, res) => {
     } catch (error) {
         console.error('Save area verification error:', error);
         return res.status(500).json({ message: 'Server error saving area verification.' });
+    }
+};
+
+exports.saveExtraExpenses = async (req, res) => {
+    try {
+        const user_id = req.user.id;
+        const surveyId = normalizeFormFieldValue(req.body.survey_id ?? req.body.surveyId);
+
+        if (!surveyId) {
+            return res.status(400).json({ message: 'survey_id is required.' });
+        }
+
+        const survey = await Survey.findById(surveyId);
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found.' });
+        }
+
+        const hasExtraExpensesInput =
+            req.body.extraExpenses !== undefined ||
+            req.body.extra_expenses !== undefined ||
+            req.body.expenses !== undefined;
+
+        let shouldResetApprovalStatus = false;
+
+        if (hasExtraExpensesInput) {
+            const parsedExpenses = parseExtraExpensesInput(
+                req.body.extraExpenses ?? req.body.extra_expenses ?? req.body.expenses
+            );
+            if (parsedExpenses === null) {
+                return res.status(400).json({ message: 'extraExpenses must be an array.' });
+            }
+            survey.extraExpenses = parsedExpenses;
+            survey.markModified('extraExpenses');
+            shouldResetApprovalStatus = true;
+        }
+
+        const totalInput =
+            req.body.totalAmount ??
+            req.body.total_amount ??
+            req.body.extraExpensesTotalAmount ??
+            req.body.extra_expenses_total_amount;
+
+        if (totalInput !== undefined && totalInput !== '') {
+            survey.extraExpensesTotalAmount = Number.parseFloat(totalInput) || 0;
+            shouldResetApprovalStatus = true;
+        } else if (hasExtraExpensesInput) {
+            survey.extraExpensesTotalAmount = sumExtraExpenses(survey.extraExpenses);
+        }
+
+        const receiptFiles = resolveReceiptUploads(req);
+        const appendReceipts =
+            String(req.body.appendReceipts ?? req.body.append_receipts ?? '')
+                .trim()
+                .toLowerCase() === 'true';
+
+        if (receiptFiles.length) {
+            const newFilenames = receiptFiles.map((file) => file.filename);
+            survey.uploadReceipts = appendReceipts
+                ? [...coerceUploadReceipts(survey.uploadReceipts), ...newFilenames]
+                : newFilenames;
+            survey.markModified('uploadReceipts');
+            shouldResetApprovalStatus = true;
+        } else if (
+            req.body.uploadReceipts !== undefined ||
+            req.body.upload_receipts !== undefined ||
+            req.body.uploadReceipt !== undefined
+        ) {
+            const receiptValue = req.body.uploadReceipts ?? req.body.upload_receipts ?? req.body.uploadReceipt;
+            survey.uploadReceipts = coerceUploadReceipts(receiptValue);
+            survey.markModified('uploadReceipts');
+            shouldResetApprovalStatus = true;
+        }
+
+        if (shouldResetApprovalStatus) {
+            survey.adminApprovalStatus = 'pending';
+        }
+
+        await survey.save();
+
+        const customer = survey.customer_id
+            ? await Customer.findById(survey.customer_id).select('name')
+            : null;
+
+        await createLog(
+            'Survey Extra Expenses Saved',
+            user_id,
+            customer?.name || survey.surveyName || 'Survey',
+            'Survey',
+            survey._id
+        );
+
+        return res.status(200).json({
+            message: 'Extra expenses saved successfully.',
+            ...formatExtraExpensesForResponse(survey),
+        });
+    } catch (error) {
+        console.error('Save extra expenses error:', error);
+        return res.status(500).json({
+            message: 'Server error saving extra expenses.',
+            error: error.message,
+        });
+    }
+};
+
+exports.getExtraExpenses = async (req, res) => {
+    try {
+        const surveyId = normalizeFormFieldValue(
+            req.params.id ??
+                req.params.surveyId ??
+                req.query.survey_id ??
+                req.query.surveyId ??
+                req.body?.survey_id ??
+                req.body?.surveyId
+        );
+
+        if (!surveyId) {
+            return res.status(400).json({ message: 'survey_id is required.' });
+        }
+
+        const survey = await Survey.findById(surveyId).select(
+            'extraExpenses extraExpensesTotalAmount uploadReceipts adminApprovalStatus surveyName customer_id'
+        );
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found.' });
+        }
+
+        return res.status(200).json({
+            message: 'Extra expenses retrieved successfully.',
+            ...formatExtraExpensesForResponse(survey),
+        });
+    } catch (error) {
+        console.error('Get extra expenses error:', error);
+        return res.status(500).json({
+            message: 'Server error fetching extra expenses.',
+            error: error.message,
+        });
     }
 };

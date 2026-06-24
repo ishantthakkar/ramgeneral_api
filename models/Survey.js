@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const { quotationFileFields } = require('../utils/quotationHelpers');
 const { coerceSurveyNotes, getRawSurveyNotes } = require('../utils/surveyNotes');
 const { coerceGenerateInvoice } = require('../utils/invoiceHelpers');
+const { coerceUploadReceipts } = require('../utils/extraExpenseHelpers');
 
 const fixtureReportSchema = {
   installed_qty: { type: Number, default: 0 },
@@ -54,6 +55,11 @@ const materialDeliveryItemSchema = {
 const materialDeliverySchema = {
   date: { type: Date },
   time: { type: String, trim: true, default: '' },
+  deliveryType: {
+    type: String,
+    enum: ['pickup', 'delivery'],
+    trim: true,
+  },
   items: [materialDeliveryItemSchema],
   note: { type: String, trim: true, default: '' },
   deliveryStatus: {
@@ -84,6 +90,11 @@ const materialDeliveryReturnSchema = {
     ref: 'User',
   },
   createdAt: { type: Date, default: Date.now },
+};
+
+const extraExpenseItemSchema = {
+  description: { type: String, trim: true, default: '' },
+  price: { type: Number, default: 0 },
 };
 
 const surveySchema = new mongoose.Schema({
@@ -121,6 +132,12 @@ const surveySchema = new mongoose.Schema({
     default: 'Draft',
   },
   surveyName: { type: String, trim: true, default: '' },
+  surveyType: {
+    type: String,
+    trim: true,
+    enum: ['direct', 'utility'],
+    default: 'direct',
+  },
   areaName: { type: String, trim: true, default: '' },
   note: { type: String, trim: true, default: '' },
   areas: [
@@ -206,6 +223,15 @@ const surveySchema = new mongoose.Schema({
   generateQuotation: [quotationFileFields],
   uploadSignedQuotation: [quotationFileFields],
   generateInvoice: { type: String, trim: true, default: '' },
+  extraExpenses: [extraExpenseItemSchema],
+  extraExpensesTotalAmount: { type: Number, default: 0 },
+  uploadReceipts: [{ type: String, trim: true }],
+  adminApprovalStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending',
+    trim: true,
+  },
 }, {
   timestamps: true,
 });
@@ -213,6 +239,7 @@ const surveySchema = new mongoose.Schema({
 surveySchema.pre('validate', function normalizeLegacySurveyFields(next) {
   this.set('notes', coerceSurveyNotes(getRawSurveyNotes(this)));
   this.set('generateInvoice', coerceGenerateInvoice(this.get('generateInvoice')));
+  this.set('uploadReceipts', coerceUploadReceipts(this.get('uploadReceipts')));
   next();
 });
 

@@ -198,6 +198,7 @@ async function buildQuotationPreviewData(survey, customer) {
     survey_id: survey._id,
     customerId: survey.customer_id,
     surveyName: (survey.surveyName || survey.areaName || '').trim(),
+    surveyType: (survey.surveyType || 'direct').toString().trim().toLowerCase(),
     company: getCompanyInfo(),
     generatedDate: new Date(),
     serviceAddress,
