@@ -25,6 +25,7 @@ const { buildFixtureTypeFilter } = require('../utils/productUtils');
 const {
     LEAD_FIELDS_FOR_POPULATE,
     stripCustomerLogFields,
+    syncLeadFieldsFromBody,
 } = require('../utils/customerLeadHelpers');
 const { formatAddressForResponse, formatContactForResponse } = require('../utils/subdocumentHelpers');
 const {
@@ -1221,8 +1222,19 @@ exports.updateSurvey = async (req, res) => {
 
 exports.updateSurveyName = async (req, res) => {
     try {
-        const { survey_id, surveyName, survey_name } = req.body;
+        const {
+            survey_id,
+            surveyName,
+            survey_name,
+            surveyType,
+            survey_type,
+            electricCompany,
+            electric_company,
+        } = req.body;
         const name = surveyName !== undefined ? surveyName : survey_name;
+        const typeValue = surveyType !== undefined ? surveyType : survey_type;
+        const electricCompanyValue =
+            electricCompany !== undefined ? electricCompany : electric_company;
 
         if (!survey_id) {
             return res.status(400).json({ message: 'survey_id is required.' });
@@ -1237,9 +1249,33 @@ exports.updateSurveyName = async (req, res) => {
         }
 
         survey.surveyName = String(name).trim();
+        if (typeValue !== undefined && typeValue !== null && String(typeValue).trim()) {
+            const normalizedType = String(typeValue).trim().toLowerCase();
+            if (!['direct', 'utility'].includes(normalizedType)) {
+                return res.status(400).json({ message: 'Invalid surveyType. Allowed: direct, utility.' });
+            }
+            survey.surveyType = normalizedType;
+        }
         await survey.save();
 
+        let savedElectricCompany;
+        if (electricCompanyValue !== undefined && survey.customer_id) {
+            const customer = await Customer.findById(survey.customer_id);
+            if (customer) {
+                customer.electricCompany =
+                    electricCompanyValue === null ? '' : String(electricCompanyValue).trim();
+                await customer.save();
+                await syncLeadFieldsFromBody(customer, {
+                    electricCompany: customer.electricCompany,
+                });
+                savedElectricCompany = customer.electricCompany;
+            }
+        }
+
         const surveyResponse = await formatSurveyResponse(survey.toObject());
+        if (savedElectricCompany !== undefined) {
+            surveyResponse.electricCompany = savedElectricCompany;
+        }
 
         await createLog(
             'Survey Name Updated',
@@ -1252,6 +1288,7 @@ exports.updateSurveyName = async (req, res) => {
         return res.status(200).json({
             survey: surveyResponse,
             message: 'Survey name updated successfully.',
+            ...(savedElectricCompany !== undefined ? { electricCompany: savedElectricCompany } : {}),
         });
     } catch (error) {
         console.error('Update survey name error:', error);
