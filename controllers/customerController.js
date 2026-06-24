@@ -244,7 +244,7 @@ function buildDeliverySummary(areas, materialDelivery) {
 
   for (const delivery of materialDelivery || []) {
     const plain = delivery?.toObject ? delivery.toObject() : delivery;
-    if (plain.deliveryStatus !== 'delivered') continue;
+    if (!['delivered', 'picked', 'verified'].includes(plain.deliveryStatus)) continue;
 
     for (const item of plain.items || []) {
       const sku = (item?.sku ?? '').toString().trim();
@@ -1818,7 +1818,7 @@ exports.addSurveyMaterialDelivery = async (req, res) => {
       }
       if (deliveryStatus !== undefined || delivery_status !== undefined) {
         const status = (deliveryStatus ?? delivery_status).toString().trim().toLowerCase();
-        if (['pending', 'scheduled', 'delivered', 'cancelled', 'approved', 'verified'].includes(status)) {
+        if (['pending', 'scheduled', 'delivered', 'picked', 'cancelled', 'approved', 'verified'].includes(status)) {
           existingDelivery.deliveryStatus = status;
         }
       }
@@ -1843,7 +1843,7 @@ exports.addSurveyMaterialDelivery = async (req, res) => {
         createdAt: new Date(),
       };
 
-      if (!['pending', 'scheduled', 'delivered', 'cancelled', 'approved'].includes(deliveryEntry.deliveryStatus)) {
+      if (!['pending', 'scheduled', 'delivered', 'picked', 'cancelled', 'approved'].includes(deliveryEntry.deliveryStatus)) {
         deliveryEntry.deliveryStatus = 'pending';
       }
 
@@ -2071,8 +2071,14 @@ exports.markDeliveryAsCompleted = async (req, res) => {
       return res.status(404).json({ message: 'Material delivery not found.' });
     }
 
-    if (delivery.deliveryStatus === 'delivered') {
-      return res.status(400).json({ message: 'Delivery is already delivered.' });
+    const completionStatus = delivery.deliveryType === 'pickup' ? 'picked' : 'delivered';
+    if (delivery.deliveryStatus === completionStatus) {
+      return res.status(400).json({
+        message:
+          completionStatus === 'picked'
+            ? 'Pickup is already marked as picked.'
+            : 'Delivery is already delivered.',
+      });
     }
 
     const uploadedImages = (req.files || []).map((file) => file.filename);
@@ -2081,7 +2087,7 @@ exports.markDeliveryAsCompleted = async (req, res) => {
     }
 
     setDeliveryCurrentTimestamp(delivery);
-    delivery.deliveryStatus = 'delivered';
+    delivery.deliveryStatus = completionStatus;
     survey.markModified('materialDelivery');
     await survey.save();
 
@@ -2090,7 +2096,9 @@ exports.markDeliveryAsCompleted = async (req, res) => {
       : null;
 
     await createLog(
-      'Survey Material Delivery delivered',
+      completionStatus === 'picked'
+        ? 'Survey Material Pickup picked'
+        : 'Survey Material Delivery delivered',
       user_id,
       customer?.name || survey.surveyName || 'Survey',
       'Survey',
@@ -2100,7 +2108,10 @@ exports.markDeliveryAsCompleted = async (req, res) => {
     const [formattedDelivery] = await formatMaterialDeliveryList([delivery]);
 
     return res.status(200).json({
-      message: 'Delivery marked as approved successfully.',
+      message:
+        completionStatus === 'picked'
+          ? 'Pickup marked as picked successfully.'
+          : 'Delivery marked as delivered successfully.',
       survey_id: survey._id,
       materialDelivery: formattedDelivery,
     });

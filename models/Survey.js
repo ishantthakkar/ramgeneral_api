@@ -64,7 +64,7 @@ const materialDeliverySchema = {
   note: { type: String, trim: true, default: '' },
   deliveryStatus: {
     type: String,
-    enum: ['pending', 'scheduled', 'delivered', 'cancelled', 'approved', 'verified'],
+    enum: ['pending', 'scheduled', 'delivered', 'picked', 'cancelled', 'approved', 'verified'],
     default: 'pending',
   },
   images: [{ type: String, trim: true }],
