@@ -252,12 +252,29 @@ function toQuotationPdfUrls(items) {
     .filter(Boolean);
 }
 
+function resolveQuotationSalesManagerName(customer) {
+  const salesUser = customer?.user_id;
+  if (!salesUser || typeof salesUser !== 'object') return '';
+  const supervisor = salesUser.reportsTo;
+  if (!supervisor || typeof supervisor !== 'object') return '';
+  if (isSalesManagerRole(supervisor.userRole)) {
+    return supervisor.fullName || '';
+  }
+  return '';
+}
+
 function buildSurveyQuotationsList(surveys, customerMap) {
   return surveys.map((survey) => {
     const customer = customerMap.get(survey.customer_id?.toString());
+    const lead = customer?.leadId && typeof customer.leadId === 'object' ? customer.leadId : null;
+    const salesUser = customer?.user_id && typeof customer.user_id === 'object' ? customer.user_id : null;
+
     return {
       customerId: survey.customer_id,
       customerName: getCustomerDisplayName(customer),
+      leadId: lead?.lead_id || '',
+      salesPersonName: salesUser?.fullName || salesUser?.name || '',
+      salesManagerName: resolveQuotationSalesManagerName(customer),
       survey_id: survey._id,
       surveyName: (survey.surveyName || survey.areaName || '').trim(),
       quotationStatus: survey.quotationStatus || 'pending',
@@ -368,8 +385,12 @@ async function fetchSurveyQuotationsList(req) {
   if (scope.restrictToCustomers) {
     const customers = await Customer.find(scope.customerFilter)
       .select('name company accountNumber user_id leadId generateQuotation uploadSignedQuotation quotations')
-      .populate('user_id', 'fullName email mobileNumber userRole')
-      .populate('leadId', 'leadName name')
+      .populate({
+        path: 'user_id',
+        select: 'fullName email mobileNumber userRole name',
+        populate: { path: 'reportsTo', select: 'fullName userRole' },
+      })
+      .populate('leadId', 'lead_id leadName name')
       .lean();
 
     const customerIds = customers.map((c) => c._id);
@@ -392,8 +413,12 @@ async function fetchSurveyQuotationsList(req) {
     const customerIds = [...new Set(surveys.map((s) => s.customer_id?.toString()).filter(Boolean))];
     const customers = await Customer.find({ _id: { $in: customerIds } })
       .select('name company accountNumber user_id leadId generateQuotation uploadSignedQuotation quotations')
-      .populate('user_id', 'fullName email mobileNumber userRole')
-      .populate('leadId', 'leadName name')
+      .populate({
+        path: 'user_id',
+        select: 'fullName email mobileNumber userRole name',
+        populate: { path: 'reportsTo', select: 'fullName userRole' },
+      })
+      .populate('leadId', 'lead_id leadName name')
       .lean();
     customerMap = new Map(customers.map((c) => [c._id.toString(), c]));
   }

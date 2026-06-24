@@ -3,6 +3,7 @@ const Customer = require('../models/Customer');
 const Admin = require('../models/Admin');
 const User = require('../models/User');
 const Survey = require('../models/Survey');
+const Service = require('../models/Service');
 const ActivityLog = require('../models/ActivityLog');
 const { isSalesManagerRole, isSalesPersonRole } = require('../constants/userRoles');
 const { surveyQuotationDataFilter } = require('../utils/quotationHelpers');
@@ -105,16 +106,34 @@ async function countScopedSurveyQuotations(userId, admin) {
 
 exports.getAdminDashboardStats = async (req, res) => {
   try {
-    const totalActiveLeads = await Lead.countDocuments({
-      status: { $nin: ["Lost Leads", "Converted To Customer"] }
-    });
-    const totalCustomers = await Customer.countDocuments({});
-    const submittedSurveys = await Customer.countDocuments({ status: 'completed' });
-
-    // As per user request, these should show 0 for now
-    const completedInstallations = 0;
-    const completedInspections = 0;
-    const activeServices = 0;
+    const [
+      totalActiveLeads,
+      totalCustomers,
+      submittedSurveys,
+      completedInstallations,
+      completedInspections,
+      activeServices,
+    ] = await Promise.all([
+      Lead.countDocuments({
+        status: { $nin: ['Lost Leads', 'Converted To Customer'] },
+      }),
+      Customer.countDocuments({}),
+      Survey.countDocuments({
+        $or: [
+          { status: { $in: ['submitted', 'completed', 'Submitted', 'Completed', 'reopen', 'reopened', 'pending_edit_approval'] } },
+          { confirmDate: { $ne: null } },
+        ],
+      }),
+      Survey.countDocuments({
+        installationStatus: { $in: ['completed', 'submitted'] },
+      }),
+      Survey.countDocuments({
+        inspectionStatus: 'verified',
+      }),
+      Service.countDocuments({
+        status: { $in: ['Assigned', 'In Progress'] },
+      }),
+    ]);
 
     // Fetch recent activity logs
     const activityLog = await ActivityLog.find({})
