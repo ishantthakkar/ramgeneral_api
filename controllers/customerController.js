@@ -34,6 +34,7 @@ const {
   LEAD_FIELDS_FOR_POPULATE,
   syncLeadFieldsFromBody,
   stripCustomerLogFields,
+  mergeLeadHistoryForCustomerResponse,
 } = require('../utils/customerLeadHelpers');
 const { isSalesManagerRole } = require('../constants/userRoles');
 const {
@@ -781,15 +782,19 @@ exports.getCustomer = async (req, res) => {
     if (Array.isArray(updatedCustomer.addresses)) {
       updatedCustomer.addresses = updatedCustomer.addresses.map(formatAddressForResponse);
     }
-    if (Array.isArray(updatedCustomer.notes)) {
-      updatedCustomer.notes = await enrichNotesWithAuthors(updatedCustomer.notes);
-    }
+
+    const mergedHistory = await mergeLeadHistoryForCustomerResponse(
+      updatedCustomer,
+      activitiesList
+    );
+    updatedCustomer.notes = await enrichNotesWithAuthors(mergedHistory.notes);
+    const mergedActivities = mergedHistory.activities;
 
     return res.status(200).json({
       customer: updatedCustomer,
       surveys: surveysWithFullUrls,
       materials: updatedCustomer.material || [],
-      activities: activitiesList,
+      activities: mergedActivities,
     });
 
   } catch (error) {
@@ -1417,24 +1422,50 @@ exports.updateCustomerSurveyStatus = async (req, res) => {
     if (status === 'submitted') {
       survey.editApprovalStatus = 'none';
     }
+    if (status === 'completed') {
+      survey.editApprovalStatus = 'none';
+      if (!survey.confirmDate) {
+        survey.confirmDate = new Date();
+      }
+    }
     await survey.save();
 
     let customer = null;
-    if (status === 'submitted' && survey.customer_id) {
+    if (survey.customer_id && (status === 'submitted' || status === 'completed')) {
       customer = await Customer.findById(survey.customer_id);
       if (customer) {
-        customer.status = 'submitted';
-        customer.verifyStatus = 'submitted';
-        customer.lastActivity = new Date();
-        await customer.save();
+        if (status === 'submitted') {
+          customer.status = 'submitted';
+          customer.verifyStatus = 'submitted';
+          customer.lastActivity = new Date();
+          await customer.save();
 
-        await createLog(
-          'Survey Submitted',
-          req.user.id,
-          customer.name,
-          'Customer',
-          customer._id
-        );
+          await createLog(
+            'Survey Submitted',
+            req.user.id,
+            customer.name,
+            'Customer',
+            customer._id
+          );
+        } else if (status === 'completed') {
+          customer.status = 'completed';
+          customer.verifyStatus = 'verified';
+          if (!customer.confirmDate) {
+            customer.confirmDate = survey.confirmDate;
+          }
+          customer.lastActivity = new Date();
+          const { syncPayablesForCustomer } = require('../utils/payablesUtils');
+          customer = await syncPayablesForCustomer(customer);
+          await customer.save();
+
+          await createLog(
+            'Survey Verified',
+            req.user.id,
+            customer.name,
+            'Customer',
+            customer._id
+          );
+        }
       }
     }
 
@@ -2401,12 +2432,19 @@ exports.getCustomerActivities = async (req, res) => {
   try {
     const { id: customer_id } = req.params;
 
+    const customer = await Customer.findById(customer_id).select('leadId user_id notes').lean();
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
     const activities = await CustomerActivity.find({ customer_id })
       .sort({ date: -1 })
       .populate('user_id', 'fullName email');
 
+    const mergedHistory = await mergeLeadHistoryForCustomerResponse(customer, activities);
+
     return res.status(200).json({
-      activities,
+      activities: mergedHistory.activities,
     });
   } catch (error) {
     console.error('Get customer activities error:', error);

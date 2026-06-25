@@ -50,6 +50,10 @@ const normalizeWorkflowSurveyStatus = (value) =>
 const isWorkflowSurveyStatus = (value) =>
     WORKFLOW_SURVEY_STATUSES.includes(normalizeWorkflowSurveyStatus(value));
 
+const {
+    attachSurveyWorkflowStatus,
+} = require('../utils/surveyWorkflowStatus');
+
 const filterWorkflowSurveysForList = (surveys, verifiedCustomerIds) =>
     surveys.filter((survey) => {
         const customerRef = survey.customer_id;
@@ -1638,7 +1642,9 @@ exports.listWorkflowSurveys = async (req, res) => {
             .sort({ updatedAt: -1, createdAt: -1 })
             .lean();
 
-        const filteredSurveys = filterWorkflowSurveysForList(surveys, verifiedCustomerIds);
+        const filteredSurveys = filterWorkflowSurveysForList(surveys, verifiedCustomerIds).map(
+            attachSurveyWorkflowStatus
+        );
 
         return res.status(200).json({
             message: 'Workflow surveys retrieved successfully.',

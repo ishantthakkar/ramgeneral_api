@@ -32,6 +32,7 @@ const {
   upsertAddresses,
   formatAddressForResponse,
 } = require('../utils/subdocumentHelpers');
+const { migrateLeadHistoryToCustomer } = require('../utils/customerLeadHelpers');
 
 const ALLOWED_STATUSES = ['New', 'Assigned', 'In Progress', 'Lost Leads', 'Converted To Customer'];
 
@@ -1218,6 +1219,7 @@ const buildCustomerPayloadFromLead = (lead, userId, accountNumberOverride) => {
     },
     addresses: toPlainSubdocs(leadObj.addresses),
     contactInfo: toPlainSubdocs(leadObj.contactInfo),
+    notes: toPlainSubdocs(leadObj.notes),
     convertedDate: new Date(),
     lastActivity: leadObj.lastActivity || new Date(),
     status: 'New',
@@ -1268,6 +1270,8 @@ exports.convertToCustomer = async (req, res) => {
       createdAt: new Date(),
     });
     await lead.save();
+
+    await migrateLeadHistoryToCustomer(lead, customer, req.user.id);
 
     await createLog('Lead Converted to Customer', req.user.id, lead.name, 'Customer', customer._id);
 
