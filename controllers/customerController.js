@@ -1668,7 +1668,7 @@ exports.getCustomersByContractor = async (req, res) => {
         );
 
         const deliveredMaterial = (surveys[index].materialDelivery || []).filter((delivery) =>
-          ['delivered', 'verified'].includes(delivery?.deliveryStatus)
+          ['delivered', 'verified', 'picked'].includes(delivery?.deliveryStatus)
         );
 
         return {

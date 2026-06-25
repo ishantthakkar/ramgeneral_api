@@ -118,7 +118,7 @@ function formatExtraExpensesForResponse(survey) {
     adminApprovedTotal,
     uploadReceipts,
     uploadReceipt: uploadReceipts[0] || '',
-    adminApprovalStatus: surveyPlain.adminApprovalStatus || 'pending',
+    adminExpenseApprovalStatus: surveyPlain.adminExpenseApprovalStatus || 'pending',
   };
 }
 
