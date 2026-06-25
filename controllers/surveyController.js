@@ -34,9 +34,9 @@ const {
     sumExtraExpenses,
     parseExtraExpensesApprovalInput,
     coerceUploadReceipts,
-    getSurveyExpenses,
-    setSurveyExpenses,
-    mergeSurveyExpenses,
+    getSurveyExpensesList,
+    upsertSurveyExpensesEntry,
+    mergeSurveyExpensesEntry,
     sumApprovedExtraExpenses,
     formatExpensesForResponse,
 } = require('../utils/extraExpenseHelpers');
@@ -158,7 +158,7 @@ const mapSurveyImageUrls = (surveyObj) => {
     }));
     surveyObj.verifyImages = (surveyObj.verifyImages || []).map(toSurveyImageUrl);
     if (surveyObj.expenses) {
-        const formatted = formatExpensesForResponse({ expenses: surveyObj.expenses });
+        const formatted = formatExpensesForResponse({ _id: surveyObj._id, expenses: surveyObj.expenses });
         surveyObj.expenses = formatted.expenses;
     }
     delete surveyObj.extraExpenses;
@@ -1921,6 +1921,14 @@ exports.saveExtraExpenses = async (req, res) => {
     try {
         const user_id = req.user.id;
         const surveyId = normalizeFormFieldValue(req.body.survey_id ?? req.body.surveyId);
+        const expenseId = normalizeFormFieldValue(
+            req.body.expenseId ??
+                req.body.expense_id ??
+                req.body.expences_id ??
+                req.body.expenses_id ??
+                req.body.id ??
+                req.body._id
+        );
 
         if (!surveyId) {
             return res.status(400).json({ message: 'survey_id is required.' });
@@ -1931,7 +1939,18 @@ exports.saveExtraExpenses = async (req, res) => {
             return res.status(404).json({ message: 'Survey not found.' });
         }
 
-        let currentExpenses = getSurveyExpenses(survey);
+        const existingExpenses = getSurveyExpensesList(survey);
+        const currentEntry = expenseId
+            ? existingExpenses.find((entry) => String(entry._id) === String(expenseId))
+            : null;
+        let currentExpenses = currentEntry || {
+            expenseItem: [],
+            notes: '',
+            totalAmount: 0,
+            adminExpenseApprovalStatus: 'pending',
+            adminApprovalAmount: 0,
+            receipt: [],
+        };
         const expensesBody = req.body.expenses ?? req.body.expences;
         let patch = parseExpensesObjectInput(expensesBody) || {};
 
@@ -1981,7 +2000,7 @@ exports.saveExtraExpenses = async (req, res) => {
 
         if (Object.keys(patch).length) {
             shouldResetApprovalStatus = true;
-            currentExpenses = mergeSurveyExpenses(currentExpenses, patch);
+            currentExpenses = mergeSurveyExpensesEntry(currentExpenses, patch);
         }
 
         if (shouldResetApprovalStatus) {
@@ -1993,7 +2012,7 @@ exports.saveExtraExpenses = async (req, res) => {
             }));
         }
 
-        setSurveyExpenses(survey, currentExpenses);
+        upsertSurveyExpensesEntry(survey, currentExpenses, expenseId || null);
         await survey.save();
 
         const customer = survey.customer_id
@@ -2025,6 +2044,12 @@ exports.approveExtraExpenses = async (req, res) => {
     try {
         const user_id = req.user.id;
         const surveyId = normalizeFormFieldValue(req.body.survey_id ?? req.body.surveyId);
+        const expenseId = normalizeFormFieldValue(
+            req.body.expenseId ??
+                req.body.expense_id ??
+                req.body.id ??
+                req.body._id
+        );
 
         if (!surveyId) {
             return res.status(400).json({ message: 'survey_id is required.' });
@@ -2040,8 +2065,13 @@ exports.approveExtraExpenses = async (req, res) => {
             return res.status(404).json({ message: 'Survey not found.' });
         }
 
-        const currentExpenses = getSurveyExpenses(survey);
-        if (!currentExpenses.expenseItem.length) {
+        if (!expenseId) {
+            return res.status(400).json({ message: 'expenseId is required to approve an expense entry.' });
+        }
+
+        const entries = getSurveyExpensesList(survey);
+        const currentExpenses = entries.find((entry) => String(entry._id) === String(expenseId));
+        if (!currentExpenses || !currentExpenses.expenseItem.length) {
             return res.status(400).json({ message: 'No extra expenses found for this survey.' });
         }
 
@@ -2080,12 +2110,12 @@ exports.approveExtraExpenses = async (req, res) => {
         });
 
         const adminApprovalAmount = sumApprovedExtraExpenses(expenseItem);
-        setSurveyExpenses(survey, {
+        upsertSurveyExpensesEntry(survey, {
             ...currentExpenses,
             expenseItem,
             adminApprovalAmount,
             adminExpenseApprovalStatus: 'approved',
-        });
+        }, expenseId);
         await survey.save();
 
         const customer = survey.customer_id

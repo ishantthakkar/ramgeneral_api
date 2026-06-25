@@ -38,6 +38,20 @@ function emptyExpenses() {
   };
 }
 
+function normalizeExpensesEntry(entry) {
+  const plain = entry?.toObject ? entry.toObject() : entry;
+  return {
+    ...(plain?._id ? { _id: plain._id } : {}),
+    ...emptyExpenses(),
+    notes: String(plain?.notes || '').trim(),
+    totalAmount: Number(plain?.totalAmount) || 0,
+    adminExpenseApprovalStatus: (plain?.adminExpenseApprovalStatus || 'pending').toString().trim().toLowerCase(),
+    adminApprovalAmount: Number(plain?.adminApprovalAmount) || 0,
+    expenseItem: (plain?.expenseItem || []).map(coerceExpenseItem),
+    receipt: coerceUploadReceipts(plain?.receipt),
+  };
+}
+
 function coerceExpenseItem(item) {
   const plain = item?.toObject ? item.toObject() : item;
   return {
@@ -87,44 +101,69 @@ function parseExpensesObjectInput(value) {
   };
 }
 
-function getSurveyExpenses(survey) {
+function getSurveyExpensesList(survey) {
   const plain = survey?.toObject ? survey.toObject() : survey || {};
 
-  if (plain.expenses && typeof plain.expenses === 'object') {
-    const expenses = plain.expenses?.toObject ? plain.expenses.toObject() : plain.expenses;
-    return {
-      ...emptyExpenses(),
-      notes: expenses.notes || '',
-      totalAmount: Number(expenses.totalAmount) || 0,
-      adminExpenseApprovalStatus: expenses.adminExpenseApprovalStatus || 'pending',
-      adminApprovalAmount: Number(expenses.adminApprovalAmount) || 0,
-      expenseItem: (expenses.expenseItem || []).map(coerceExpenseItem),
-      receipt: coerceUploadReceipts(expenses.receipt),
-    };
+  if (Array.isArray(plain.expenses)) {
+    return plain.expenses.map(normalizeExpensesEntry);
   }
 
-  return {
-    expenseItem: (plain.extraExpenses || []).map(coerceExpenseItem),
-    notes: '',
-    totalAmount: Number(plain.extraExpensesTotalAmount) || 0,
-    adminExpenseApprovalStatus:
-      plain.adminExpenseApprovalStatus || plain.adminApprovalStatus || 'pending',
-    adminApprovalAmount: sumApprovedExtraExpenses(plain.extraExpenses || []),
-    receipt: coerceUploadReceipts(plain.uploadReceipts),
-  };
+  if (plain.expenses && typeof plain.expenses === 'object') {
+    return [normalizeExpensesEntry(plain.expenses)];
+  }
+
+  const legacyItems = (plain.extraExpenses || []).map(coerceExpenseItem);
+  const legacyTotal = Number(plain.extraExpensesTotalAmount) || 0;
+  const legacyReceipt = coerceUploadReceipts(plain.uploadReceipts);
+  const legacyStatus = plain.adminExpenseApprovalStatus || plain.adminApprovalStatus;
+  const hasLegacy =
+    legacyItems.length ||
+    legacyTotal > 0 ||
+    legacyReceipt.length ||
+    (legacyStatus !== undefined && legacyStatus !== null && String(legacyStatus).trim());
+
+  if (!hasLegacy) return [];
+
+  return [
+    normalizeExpensesEntry({
+      expenseItem: legacyItems,
+      totalAmount: legacyTotal,
+      receipt: legacyReceipt,
+      adminExpenseApprovalStatus: legacyStatus || 'pending',
+      adminApprovalAmount: sumApprovedExtraExpenses(legacyItems),
+    }),
+  ];
 }
 
-function setSurveyExpenses(survey, expenses) {
-  survey.expenses = {
-    ...emptyExpenses(),
-    ...expenses,
-    expenseItem: (expenses.expenseItem || []).map(coerceExpenseItem),
-    receipt: coerceUploadReceipts(expenses.receipt),
-  };
+function upsertSurveyExpensesEntry(survey, entry, expenseId) {
+  if (!Array.isArray(survey.expenses)) {
+    survey.expenses = [];
+  }
+
+  const normalized = normalizeExpensesEntry(entry);
+
+  if (expenseId) {
+    const idString = expenseId.toString();
+    const existing = survey.expenses.id ? survey.expenses.id(expenseId) : null;
+    if (existing) {
+      existing.set(normalized);
+      survey.markModified('expenses');
+      return existing;
+    }
+    const idx = survey.expenses.findIndex((e) => (e?._id || '').toString() === idString);
+    if (idx >= 0) {
+      survey.expenses[idx] = { ...survey.expenses[idx], ...normalized };
+      survey.markModified('expenses');
+      return survey.expenses[idx];
+    }
+  }
+
+  survey.expenses.push(normalized);
   survey.markModified('expenses');
+  return survey.expenses[survey.expenses.length - 1];
 }
 
-function mergeSurveyExpenses(current, patch) {
+function mergeSurveyExpensesEntry(current, patch) {
   const merged = {
     ...emptyExpenses(),
     ...current,
@@ -194,22 +233,23 @@ function formatReceiptsForResponse(receipts, baseUrl = API_BASE_URL) {
 
 function formatExpensesForResponse(survey) {
   const surveyPlain = survey?.toObject ? survey.toObject() : survey;
-  const expenses = getSurveyExpenses(surveyPlain);
+  const expenses = getSurveyExpensesList(surveyPlain);
 
   return {
     survey_id: surveyPlain._id,
-    expenses: {
-      expenseItem: expenses.expenseItem.map((item) => ({
+    expenses: expenses.map((entry) => ({
+      id: (entry._id || '').toString(),
+      expenseItem: (entry.expenseItem || []).map((item) => ({
         itemName: item.itemName || '',
         price: Number(item.price) || 0,
         approvedAmount: Number(item.approvedAmount) || 0,
       })),
-      notes: expenses.notes || '',
-      totalAmount: Number(expenses.totalAmount) || 0,
-      adminExpenseApprovalStatus: expenses.adminExpenseApprovalStatus || 'pending',
-      adminApprovalAmount: Number(expenses.adminApprovalAmount) || 0,
-      receipt: formatReceiptsForResponse(expenses.receipt),
-    },
+      notes: entry.notes || '',
+      totalAmount: Number(entry.totalAmount) || 0,
+      adminExpenseApprovalStatus: entry.adminExpenseApprovalStatus || 'pending',
+      adminApprovalAmount: Number(entry.adminApprovalAmount) || 0,
+      receipt: formatReceiptsForResponse(entry.receipt),
+    })),
   };
 }
 
@@ -220,9 +260,17 @@ function sumExtraExpensePayments(survey) {
 }
 
 function getExtraExpensePayableTotals(survey) {
-  const expenses = getSurveyExpenses(survey);
+  const entries = getSurveyExpensesList(survey);
+  const approvedEntries = entries.filter(
+    (e) => String(e.adminExpenseApprovalStatus || '').toLowerCase() === 'approved'
+  );
   const approvedTotal = roundMoney(
-    Number(expenses.adminApprovalAmount) || sumApprovedExtraExpenses(expenses.expenseItem)
+    approvedEntries.reduce(
+      (sum, e) =>
+        sum +
+        (Number(e.adminApprovalAmount) || sumApprovedExtraExpenses(e.expenseItem || [])),
+      0
+    )
   );
   const paid = roundMoney(sumExtraExpensePayments(survey));
   const pending = roundMoney(Math.max(0, approvedTotal - paid));
@@ -245,8 +293,8 @@ async function addExtraExpensePayment(
     throw error;
   }
 
-  const expenses = getSurveyExpenses(survey);
-  if (String(expenses.adminExpenseApprovalStatus || '').toLowerCase() !== 'approved') {
+  const totals = getExtraExpensePayableTotals(survey);
+  if (totals.approvedTotal <= 0) {
     const error = new Error('Extra expenses must be approved before recording payments.');
     error.statusCode = 400;
     throw error;
@@ -266,7 +314,6 @@ async function addExtraExpensePayment(
     throw error;
   }
 
-  const totals = getExtraExpensePayableTotals(survey);
   if (paymentAmount > totals.pending) {
     const error = new Error(
       `Payment cannot exceed pending extra expense balance of ${totals.pending}.`
@@ -300,13 +347,9 @@ async function addExtraExpensePayment(
 }
 
 function coerceSurveyExpensesForSave(surveyDoc) {
-  const current = getSurveyExpenses(surveyDoc);
-  return {
-    ...emptyExpenses(),
-    ...current,
-    expenseItem: (current.expenseItem || []).map(coerceExpenseItem),
-    receipt: coerceUploadReceipts(current.receipt),
-  };
+  const list = getSurveyExpensesList(surveyDoc);
+  if (!list.length) return [];
+  return list.map(normalizeExpensesEntry);
 }
 
 module.exports = {
@@ -315,9 +358,9 @@ module.exports = {
   parseExpensesObjectInput,
   parseExtraExpensesInput: parseExpenseItemsInput,
   parseExtraExpensesApprovalInput,
-  getSurveyExpenses,
-  setSurveyExpenses,
-  mergeSurveyExpenses,
+  getSurveyExpensesList,
+  upsertSurveyExpensesEntry,
+  mergeSurveyExpensesEntry,
   sumExtraExpenses,
   sumApprovedExtraExpenses,
   sumExtraExpensePayments,

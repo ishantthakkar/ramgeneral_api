@@ -59,7 +59,7 @@ const {
 const {
   getExtraExpensePayableTotals,
   addExtraExpensePayment,
-  getSurveyExpenses,
+  getSurveyExpensesList,
 } = require('../utils/extraExpenseHelpers');
 
 function mapUserSummary(user) {
@@ -2491,7 +2491,7 @@ exports.getCustomerPayableDetails = async (req, res) => {
 
       const leadFields = flattenPopulatedLead(customer.leadId, customer);
       const totals = getExtraExpensePayableTotals(survey);
-      const extraExpenseItems = (getSurveyExpenses(survey).expenseItem || []).map((item) => ({
+      const extraExpenseItems = (getSurveyExpensesList(survey).flatMap((e) => e.expenseItem || []) || []).map((item) => ({
         itemName: item.itemName || '',
         price: Number(item.price) || 0,
         approvedAmount: Number(item.approvedAmount) || 0,

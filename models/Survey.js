@@ -98,7 +98,7 @@ const expenseItemSchema = {
   approvedAmount: { type: Number, default: 0 },
 };
 
-const expensesSchema = {
+const expensesSchema = new mongoose.Schema({
   expenseItem: [expenseItemSchema],
   notes: { type: String, trim: true, default: '' },
   totalAmount: { type: Number, default: 0 },
@@ -110,7 +110,7 @@ const expensesSchema = {
   },
   adminApprovalAmount: { type: Number, default: 0 },
   receipt: [{ type: String, trim: true }],
-};
+}, { _id: true });
 
 const extraExpensePaymentSchema = {
   amount: { type: Number, required: true, min: 0 },
@@ -261,17 +261,7 @@ const surveySchema = new mongoose.Schema({
   generateQuotation: [quotationFileFields],
   uploadSignedQuotation: [quotationFileFields],
   generateInvoice: { type: String, trim: true, default: '' },
-  expenses: {
-    type: expensesSchema,
-    default: () => ({
-      expenseItem: [],
-      notes: '',
-      totalAmount: 0,
-      adminExpenseApprovalStatus: 'pending',
-      adminApprovalAmount: 0,
-      receipt: [],
-    }),
-  },
+  expenses: [expensesSchema],
   extraExpensePayments: [extraExpensePaymentSchema],
 }, {
   timestamps: true,
