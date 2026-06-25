@@ -27,38 +27,130 @@ function tryParseJson(value) {
   }
 }
 
-function parseExtraExpensesInput(value) {
+function emptyExpenses() {
+  return {
+    expenseItem: [],
+    notes: '',
+    totalAmount: 0,
+    adminExpenseApprovalStatus: 'pending',
+    adminApprovalAmount: 0,
+    receipt: [],
+  };
+}
+
+function coerceExpenseItem(item) {
+  const plain = item?.toObject ? item.toObject() : item;
+  return {
+    itemName: String(plain?.itemName ?? plain?.item_name ?? plain?.description ?? plain?.Description ?? '').trim(),
+    price: Number.parseFloat(plain?.price ?? plain?.Price ?? 0) || 0,
+    approvedAmount: Number.parseFloat(plain?.approvedAmount ?? plain?.approved_amount ?? 0) || 0,
+  };
+}
+
+function parseExpenseItemsInput(value) {
   if (value === undefined || value === null || value === '') return [];
   const parsed = tryParseJson(value);
   if (!Array.isArray(parsed)) return null;
 
-  return parsed.map((item) => ({
-    description: String(item?.description ?? item?.Description ?? '').trim(),
-    price: Number.parseFloat(item?.price ?? item?.Price ?? 0) || 0,
-    approvedAmount: 0,
-  }));
+  return parsed.map((item) => coerceExpenseItem(item));
+}
+
+function parseExpensesObjectInput(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = tryParseJson(value);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+
+  const expenseItems = parseExpenseItemsInput(
+    parsed.expenseItem ?? parsed.expenseItems ?? parsed.expenceItem ?? parsed.extraExpenses ?? parsed.expenses
+  );
+
+  return {
+    ...(expenseItems !== null ? { expenseItem: expenseItems } : {}),
+    ...(parsed.notes !== undefined || parsed.note !== undefined
+      ? { notes: String(parsed.notes ?? parsed.note ?? '').trim() }
+      : {}),
+    ...(parsed.totalAmount !== undefined || parsed.total_amount !== undefined
+      ? { totalAmount: Number.parseFloat(parsed.totalAmount ?? parsed.total_amount) || 0 }
+      : {}),
+    ...(parsed.adminExpenseApprovalStatus !== undefined
+      ? { adminExpenseApprovalStatus: String(parsed.adminExpenseApprovalStatus).trim().toLowerCase() }
+      : {}),
+    ...(parsed.adminApprovalAmount !== undefined || parsed.admin_approval_amount !== undefined
+      ? {
+          adminApprovalAmount:
+            Number.parseFloat(parsed.adminApprovalAmount ?? parsed.admin_approval_amount) || 0,
+        }
+      : {}),
+    ...(parsed.receipt !== undefined || parsed.uploadReceipts !== undefined || parsed.Reciept !== undefined
+      ? { receipt: coerceUploadReceipts(parsed.receipt ?? parsed.uploadReceipts ?? parsed.Reciept) }
+      : {}),
+  };
+}
+
+function getSurveyExpenses(survey) {
+  const plain = survey?.toObject ? survey.toObject() : survey || {};
+
+  if (plain.expenses && typeof plain.expenses === 'object') {
+    const expenses = plain.expenses?.toObject ? plain.expenses.toObject() : plain.expenses;
+    return {
+      ...emptyExpenses(),
+      notes: expenses.notes || '',
+      totalAmount: Number(expenses.totalAmount) || 0,
+      adminExpenseApprovalStatus: expenses.adminExpenseApprovalStatus || 'pending',
+      adminApprovalAmount: Number(expenses.adminApprovalAmount) || 0,
+      expenseItem: (expenses.expenseItem || []).map(coerceExpenseItem),
+      receipt: coerceUploadReceipts(expenses.receipt),
+    };
+  }
+
+  return {
+    expenseItem: (plain.extraExpenses || []).map(coerceExpenseItem),
+    notes: '',
+    totalAmount: Number(plain.extraExpensesTotalAmount) || 0,
+    adminExpenseApprovalStatus:
+      plain.adminExpenseApprovalStatus || plain.adminApprovalStatus || 'pending',
+    adminApprovalAmount: sumApprovedExtraExpenses(plain.extraExpenses || []),
+    receipt: coerceUploadReceipts(plain.uploadReceipts),
+  };
+}
+
+function setSurveyExpenses(survey, expenses) {
+  survey.expenses = {
+    ...emptyExpenses(),
+    ...expenses,
+    expenseItem: (expenses.expenseItem || []).map(coerceExpenseItem),
+    receipt: coerceUploadReceipts(expenses.receipt),
+  };
+  survey.markModified('expenses');
+}
+
+function mergeSurveyExpenses(current, patch) {
+  const merged = {
+    ...emptyExpenses(),
+    ...current,
+    ...patch,
+    expenseItem:
+      patch.expenseItem !== undefined ? patch.expenseItem.map(coerceExpenseItem) : current.expenseItem,
+    receipt: patch.receipt !== undefined ? coerceUploadReceipts(patch.receipt) : current.receipt,
+  };
+
+  if (patch.expenseItem !== undefined && patch.totalAmount === undefined) {
+    merged.totalAmount = sumExtraExpenses(merged.expenseItem);
+  }
+
+  return merged;
 }
 
 function parseExtraExpensesApprovalInput(value) {
-  if (value === undefined || value === null || value === '') return null;
-  const parsed = tryParseJson(value);
-  if (!Array.isArray(parsed)) return null;
-
-  return parsed.map((item) => ({
-    description: String(item?.description ?? item?.Description ?? '').trim(),
-    price: Number.parseFloat(item?.price ?? item?.Price ?? 0) || 0,
-    approvedAmount:
-      Number.parseFloat(item?.approvedAmount ?? item?.approved_amount ?? item?.adminApprovedAmount ?? 0) ||
-      0,
-  }));
+  return parseExpenseItemsInput(value);
 }
 
-function sumExtraExpenses(extraExpenses) {
-  return (extraExpenses || []).reduce((total, item) => total + (Number(item?.price) || 0), 0);
+function sumExtraExpenses(expenseItems) {
+  return (expenseItems || []).reduce((total, item) => total + (Number(item?.price) || 0), 0);
 }
 
-function sumApprovedExtraExpenses(extraExpenses) {
-  return (extraExpenses || []).reduce(
+function sumApprovedExtraExpenses(expenseItems) {
+  return (expenseItems || []).reduce(
     (total, item) => total + (Number(item?.approvedAmount) || 0),
     0
   );
@@ -96,29 +188,28 @@ function toReceiptUrl(filename, baseUrl = API_BASE_URL) {
   return `${baseUrl}/uploads/surveys/receipts/${name}`;
 }
 
-function formatUploadReceiptsForResponse(uploadReceipts, baseUrl = API_BASE_URL) {
-  return coerceUploadReceipts(uploadReceipts).map((filename) => toReceiptUrl(filename, baseUrl));
+function formatReceiptsForResponse(receipts, baseUrl = API_BASE_URL) {
+  return coerceUploadReceipts(receipts).map((filename) => toReceiptUrl(filename, baseUrl));
 }
 
-function formatExtraExpensesForResponse(survey) {
+function formatExpensesForResponse(survey) {
   const surveyPlain = survey?.toObject ? survey.toObject() : survey;
-  const extraExpenses = (surveyPlain.extraExpenses || []).map((item) => ({
-    description: item.description || '',
-    price: Number(item.price) || 0,
-    approvedAmount: Number(item.approvedAmount) || 0,
-  }));
-  const uploadReceipts = formatUploadReceiptsForResponse(surveyPlain.uploadReceipts);
-  const totalAmount = Number(surveyPlain.extraExpensesTotalAmount) || 0;
-  const adminApprovedTotal = sumApprovedExtraExpenses(extraExpenses);
+  const expenses = getSurveyExpenses(surveyPlain);
 
   return {
     survey_id: surveyPlain._id,
-    extraExpenses,
-    totalAmount,
-    adminApprovedTotal,
-    uploadReceipts,
-    uploadReceipt: uploadReceipts[0] || '',
-    adminExpenseApprovalStatus: surveyPlain.adminExpenseApprovalStatus || 'pending',
+    expenses: {
+      expenseItem: expenses.expenseItem.map((item) => ({
+        itemName: item.itemName || '',
+        price: Number(item.price) || 0,
+        approvedAmount: Number(item.approvedAmount) || 0,
+      })),
+      notes: expenses.notes || '',
+      totalAmount: Number(expenses.totalAmount) || 0,
+      adminExpenseApprovalStatus: expenses.adminExpenseApprovalStatus || 'pending',
+      adminApprovalAmount: Number(expenses.adminApprovalAmount) || 0,
+      receipt: formatReceiptsForResponse(expenses.receipt),
+    },
   };
 }
 
@@ -129,9 +220,11 @@ function sumExtraExpensePayments(survey) {
 }
 
 function getExtraExpensePayableTotals(survey) {
-  const surveyPlain = survey?.toObject ? survey.toObject() : survey;
-  const approvedTotal = roundMoney(sumApprovedExtraExpenses(surveyPlain.extraExpenses || []));
-  const paid = roundMoney(sumExtraExpensePayments(surveyPlain));
+  const expenses = getSurveyExpenses(survey);
+  const approvedTotal = roundMoney(
+    Number(expenses.adminApprovalAmount) || sumApprovedExtraExpenses(expenses.expenseItem)
+  );
+  const paid = roundMoney(sumExtraExpensePayments(survey));
   const pending = roundMoney(Math.max(0, approvedTotal - paid));
 
   return {
@@ -152,7 +245,8 @@ async function addExtraExpensePayment(
     throw error;
   }
 
-  if (String(survey.adminApprovalStatus || '').toLowerCase() !== 'approved') {
+  const expenses = getSurveyExpenses(survey);
+  if (String(expenses.adminExpenseApprovalStatus || '').toLowerCase() !== 'approved') {
     const error = new Error('Extra expenses must be approved before recording payments.');
     error.statusCode = 400;
     throw error;
@@ -205,9 +299,25 @@ async function addExtraExpensePayment(
   return getExtraExpensePayableTotals(survey);
 }
 
+function coerceSurveyExpensesForSave(surveyDoc) {
+  const current = getSurveyExpenses(surveyDoc);
+  return {
+    ...emptyExpenses(),
+    ...current,
+    expenseItem: (current.expenseItem || []).map(coerceExpenseItem),
+    receipt: coerceUploadReceipts(current.receipt),
+  };
+}
+
 module.exports = {
-  parseExtraExpensesInput,
+  emptyExpenses,
+  parseExpenseItemsInput,
+  parseExpensesObjectInput,
+  parseExtraExpensesInput: parseExpenseItemsInput,
   parseExtraExpensesApprovalInput,
+  getSurveyExpenses,
+  setSurveyExpenses,
+  mergeSurveyExpenses,
   sumExtraExpenses,
   sumApprovedExtraExpenses,
   sumExtraExpensePayments,
@@ -215,7 +325,9 @@ module.exports = {
   addExtraExpensePayment,
   VALID_EXTRA_EXPENSE_PAYMENT_METHODS,
   coerceUploadReceipts,
+  coerceSurveyExpensesForSave,
   toReceiptUrl,
-  formatUploadReceiptsForResponse,
-  formatExtraExpensesForResponse,
+  formatReceiptsForResponse,
+  formatExpensesForResponse,
+  formatExtraExpensesForResponse: formatExpensesForResponse,
 };

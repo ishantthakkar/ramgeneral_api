@@ -29,14 +29,16 @@ const {
 } = require('../utils/customerLeadHelpers');
 const { formatAddressForResponse, formatContactForResponse } = require('../utils/subdocumentHelpers');
 const {
-    parseExtraExpensesInput,
+    parseExpenseItemsInput,
+    parseExpensesObjectInput,
     sumExtraExpenses,
-    sumApprovedExtraExpenses,
     parseExtraExpensesApprovalInput,
     coerceUploadReceipts,
-    toReceiptUrl,
-    formatUploadReceiptsForResponse,
-    formatExtraExpensesForResponse,
+    getSurveyExpenses,
+    setSurveyExpenses,
+    mergeSurveyExpenses,
+    sumApprovedExtraExpenses,
+    formatExpensesForResponse,
 } = require('../utils/extraExpenseHelpers');
 
 const WORKFLOW_SURVEY_STATUSES = [
@@ -155,7 +157,14 @@ const mapSurveyImageUrls = (surveyObj) => {
         })),
     }));
     surveyObj.verifyImages = (surveyObj.verifyImages || []).map(toSurveyImageUrl);
-    surveyObj.uploadReceipts = formatUploadReceiptsForResponse(surveyObj.uploadReceipts);
+    if (surveyObj.expenses) {
+        const formatted = formatExpensesForResponse({ expenses: surveyObj.expenses });
+        surveyObj.expenses = formatted.expenses;
+    }
+    delete surveyObj.extraExpenses;
+    delete surveyObj.extraExpensesTotalAmount;
+    delete surveyObj.uploadReceipts;
+    delete surveyObj.adminExpenseApprovalStatus;
     return surveyObj;
 };
 
@@ -1922,23 +1931,21 @@ exports.saveExtraExpenses = async (req, res) => {
             return res.status(404).json({ message: 'Survey not found.' });
         }
 
-        const hasExtraExpensesInput =
-            req.body.extraExpenses !== undefined ||
-            req.body.extra_expenses !== undefined ||
-            req.body.expenses !== undefined;
+        let currentExpenses = getSurveyExpenses(survey);
+        const expensesBody = req.body.expenses ?? req.body.expences;
+        let patch = parseExpensesObjectInput(expensesBody) || {};
+
+        const legacyExpenseItems = parseExpenseItemsInput(
+            req.body.extraExpenses ?? req.body.extra_expenses
+        );
+        if (legacyExpenseItems !== null && (req.body.extraExpenses !== undefined || req.body.extra_expenses !== undefined)) {
+            patch = { ...patch, expenseItem: legacyExpenseItems };
+        }
 
         let shouldResetApprovalStatus = false;
 
-        if (hasExtraExpensesInput) {
-            const parsedExpenses = parseExtraExpensesInput(
-                req.body.extraExpenses ?? req.body.extra_expenses ?? req.body.expenses
-            );
-            if (parsedExpenses === null) {
-                return res.status(400).json({ message: 'extraExpenses must be an array.' });
-            }
-            survey.extraExpenses = parsedExpenses;
-            survey.markModified('extraExpenses');
-            shouldResetApprovalStatus = true;
+        if (req.body.notes !== undefined || req.body.note !== undefined) {
+            patch.notes = String(req.body.notes ?? req.body.note ?? '').trim();
         }
 
         const totalInput =
@@ -1946,12 +1953,8 @@ exports.saveExtraExpenses = async (req, res) => {
             req.body.total_amount ??
             req.body.extraExpensesTotalAmount ??
             req.body.extra_expenses_total_amount;
-
         if (totalInput !== undefined && totalInput !== '') {
-            survey.extraExpensesTotalAmount = Number.parseFloat(totalInput) || 0;
-            shouldResetApprovalStatus = true;
-        } else if (hasExtraExpensesInput) {
-            survey.extraExpensesTotalAmount = sumExtraExpenses(survey.extraExpenses);
+            patch.totalAmount = Number.parseFloat(totalInput) || 0;
         }
 
         const receiptFiles = resolveReceiptUploads(req);
@@ -1962,26 +1965,35 @@ exports.saveExtraExpenses = async (req, res) => {
 
         if (receiptFiles.length) {
             const newFilenames = receiptFiles.map((file) => file.filename);
-            survey.uploadReceipts = appendReceipts
-                ? [...coerceUploadReceipts(survey.uploadReceipts), ...newFilenames]
+            patch.receipt = appendReceipts
+                ? [...coerceUploadReceipts(currentExpenses.receipt), ...newFilenames]
                 : newFilenames;
-            survey.markModified('uploadReceipts');
-            shouldResetApprovalStatus = true;
         } else if (
+            req.body.receipt !== undefined ||
             req.body.uploadReceipts !== undefined ||
             req.body.upload_receipts !== undefined ||
             req.body.uploadReceipt !== undefined
         ) {
-            const receiptValue = req.body.uploadReceipts ?? req.body.upload_receipts ?? req.body.uploadReceipt;
-            survey.uploadReceipts = coerceUploadReceipts(receiptValue);
-            survey.markModified('uploadReceipts');
+            patch.receipt = coerceUploadReceipts(
+                req.body.receipt ?? req.body.uploadReceipts ?? req.body.upload_receipts ?? req.body.uploadReceipt
+            );
+        }
+
+        if (Object.keys(patch).length) {
             shouldResetApprovalStatus = true;
+            currentExpenses = mergeSurveyExpenses(currentExpenses, patch);
         }
 
         if (shouldResetApprovalStatus) {
-            survey.adminExpenseApprovalStatus = 'pending';
+            currentExpenses.adminExpenseApprovalStatus = 'pending';
+            currentExpenses.adminApprovalAmount = 0;
+            currentExpenses.expenseItem = currentExpenses.expenseItem.map((item) => ({
+                ...item,
+                approvedAmount: 0,
+            }));
         }
 
+        setSurveyExpenses(survey, currentExpenses);
         await survey.save();
 
         const customer = survey.customer_id
@@ -1998,7 +2010,7 @@ exports.saveExtraExpenses = async (req, res) => {
 
         return res.status(200).json({
             message: 'Extra expenses saved successfully.',
-            ...formatExtraExpensesForResponse(survey),
+            ...formatExpensesForResponse(survey),
         });
     } catch (error) {
         console.error('Save extra expenses error:', error);
@@ -2028,41 +2040,52 @@ exports.approveExtraExpenses = async (req, res) => {
             return res.status(404).json({ message: 'Survey not found.' });
         }
 
-        if (!Array.isArray(survey.extraExpenses) || survey.extraExpenses.length === 0) {
+        const currentExpenses = getSurveyExpenses(survey);
+        if (!currentExpenses.expenseItem.length) {
             return res.status(400).json({ message: 'No extra expenses found for this survey.' });
         }
 
-        if (survey.adminApprovalStatus === 'approved') {
+        if (currentExpenses.adminExpenseApprovalStatus === 'approved') {
             return res.status(400).json({ message: 'Extra expenses are already approved for this survey.' });
         }
 
         const parsedApproval = parseExtraExpensesApprovalInput(
-            req.body.extraExpenses ?? req.body.extra_expenses ?? req.body.expenses
+            req.body.expenseItem ??
+                req.body.expenseItems ??
+                req.body.extraExpenses ??
+                req.body.extra_expenses ??
+                req.body.expenses
         );
 
-        if (!parsedApproval || parsedApproval.length !== survey.extraExpenses.length) {
+        if (!parsedApproval || parsedApproval.length !== currentExpenses.expenseItem.length) {
             return res.status(400).json({
-                message: 'extraExpenses approval payload must match the number of expense line items.',
+                message: 'expenseItem approval payload must match the number of expense line items.',
             });
         }
 
-        survey.extraExpenses = survey.extraExpenses.map((existing, index) => {
+        const expenseItem = currentExpenses.expenseItem.map((existing, index) => {
             const approved = parsedApproval[index];
             const submittedPrice = Number(existing.price) || 0;
             const approvedAmount = Number(approved?.approvedAmount) || 0;
 
             if (approvedAmount < 0) {
-                throw new Error(`Approved amount cannot be negative for "${existing.description || 'expense'}".`);
+                throw new Error(`Approved amount cannot be negative for "${existing.itemName || 'expense'}".`);
             }
 
             return {
-                description: String(existing.description || approved?.description || '').trim(),
+                itemName: String(existing.itemName || approved?.itemName || '').trim(),
                 price: submittedPrice,
                 approvedAmount,
             };
         });
-        survey.markModified('extraExpenses');
-        survey.adminApprovalStatus = 'approved';
+
+        const adminApprovalAmount = sumApprovedExtraExpenses(expenseItem);
+        setSurveyExpenses(survey, {
+            ...currentExpenses,
+            expenseItem,
+            adminApprovalAmount,
+            adminExpenseApprovalStatus: 'approved',
+        });
         await survey.save();
 
         const customer = survey.customer_id
@@ -2079,7 +2102,7 @@ exports.approveExtraExpenses = async (req, res) => {
 
         return res.status(200).json({
             message: 'Extra expenses approved successfully.',
-            ...formatExtraExpensesForResponse(survey),
+            ...formatExpensesForResponse(survey),
         });
     } catch (error) {
         console.error('Approve extra expenses error:', error);
@@ -2104,16 +2127,14 @@ exports.getExtraExpenses = async (req, res) => {
             return res.status(400).json({ message: 'survey_id is required.' });
         }
 
-        const survey = await Survey.findById(surveyId).select(
-            'extraExpenses extraExpensesTotalAmount uploadReceipts adminExpenseApprovalStatus surveyName customer_id'
-        );
+        const survey = await Survey.findById(surveyId).select('expenses surveyName customer_id extraExpensePayments');
         if (!survey) {
             return res.status(404).json({ message: 'Survey not found.' });
         }
 
         return res.status(200).json({
             message: 'Extra expenses retrieved successfully.',
-            ...formatExtraExpensesForResponse(survey),
+            ...formatExpensesForResponse(survey),
         });
     } catch (error) {
         console.error('Get extra expenses error:', error);

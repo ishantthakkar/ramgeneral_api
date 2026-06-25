@@ -59,6 +59,7 @@ const {
 const {
   getExtraExpensePayableTotals,
   addExtraExpensePayment,
+  getSurveyExpenses,
 } = require('../utils/extraExpenseHelpers');
 
 function mapUserSummary(user) {
@@ -2479,7 +2480,7 @@ exports.getCustomerPayableDetails = async (req, res) => {
       const survey = await Survey.findOne({
         _id: surveyId,
         customer_id: id,
-        adminApprovalStatus: 'approved',
+        'expenses.adminExpenseApprovalStatus': 'approved',
       });
 
       if (!survey) {
@@ -2490,8 +2491,8 @@ exports.getCustomerPayableDetails = async (req, res) => {
 
       const leadFields = flattenPopulatedLead(customer.leadId, customer);
       const totals = getExtraExpensePayableTotals(survey);
-      const extraExpenseItems = (survey.extraExpenses || []).map((item) => ({
-        description: item.description || '',
+      const extraExpenseItems = (getSurveyExpenses(survey).expenseItem || []).map((item) => ({
+        itemName: item.itemName || '',
         price: Number(item.price) || 0,
         approvedAmount: Number(item.approvedAmount) || 0,
       }));
@@ -2622,7 +2623,7 @@ exports.addCommissionPayment = async (req, res) => {
       const survey = await Survey.findOne({
         _id: surveyId,
         customer_id: id,
-        adminApprovalStatus: 'approved',
+        'expenses.adminExpenseApprovalStatus': 'approved',
       });
 
       if (!survey) {
@@ -2950,8 +2951,8 @@ exports.customerCommissionList = async (req, res) => {
     }
 
     const extraExpenseSurveys = await Survey.find({
-      adminApprovalStatus: 'approved',
-      'extraExpenses.0': { $exists: true },
+      'expenses.adminExpenseApprovalStatus': 'approved',
+      'expenses.expenseItem.0': { $exists: true },
     }).sort({ updatedAt: -1 });
 
     const extraExpenses = [];

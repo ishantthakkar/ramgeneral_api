@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 const { quotationFileFields } = require('../utils/quotationHelpers');
 const { coerceSurveyNotes, getRawSurveyNotes } = require('../utils/surveyNotes');
 const { coerceGenerateInvoice } = require('../utils/invoiceHelpers');
-const { coerceUploadReceipts } = require('../utils/extraExpenseHelpers');
+const { coerceSurveyExpensesForSave } = require('../utils/extraExpenseHelpers');
 
 const fixtureReportSchema = {
   installed_qty: { type: Number, default: 0 },
@@ -92,10 +92,24 @@ const materialDeliveryReturnSchema = {
   createdAt: { type: Date, default: Date.now },
 };
 
-const extraExpenseItemSchema = {
-  description: { type: String, trim: true, default: '' },
+const expenseItemSchema = {
+  itemName: { type: String, trim: true, default: '' },
   price: { type: Number, default: 0 },
   approvedAmount: { type: Number, default: 0 },
+};
+
+const expensesSchema = {
+  expenseItem: [expenseItemSchema],
+  notes: { type: String, trim: true, default: '' },
+  totalAmount: { type: Number, default: 0 },
+  adminExpenseApprovalStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending',
+    trim: true,
+  },
+  adminApprovalAmount: { type: Number, default: 0 },
+  receipt: [{ type: String, trim: true }],
 };
 
 const extraExpensePaymentSchema = {
@@ -247,16 +261,18 @@ const surveySchema = new mongoose.Schema({
   generateQuotation: [quotationFileFields],
   uploadSignedQuotation: [quotationFileFields],
   generateInvoice: { type: String, trim: true, default: '' },
-  extraExpenses: [extraExpenseItemSchema],
-  extraExpensesTotalAmount: { type: Number, default: 0 },
-  extraExpensePayments: [extraExpensePaymentSchema],
-  uploadReceipts: [{ type: String, trim: true }],
-  adminExpenseApprovalStatus: {
-    type: String,
-    enum: ['pending', 'approved', 'rejected'],
-    default: 'pending',
-    trim: true,
+  expenses: {
+    type: expensesSchema,
+    default: () => ({
+      expenseItem: [],
+      notes: '',
+      totalAmount: 0,
+      adminExpenseApprovalStatus: 'pending',
+      adminApprovalAmount: 0,
+      receipt: [],
+    }),
   },
+  extraExpensePayments: [extraExpensePaymentSchema],
 }, {
   timestamps: true,
 });
@@ -264,7 +280,7 @@ const surveySchema = new mongoose.Schema({
 surveySchema.pre('validate', function normalizeLegacySurveyFields(next) {
   this.set('notes', coerceSurveyNotes(getRawSurveyNotes(this)));
   this.set('generateInvoice', coerceGenerateInvoice(this.get('generateInvoice')));
-  this.set('uploadReceipts', coerceUploadReceipts(this.get('uploadReceipts')));
+  this.set('expenses', coerceSurveyExpensesForSave(this));
   next();
 });
 
