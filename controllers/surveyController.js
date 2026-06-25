@@ -1977,7 +1977,7 @@ exports.saveExtraExpenses = async (req, res) => {
         }
 
         if (shouldResetApprovalStatus) {
-            survey.adminApprovalStatus = 'pending';
+            survey.adminExpenseApprovalStatus = 'pending';
         }
 
         await survey.save();
@@ -2023,7 +2023,7 @@ exports.getExtraExpenses = async (req, res) => {
         }
 
         const survey = await Survey.findById(surveyId).select(
-            'extraExpenses extraExpensesTotalAmount uploadReceipts adminApprovalStatus surveyName customer_id'
+            'extraExpenses extraExpensesTotalAmount uploadReceipts adminExpenseApprovalStatus surveyName customer_id'
         );
         if (!survey) {
             return res.status(404).json({ message: 'Survey not found.' });

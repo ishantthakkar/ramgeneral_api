@@ -226,7 +226,7 @@ const surveySchema = new mongoose.Schema({
   extraExpenses: [extraExpenseItemSchema],
   extraExpensesTotalAmount: { type: Number, default: 0 },
   uploadReceipts: [{ type: String, trim: true }],
-  adminApprovalStatus: {
+  adminExpenseApprovalStatus: {
     type: String,
     enum: ['pending', 'approved', 'rejected'],
     default: 'pending',

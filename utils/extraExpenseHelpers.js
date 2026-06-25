@@ -76,7 +76,7 @@ function formatExtraExpensesForResponse(survey) {
     totalAmount: Number(surveyPlain.extraExpensesTotalAmount) || 0,
     uploadReceipts,
     uploadReceipt: uploadReceipts[0] || '',
-    adminApprovalStatus: surveyPlain.adminApprovalStatus || 'pending',
+    adminExpenseApprovalStatus: surveyPlain.adminExpenseApprovalStatus || 'pending',
   };
 }
 
