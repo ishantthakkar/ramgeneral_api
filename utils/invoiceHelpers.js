@@ -62,6 +62,13 @@ function surveyInvoiceDataFilter() {
   };
 }
 
+function surveyInvoiceEligibilityFilter() {
+  return {
+    inspectionStatus: 'verified',
+    quotationStatus: 'approved',
+  };
+}
+
 function applySurveyInvoiceStatusFilter(surveyFilter, statusFilter) {
   if (statusFilter === 'all') return;
 
@@ -92,6 +99,7 @@ module.exports = {
   generateUniqueInvoiceNumber,
   getGenerateInvoiceForSurvey,
   surveyInvoiceDataFilter,
+  surveyInvoiceEligibilityFilter,
   applySurveyInvoiceStatusFilter,
   attachInvoiceFieldsToSurvey,
   toInvoicePdfUrl,

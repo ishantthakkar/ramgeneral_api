@@ -16,8 +16,11 @@ function parseUnitPrice(area) {
 }
 
 function resolveSurveyDisplayName(survey) {
-  const surveyName = (survey.areaName || '').trim();
+  const surveyName = (survey.surveyName || '').trim();
   if (surveyName) return surveyName;
+
+  const areaName = (survey.areaName || '').trim();
+  if (areaName) return areaName;
 
   const areaNames = (survey.areas || [])
     .map((area) => {
@@ -101,20 +104,29 @@ function resolveSurveySalesPersonId(survey, customer) {
   return salesPerson;
 }
 
+function resolveSupervisorFromSalesUser(user) {
+  if (!user || typeof user !== 'object') return null;
+
+  const supervisor = user.reportsTo;
+  if (!supervisor) return null;
+
+  if (typeof supervisor === 'object' && supervisor._id) {
+    if (!supervisor.userRole || isSalesManagerRole(supervisor.userRole)) {
+      return supervisor;
+    }
+    return null;
+  }
+
+  return supervisor;
+}
+
 function resolveSurveySalesManagerUser(survey, customer) {
   const salesPerson = resolveSurveySalesPersonUser(survey, customer);
-  if (salesPerson && typeof salesPerson === 'object') {
-    const supervisor = salesPerson.reportsTo;
-    if (supervisor) {
-      if (typeof supervisor === 'object' && supervisor._id) {
-        if (!supervisor.userRole || isSalesManagerRole(supervisor.userRole)) {
-          return supervisor;
-        }
-      } else {
-        return supervisor;
-      }
-    }
-  }
+  const fromSalesPerson = resolveSupervisorFromSalesUser(salesPerson);
+  if (fromSalesPerson) return fromSalesPerson;
+
+  const fromCustomerUser = resolveSupervisorFromSalesUser(customer?.user_id);
+  if (fromCustomerUser) return fromCustomerUser;
 
   const lead = customer?.leadId;
   if (lead && typeof lead === 'object' && lead.assignedBy) {
@@ -251,6 +263,10 @@ function isProjectAdminApproved(customer) {
   return String(customer?.adminApproval || '').trim().toLowerCase() === 'approved';
 }
 
+function isQuotationApproved(survey) {
+  return String(survey?.quotationStatus || '').trim().toLowerCase() === 'approved';
+}
+
 function isInvoiceFullyPaid(survey) {
   const status = String(survey?.invoiceStatus || '').trim().toLowerCase();
   return status === 'fully_paid' || status === 'fully paid';
@@ -269,7 +285,7 @@ function getCommissionEligibleAmount(commissionType, totalAmount, customer, surv
 
   if (commissionType === 'Survey') {
     let eligible = 0;
-    if (isProjectAdminApproved(customer)) {
+    if (isQuotationApproved(survey)) {
       eligible += roundMoney(total * 0.5);
     }
     if (isInvoiceFullyPaid(survey)) {
@@ -286,19 +302,19 @@ function getCommissionMilestones(commissionType, totalAmount, customer, survey) 
 
   if (commissionType === 'Survey') {
     const half = roundMoney(total * 0.5);
-    const projectApproved = isProjectAdminApproved(customer);
+    const quotationApproved = isQuotationApproved(survey);
     const invoiceFullyPaid = isInvoiceFullyPaid(survey);
 
     return {
-      projectApproved,
+      projectApproved: quotationApproved,
       invoiceFullyPaid,
       schedule: [
         {
-          key: 'project_approval',
-          label: 'Project admin approval',
+          key: 'quotation_approved',
+          label: 'Quotation verified',
           share: '50%',
           amount: half,
-          unlocked: projectApproved,
+          unlocked: quotationApproved,
         },
         {
           key: 'invoice_paid',
@@ -548,7 +564,11 @@ async function syncPayablesForCustomer(customer) {
   const surveys = await Survey.find({ customer_id: customer._id })
     .populate('assignedTo', 'fullName email userRole')
     .populate('assignToContractor', 'fullName email userRole')
-    .populate('user_id', 'fullName email name')
+    .populate({
+      path: 'user_id',
+      select: 'fullName email name userRole',
+      populate: { path: 'reportsTo', select: 'fullName email userRole' },
+    })
     .sort({ createdAt: -1 });
 
   if (!surveys.length) return customer;

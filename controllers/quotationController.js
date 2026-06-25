@@ -6,7 +6,8 @@ const Survey = require('../models/Survey');
 const User = require('../models/User');
 const { createLog } = require('../utils/logger');
 const { isSalesManagerRole, isSalesPersonRole } = require('../constants/userRoles');
-const { enrichAreasWithProducts } = require('../utils/surveyProductUtils');
+const Product = require('../models/Product');
+const { enrichAreasWithProducts, flattenAreaFixtures } = require('../utils/surveyProductUtils');
 const {
   getQuotationAddresses,
   groupLineItemsByArea,
@@ -45,6 +46,64 @@ function getCompanyInfo() {
     address: process.env.COMPANY_ADDRESS || '245 East 17th Street Paterson, NJ 07524',
     phone: process.env.COMPANY_PHONE || '(123) 456 7890',
     email: process.env.COMPANY_EMAIL || 'ramgeneral@123.gmail.com',
+  };
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function findFixtureInSurvey(survey, fixtureId) {
+  const targetId = fixtureId?.toString();
+  if (!targetId) return null;
+
+  for (const area of survey.areas || []) {
+    for (const fixture of area.fixtures || []) {
+      if (fixture?._id?.toString() === targetId) {
+        return { area, fixture };
+      }
+    }
+  }
+
+  return null;
+}
+
+async function loadProductsBySkus(skus) {
+  const uniqueSkus = [...new Set(skus.map((sku) => sku.trim()).filter(Boolean))];
+  if (!uniqueSkus.length) return new Map();
+
+  const products = await Product.find({
+    $or: uniqueSkus.map((sku) => ({
+      sku: { $regex: new RegExp(`^${escapeRegex(sku)}$`, 'i') },
+    })),
+  }).lean();
+
+  const productMap = new Map();
+  for (const product of products) {
+    productMap.set(product.sku.toLowerCase(), product);
+  }
+  return productMap;
+}
+
+async function validateSurveyFixtureSkus(survey) {
+  const enrichedAreas = await enrichAreasWithProducts(survey.areas || []);
+  const fixtures = flattenAreaFixtures(enrichedAreas);
+  const missing = [];
+
+  fixtures.forEach((fixture, index) => {
+    const sku = (fixture.product?.sku || '').toString().trim();
+    if (!sku) {
+      missing.push({
+        index,
+        proposedFixture:
+          fixture.product?.name || fixture.existingFixtureType || `Fixture ${index + 1}`,
+      });
+    }
+  });
+
+  return {
+    ok: missing.length === 0,
+    missing,
   };
 }
 
@@ -664,6 +723,82 @@ exports.uploadQuotation = async (req, res) => {
   }
 };
 
+exports.updateQuotationFixtureSkus = async (req, res) => {
+  try {
+    const surveyId = req.body?.surveyId || req.body?.survey_id;
+    const fixtures = Array.isArray(req.body?.fixtures) ? req.body.fixtures : [];
+
+    if (!fixtures.length) {
+      return res.status(400).json({ message: 'At least one fixture SKU update is required.' });
+    }
+
+    const surveyResult = await resolveSurveyById(surveyId, { requireAreas: true });
+    if (surveyResult.error) {
+      return res.status(404).json({ message: surveyResult.error });
+    }
+
+    const { survey } = surveyResult;
+
+    if (survey.quotationStatus === 'approved') {
+      return res.status(400).json({ message: 'Cannot update fixture SKUs on an approved quotation.' });
+    }
+
+    const skuValues = fixtures
+      .map((item) => (item?.sku ?? '').toString().trim())
+      .filter(Boolean);
+    const productMap = await loadProductsBySkus(skuValues);
+    const errors = [];
+    let updatedCount = 0;
+
+    for (const item of fixtures) {
+      const fixtureId = (item?.fixtureId ?? item?.fixture_id ?? '').toString().trim();
+      const sku = (item?.sku ?? '').toString().trim();
+
+      if (!fixtureId || !sku) {
+        errors.push('Each fixture update requires fixtureId and sku.');
+        continue;
+      }
+
+      const located = findFixtureInSurvey(survey, fixtureId);
+      if (!located) {
+        errors.push(`Fixture ${fixtureId} was not found on this survey.`);
+        continue;
+      }
+
+      const product = productMap.get(sku.toLowerCase());
+      if (!product) {
+        errors.push(`No product found for SKU "${sku}".`);
+        continue;
+      }
+
+      located.fixture.product_id = product._id;
+      updatedCount += 1;
+    }
+
+    if (!updatedCount) {
+      return res.status(400).json({
+        message: errors[0] || 'No fixture SKUs were updated.',
+        errors,
+      });
+    }
+
+    await survey.save();
+
+    const skuValidation = await validateSurveyFixtureSkus(survey);
+
+    return res.status(200).json({
+      message: 'Fixture SKUs updated successfully.',
+      survey_id: survey._id,
+      updatedCount,
+      allSkusSet: skuValidation.ok,
+      errors: errors.length ? errors : undefined,
+    });
+  } catch (error) {
+    console.error('Update quotation fixture SKUs error:', error);
+    return res.status(500).json({ message: 'Server error updating fixture SKUs.' });
+  }
+};
+
 exports.approveQuotation = async (req, res) => {
   try {
     const surveyId = req.body?.surveyId || req.body?.survey_id;
@@ -703,6 +838,20 @@ exports.approveQuotation = async (req, res) => {
 
     if (survey.quotationStatus === 'approved') {
       return res.status(400).json({ message: 'Quotation is already approved for this survey.' });
+    }
+
+    const skuValidation = await validateSurveyFixtureSkus(survey);
+    if (!skuValidation.ok) {
+      const labels = skuValidation.missing
+        .map((item) => item.proposedFixture)
+        .filter(Boolean)
+        .join(', ');
+      return res.status(400).json({
+        message: labels
+          ? `Set a valid SKU for all proposed fixtures before verifying (${labels}).`
+          : 'Set a valid SKU for all proposed fixtures before verifying.',
+        missingSkus: skuValidation.missing,
+      });
     }
 
     const approvedAt = new Date();

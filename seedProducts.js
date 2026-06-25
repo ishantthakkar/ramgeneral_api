@@ -26,7 +26,11 @@ const seedProducts = async () => {
     for (const item of SAMPLE_PRODUCTS) {
       const exists = await Product.findOne({ sku: item.sku });
       if (!exists) {
-        await Product.create(item);
+        await Product.create({
+          ...item,
+          agentCommission: item.commission,
+          managerCommission: Math.round(item.commission * 0.4 * 100) / 100,
+        });
         inserted += 1;
       }
     }

@@ -6,6 +6,7 @@ const {
   generateUniqueInvoiceNumber,
   getGenerateInvoiceForSurvey,
   surveyInvoiceDataFilter,
+  surveyInvoiceEligibilityFilter,
   applySurveyInvoiceStatusFilter,
   attachInvoiceFieldsToSurvey,
   toInvoicePdfUrl,
@@ -20,6 +21,11 @@ const {
 
 const API_BASE_URL = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
 
+function resolveCustomerLeadId(customer) {
+  const lead = customer?.leadId && typeof customer.leadId === 'object' ? customer.leadId : null;
+  return (lead?.lead_id || '').toString().trim();
+}
+
 function buildSurveyInvoicesList(surveys, customerMap) {
   return surveys.map((survey) => {
     const customer = customerMap.get(survey.customer_id?.toString());
@@ -28,10 +34,12 @@ function buildSurveyInvoicesList(surveys, customerMap) {
     return {
       customerId: survey.customer_id,
       customerName: getCustomerDisplayName(customer),
+      lead_id: resolveCustomerLeadId(customer),
       survey_id: survey._id,
       surveyName: (survey.surveyName || survey.areaName || '').trim(),
       invoiceNumber: survey.invoiceNumber || '',
       invoiceStatus: survey.invoiceStatus || 'pending',
+      invoiceDate: invoiceFilename ? survey.invoiceGeneratedAt || survey.updatedAt || null : null,
       generateInvoice: invoiceFilename ? toInvoicePdfUrl(invoiceFilename) : '',
     };
   });
@@ -62,13 +70,15 @@ async function fetchSurveyInvoicesList(req) {
     Object.assign(surveyFilter, surveyInvoiceDataFilter());
   }
 
+  Object.assign(surveyFilter, surveyInvoiceEligibilityFilter());
+
   applySurveyInvoiceStatusFilter(surveyFilter, statusFilter);
 
   if (scope.restrictToCustomers) {
     const customers = await Customer.find(scope.customerFilter)
-      .select('name company accountNumber user_id leadId')
+      .select('name company accountNumber customerCode user_id leadId')
       .populate('user_id', 'fullName email mobileNumber userRole')
-      .populate('leadId', 'leadName name')
+      .populate('leadId', 'lead_id leadName name')
       .lean();
 
     const customerIds = customers.map((c) => c._id);
@@ -81,16 +91,18 @@ async function fetchSurveyInvoicesList(req) {
   }
 
   const surveys = await Survey.find(surveyFilter)
-    .select('customer_id surveyName areaName status generateInvoice invoiceNumber invoiceStatus')
+    .select(
+      'customer_id surveyName areaName status generateInvoice invoiceNumber invoiceStatus invoiceGeneratedAt updatedAt'
+    )
     .sort({ updatedAt: -1 })
     .lean();
 
   if (!scope.restrictToCustomers && surveys.length) {
     const customerIds = [...new Set(surveys.map((s) => s.customer_id?.toString()).filter(Boolean))];
     const customers = await Customer.find({ _id: { $in: customerIds } })
-      .select('name company accountNumber user_id leadId')
+      .select('name company accountNumber customerCode user_id leadId')
       .populate('user_id', 'fullName email mobileNumber userRole')
-      .populate('leadId', 'leadName name')
+      .populate('leadId', 'lead_id leadName name')
       .lean();
     customerMap = new Map(customers.map((c) => [c._id.toString(), c]));
   }
@@ -134,7 +146,7 @@ exports.previewInvoice = async (req, res) => {
 
     const customer = await Customer.findById(survey.customer_id)
       .populate('user_id', 'fullName mobileNumber email')
-      .populate('leadId', 'leadName name')
+      .populate('leadId', 'lead_id leadName name')
       .lean();
 
     if (!customer) {
@@ -172,11 +184,24 @@ exports.createInvoice = async (req, res) => {
     }
 
     const { survey } = surveyResult;
+
+    if (String(survey.inspectionStatus || '').toLowerCase() !== 'verified') {
+      return res.status(400).json({
+        message: 'Inspection must be approved by admin before generating an invoice.',
+      });
+    }
+
+    if (String(survey.quotationStatus || '').toLowerCase() !== 'approved') {
+      return res.status(400).json({
+        message: 'Quotation must be approved before generating an invoice.',
+      });
+    }
+
     const customerId = survey.customer_id;
 
     const customer = await Customer.findById(customerId)
       .populate('user_id', 'fullName mobileNumber email')
-      .populate('leadId', 'leadName name')
+      .populate('leadId', 'lead_id leadName name')
       .lean();
 
     if (!customer) {
@@ -205,6 +230,7 @@ exports.createInvoice = async (req, res) => {
     const { filename, relativePath } = await saveInvoicePdf(pdfBuffer, survey._id);
     const pdfUrl = `${API_BASE_URL}/${relativePath}`;
 
+    const generatedAt = new Date();
     const updatedSurvey = await Survey.findByIdAndUpdate(
       survey._id,
       {
@@ -212,6 +238,7 @@ exports.createInvoice = async (req, res) => {
           invoiceNumber,
           generateInvoice: filename,
           invoiceStatus: 'approved',
+          invoiceGeneratedAt: generatedAt,
         },
       },
       { new: true }
@@ -309,7 +336,7 @@ exports.getSurveyInvoiceDetails = async (req, res) => {
 
     const customer = await Customer.findById(survey.customer_id)
       .populate('user_id', 'fullName mobileNumber email')
-      .populate('leadId', 'leadName name')
+      .populate('leadId', 'lead_id leadName name')
       .lean();
 
     if (!customer) {
@@ -328,8 +355,14 @@ exports.getSurveyInvoiceDetails = async (req, res) => {
       message: 'Survey invoice details retrieved successfully.',
       survey_id: survey._id,
       customerId: survey.customer_id,
+      customerName: getCustomerDisplayName(customer),
+      lead_id: resolveCustomerLeadId(customer),
+      surveyName: (survey.surveyName || survey.areaName || '').trim(),
       invoiceNumber: invoiceFields.invoiceNumber,
       invoiceStatus: invoiceFields.invoiceStatus,
+      invoiceDate: invoiceFields.generateInvoice
+        ? survey.invoiceGeneratedAt || survey.updatedAt || null
+        : null,
       generateInvoice: invoiceFields.generateInvoice,
       estimate,
     });

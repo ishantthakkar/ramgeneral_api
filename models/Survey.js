@@ -95,6 +95,29 @@ const materialDeliveryReturnSchema = {
 const extraExpenseItemSchema = {
   description: { type: String, trim: true, default: '' },
   price: { type: Number, default: 0 },
+  approvedAmount: { type: Number, default: 0 },
+};
+
+const extraExpensePaymentSchema = {
+  amount: { type: Number, required: true, min: 0 },
+  paymentMethod: {
+    type: String,
+    enum: [
+      'Cash',
+      'ACH Transfer',
+      'Wire Transfer',
+      'Check',
+      'Credit Card',
+      'Debit Card',
+      'PayPal',
+      'Stripe',
+      'Other',
+    ],
+    trim: true,
+  },
+  note: { type: String, trim: true, default: '' },
+  paymentDate: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now },
 };
 
 const surveySchema = new mongoose.Schema({
@@ -210,6 +233,7 @@ const surveySchema = new mongoose.Schema({
     trim: true,
   },
   invoicePaidAt: { type: Date },
+  invoiceGeneratedAt: { type: Date },
   confirmDate: { type: Date },
   job_id: {
     type: String,
@@ -225,6 +249,7 @@ const surveySchema = new mongoose.Schema({
   generateInvoice: { type: String, trim: true, default: '' },
   extraExpenses: [extraExpenseItemSchema],
   extraExpensesTotalAmount: { type: Number, default: 0 },
+  extraExpensePayments: [extraExpensePaymentSchema],
   uploadReceipts: [{ type: String, trim: true }],
   adminApprovalStatus: {
     type: String,

@@ -31,6 +31,8 @@ const { formatAddressForResponse, formatContactForResponse } = require('../utils
 const {
     parseExtraExpensesInput,
     sumExtraExpenses,
+    sumApprovedExtraExpenses,
+    parseExtraExpensesApprovalInput,
     coerceUploadReceipts,
     toReceiptUrl,
     formatUploadReceiptsForResponse,
@@ -2003,6 +2005,86 @@ exports.saveExtraExpenses = async (req, res) => {
         return res.status(500).json({
             message: 'Server error saving extra expenses.',
             error: error.message,
+        });
+    }
+};
+
+exports.approveExtraExpenses = async (req, res) => {
+    try {
+        const user_id = req.user.id;
+        const surveyId = normalizeFormFieldValue(req.body.survey_id ?? req.body.surveyId);
+
+        if (!surveyId) {
+            return res.status(400).json({ message: 'survey_id is required.' });
+        }
+
+        const admin = await Admin.findById(user_id).select('_id').lean();
+        if (!admin) {
+            return res.status(403).json({ message: 'Only admins can approve extra expenses.' });
+        }
+
+        const survey = await Survey.findById(surveyId);
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found.' });
+        }
+
+        if (!Array.isArray(survey.extraExpenses) || survey.extraExpenses.length === 0) {
+            return res.status(400).json({ message: 'No extra expenses found for this survey.' });
+        }
+
+        if (survey.adminApprovalStatus === 'approved') {
+            return res.status(400).json({ message: 'Extra expenses are already approved for this survey.' });
+        }
+
+        const parsedApproval = parseExtraExpensesApprovalInput(
+            req.body.extraExpenses ?? req.body.extra_expenses ?? req.body.expenses
+        );
+
+        if (!parsedApproval || parsedApproval.length !== survey.extraExpenses.length) {
+            return res.status(400).json({
+                message: 'extraExpenses approval payload must match the number of expense line items.',
+            });
+        }
+
+        survey.extraExpenses = survey.extraExpenses.map((existing, index) => {
+            const approved = parsedApproval[index];
+            const submittedPrice = Number(existing.price) || 0;
+            const approvedAmount = Number(approved?.approvedAmount) || 0;
+
+            if (approvedAmount < 0) {
+                throw new Error(`Approved amount cannot be negative for "${existing.description || 'expense'}".`);
+            }
+
+            return {
+                description: String(existing.description || approved?.description || '').trim(),
+                price: submittedPrice,
+                approvedAmount,
+            };
+        });
+        survey.markModified('extraExpenses');
+        survey.adminApprovalStatus = 'approved';
+        await survey.save();
+
+        const customer = survey.customer_id
+            ? await Customer.findById(survey.customer_id).select('name')
+            : null;
+
+        await createLog(
+            'Survey Extra Expenses Approved',
+            user_id,
+            customer?.name || survey.surveyName || 'Survey',
+            'Survey',
+            survey._id
+        );
+
+        return res.status(200).json({
+            message: 'Extra expenses approved successfully.',
+            ...formatExtraExpensesForResponse(survey),
+        });
+    } catch (error) {
+        console.error('Approve extra expenses error:', error);
+        return res.status(500).json({
+            message: error.message || 'Server error approving extra expenses.',
         });
     }
 };

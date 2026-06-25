@@ -90,6 +90,11 @@ router.post(
   ]),
   surveyController.saveExtraExpenses
 );
+router.post(
+  '/surveys/extra-expenses/approve',
+  verifyToken,
+  surveyController.approveExtraExpenses
+);
 router.get('/surveys/extra-expenses', verifyToken, surveyController.getExtraExpenses);
 router.get('/surveys/:id/extra-expenses', verifyToken, surveyController.getExtraExpenses);
 router.post('/surveys/mark-completed', verifyToken, surveyController.markSurveyCompleted);

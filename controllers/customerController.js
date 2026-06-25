@@ -56,6 +56,10 @@ const {
   resolvePayableAmount,
   getCommissionMilestones,
 } = require('../utils/payablesUtils');
+const {
+  getExtraExpensePayableTotals,
+  addExtraExpensePayment,
+} = require('../utils/extraExpenseHelpers');
 
 function mapUserSummary(user) {
   if (!user) return null;
@@ -2466,6 +2470,60 @@ exports.getCustomerPayableDetails = async (req, res) => {
       return res.status(404).json({ message: 'Customer not found.' });
     }
 
+    const payableForRaw = String(payableFor || '').trim().toLowerCase();
+    if (payableForRaw === 'extra-expenses' || payableForRaw === 'extra expenses') {
+      if (!surveyId || !mongoose.Types.ObjectId.isValid(surveyId)) {
+        return res.status(400).json({ message: 'Valid surveyId is required.' });
+      }
+
+      const survey = await Survey.findOne({
+        _id: surveyId,
+        customer_id: id,
+        adminApprovalStatus: 'approved',
+      });
+
+      if (!survey) {
+        return res.status(404).json({
+          message: 'No admin-approved extra expenses found for this survey.',
+        });
+      }
+
+      const leadFields = flattenPopulatedLead(customer.leadId, customer);
+      const totals = getExtraExpensePayableTotals(survey);
+      const extraExpenseItems = (survey.extraExpenses || []).map((item) => ({
+        description: item.description || '',
+        price: Number(item.price) || 0,
+        approvedAmount: Number(item.approvedAmount) || 0,
+      }));
+
+      return res.status(200).json({
+        message: 'Extra expense payable details retrieved successfully.',
+        details: {
+          customerId: customer._id,
+          surveyId: survey._id,
+          commissionId: null,
+          legalName: customer.legalName || customer.name || '',
+          commission: totals.approvedTotal,
+          eligible: totals.approvedTotal,
+          paid: totals.paid,
+          pending: totals.pending,
+          locked: 0,
+          balance: totals.balance,
+          milestones: null,
+          leadId: leadFields.lead_id || '',
+          leadSource: customer.leadSource || '',
+          quotationNumber: '—',
+          quotationAmount: 0,
+          surveyName: (survey.surveyName || '').trim(),
+          jobNo: survey.job_id || '—',
+          extraExpenses: extraExpenseItems,
+          payments: (survey.extraExpensePayments || []).map((payment) =>
+            payment?.toObject ? payment.toObject() : payment
+          ),
+        },
+      });
+    }
+
     let survey = null;
     if (surveyId && mongoose.Types.ObjectId.isValid(surveyId)) {
       survey = await Survey.findOne({
@@ -2557,6 +2615,63 @@ exports.addCommissionPayment = async (req, res) => {
     const customer = await Customer.findById(id);
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const payableForRaw = String(payableFor || '').trim().toLowerCase();
+    if (payableForRaw === 'extra-expenses' || payableForRaw === 'extra expenses') {
+      const survey = await Survey.findOne({
+        _id: surveyId,
+        customer_id: id,
+        adminApprovalStatus: 'approved',
+      });
+
+      if (!survey) {
+        return res.status(404).json({
+          message: 'No admin-approved extra expenses found for this survey.',
+        });
+      }
+
+      const totals = await addExtraExpensePayment(survey, {
+        amount,
+        paymentMethod,
+        paymentDate,
+        note,
+      });
+
+      await createLog(
+        'Extra Expense Payment Added',
+        req.user.id,
+        customer.name,
+        'Customer',
+        customer._id
+      );
+
+      const populatedCustomer = await Customer.findById(id).populate(
+        'leadId',
+        LEAD_FIELDS_FOR_POPULATE
+      );
+      const leadFields = flattenPopulatedLead(populatedCustomer.leadId, populatedCustomer);
+
+      return res.status(200).json({
+        message: 'Extra expense payment added successfully.',
+        details: {
+          customerId: customer._id,
+          surveyId: survey._id,
+          commission: totals.approvedTotal,
+          eligible: totals.approvedTotal,
+          paid: totals.paid,
+          pending: totals.pending,
+          locked: 0,
+          balance: totals.balance,
+          leadId: leadFields.lead_id || '',
+          quotationNumber: '—',
+          quotationAmount: 0,
+          surveyName: (survey.surveyName || '').trim(),
+          payments: (survey.extraExpensePayments || []).map((payment) =>
+            payment?.toObject ? payment.toObject() : payment
+          ),
+        },
+      });
     }
 
     const result = await addPaymentToCommission(customer, {
@@ -2660,7 +2775,11 @@ exports.customerCommissionList = async (req, res) => {
     const approvedSurveys = await Survey.find({ quotationStatus: 'approved' })
       .populate('assignedTo', 'fullName email userRole')
       .populate('assignToContractor', 'fullName email userRole')
-      .populate('user_id', 'fullName email name')
+      .populate({
+        path: 'user_id',
+        select: 'fullName email name userRole',
+        populate: { path: 'reportsTo', select: 'fullName email userRole' },
+      })
       .sort({
         quotationApprovedAt: -1,
         createdAt: -1,
@@ -2678,10 +2797,12 @@ exports.customerCommissionList = async (req, res) => {
         salesPersons: [],
         salesManagers: [],
         contractors: [],
+        extraExpenses: [],
         overallSummary: {
           salesPersons: { totalCommission: 0, totalPaid: 0, totalPending: 0 },
           salesManagers: { totalCommission: 0, totalPaid: 0, totalPending: 0 },
           contractors: { totalCommission: 0, totalPaid: 0, totalPending: 0 },
+          extraExpenses: { totalApproved: 0, totalPaid: 0, totalPending: 0 },
         },
       });
     }
@@ -2828,11 +2949,66 @@ exports.customerCommissionList = async (req, res) => {
       }
     }
 
+    const extraExpenseSurveys = await Survey.find({
+      adminApprovalStatus: 'approved',
+      'extraExpenses.0': { $exists: true },
+    }).sort({ updatedAt: -1 });
+
+    const extraExpenses = [];
+    let extraTotalApproved = 0;
+    let extraTotalPaid = 0;
+    let extraTotalPending = 0;
+
+    if (extraExpenseSurveys.length) {
+      const extraCustomerIds = [
+        ...new Set(
+          extraExpenseSurveys.map((survey) => survey.customer_id?.toString()).filter(Boolean)
+        ),
+      ];
+      const extraCustomers = await Customer.find({ _id: { $in: extraCustomerIds } })
+        .populate('leadId', 'lead_id leadName dba')
+        .lean();
+      const extraCustomerMap = new Map(
+        extraCustomers.map((customer) => [customer._id.toString(), customer])
+      );
+
+      for (const survey of extraExpenseSurveys) {
+        const customerKey = survey.customer_id?.toString();
+        if (!customerKey) continue;
+
+        const customer = extraCustomerMap.get(customerKey);
+        if (!customer) continue;
+
+        const totals = getExtraExpensePayableTotals(survey);
+        const lead = customer.leadId && typeof customer.leadId === 'object' ? customer.leadId : null;
+        const leadId = (lead?.lead_id || '').toString().trim();
+        const surveyId = survey._id.toString();
+
+        extraExpenses.push({
+          id: `${customerKey}-${surveyId}-extra`,
+          customerId: customerKey,
+          surveyId,
+          leadId,
+          legalName: customer.legalName || customer.name || '',
+          surveyName: (survey.surveyName || survey.areaName || '').trim(),
+          jobNo: survey.job_id || '—',
+          approvedAmount: totals.approvedTotal,
+          paid: totals.paid,
+          pending: totals.pending,
+        });
+
+        extraTotalApproved += totals.approvedTotal;
+        extraTotalPaid += totals.paid;
+        extraTotalPending += totals.pending;
+      }
+    }
+
     return res.status(200).json({
       message: 'Quotation-approved payables retrieved successfully.',
       salesPersons,
       salesManagers,
       contractors,
+      extraExpenses,
       overallSummary: {
         salesPersons: {
           totalCommission: salesTotalCommission,
@@ -2848,6 +3024,11 @@ exports.customerCommissionList = async (req, res) => {
           totalCommission: contractorTotalCommission,
           totalPaid: contractorTotalPaid,
           totalPending: contractorTotalPending,
+        },
+        extraExpenses: {
+          totalApproved: extraTotalApproved,
+          totalPaid: extraTotalPaid,
+          totalPending: extraTotalPending,
         },
       },
     });
@@ -3335,7 +3516,7 @@ exports.updateInspectionStatus = async (req, res) => {
 
     const nextStatus = requestedStatus === 'verified' ? 'verified' : 'submitted';
     const updateFields = {
-      inspectionStatus: 'submitted',
+      inspectionStatus: nextStatus,
       inspectionDate: new Date(),
     };
 
