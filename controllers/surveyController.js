@@ -161,10 +161,22 @@ const mapSurveyImageUrls = (surveyObj) => {
         const formatted = formatExpensesForResponse({ expenses: surveyObj.expenses });
         surveyObj.expenses = formatted.expenses;
     }
-    delete surveyObj.extraExpenses;
-    delete surveyObj.extraExpensesTotalAmount;
-    delete surveyObj.uploadReceipts;
-    delete surveyObj.adminExpenseApprovalStatus;
+    // Backwards/forwards compatibility:
+    // - Newer admin UI expects `extraExpenses`, `adminApprovalStatus`, `uploadReceipts`
+    // - Backend canonical storage is `expenses` (with `expenseItem[]` and `adminExpenseApprovalStatus`)
+    const expenses = surveyObj.expenses;
+    if (expenses && typeof expenses === 'object') {
+        const items = Array.isArray(expenses.expenseItem) ? expenses.expenseItem : [];
+        surveyObj.extraExpenses = items.map((item) => ({
+            description: String(item?.itemName || '').trim(),
+            price: Number(item?.price) || 0,
+            approvedAmount: Number(item?.approvedAmount) || 0,
+        }));
+        surveyObj.extraExpensesTotalAmount = Number(expenses.totalAmount) || 0;
+        surveyObj.adminApprovalStatus = String(expenses.adminExpenseApprovalStatus || 'pending');
+        surveyObj.uploadReceipts = Array.isArray(expenses.receipt) ? expenses.receipt : [];
+        surveyObj.adminExpenseApprovalStatus = surveyObj.adminApprovalStatus;
+    }
     return surveyObj;
 };
 
