@@ -358,11 +358,17 @@ async function generatePdfBuffer(data) {
       40,
       y + 12
     );
-    if (data.surveyName) {
-      doc.fillColor(ORANGE).fontSize(8).font('Helvetica-Bold').text('SURVEY NAME', 40 + colWidth + 20, y);
-      doc.fillColor(TEXT_DARK).fontSize(10).font('Helvetica-Bold').text(data.surveyName, 40 + colWidth + 20, y + 12, {
-        width: colWidth,
-      });
+    const isInvoiceMetaRow = data.documentType === 'invoice';
+    if (isInvoiceMetaRow) {
+      const jobIdValue = (data.job_id ?? data.jobId ?? '').toString().trim();
+      doc.fillColor(ORANGE)
+        .fontSize(8)
+        .font('Helvetica-Bold')
+        .text('JOB ID', 40 + colWidth + 20, y);
+      doc.fillColor(TEXT_DARK)
+        .fontSize(10)
+        .font('Helvetica-Bold')
+        .text(jobIdValue || '—', 40 + colWidth + 20, y + 12, { width: colWidth });
     }
 
     y += 34;

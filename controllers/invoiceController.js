@@ -198,6 +198,7 @@ exports.createInvoice = async (req, res) => {
       documentType: 'invoice',
       invoiceNumber,
       quotationNumber,
+      job_id: survey.job_id || '',
     };
 
     const pdfBuffer = await generatePdfBuffer(pdfData);

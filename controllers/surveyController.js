@@ -25,6 +25,7 @@ const { buildFixtureTypeFilter } = require('../utils/productUtils');
 const {
     LEAD_FIELDS_FOR_POPULATE,
     stripCustomerLogFields,
+    syncLeadFieldsFromBody,
 } = require('../utils/customerLeadHelpers');
 const { formatAddressForResponse, formatContactForResponse } = require('../utils/subdocumentHelpers');
 const {
@@ -878,7 +879,19 @@ const processUploadedImages = async (files) => {
 exports.createNewSurvey = async (req, res) => {
     try {
         const user_id = req.user.id;
-        const { customer_id, surveyName } = req.body;
+        const {
+            customer_id,
+            surveyName,
+            survey_name,
+            surveyType,
+            survey_type,
+            electricCompany,
+            electric_company,
+        } = req.body;
+        const name = surveyName !== undefined ? surveyName : survey_name;
+        const typeValue = surveyType !== undefined ? surveyType : survey_type;
+        const electricCompanyValue =
+            electricCompany !== undefined ? electricCompany : electric_company;
 
         if (!customer_id) {
             return res.status(400).json({ message: 'customer_id is required.' });
@@ -889,20 +902,47 @@ exports.createNewSurvey = async (req, res) => {
             return res.status(404).json({ message: 'Customer not found.' });
         }
 
+        let normalizedSurveyType = 'direct';
+        if (typeValue !== undefined && typeValue !== null && String(typeValue).trim()) {
+            normalizedSurveyType = String(typeValue).trim().toLowerCase();
+            if (!['direct', 'utility'].includes(normalizedSurveyType)) {
+                return res.status(400).json({ message: 'Invalid surveyType. Allowed: direct, utility.' });
+            }
+        }
+
         const survey = await Survey.create({
             customer_id,
             user_id,
-            surveyName: surveyName || '',
+            surveyName: name !== undefined && name !== null ? String(name).trim() : '',
+            surveyType: normalizedSurveyType,
             editApprovalStatus: 'none',
             status: 'in_progress',
-            areas: []
+            areas: [],
         });
+
+        let savedElectricCompany;
+        if (electricCompanyValue !== undefined) {
+            customer.electricCompany =
+                electricCompanyValue === null ? '' : String(electricCompanyValue).trim();
+            await customer.save();
+            await syncLeadFieldsFromBody(customer, {
+                electricCompany: customer.electricCompany,
+            });
+            savedElectricCompany = customer.electricCompany;
+        }
 
         await createLog('Survey Created', user_id, customer.name, 'Survey', survey._id);
 
         const surveyResponse = await formatSurveyResponse(survey.toObject());
-        return res.status(201).json({ survey: surveyResponse, message: 'Survey created successfully.' });
+        if (savedElectricCompany !== undefined) {
+            surveyResponse.electricCompany = savedElectricCompany;
+        }
 
+        return res.status(201).json({
+            survey: surveyResponse,
+            message: 'Survey created successfully.',
+            ...(savedElectricCompany !== undefined ? { electricCompany: savedElectricCompany } : {}),
+        });
     } catch (error) {
         console.error('Create new survey error:', error);
         return res.status(500).json({ message: 'Server error creating survey.' });
