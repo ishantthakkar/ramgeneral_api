@@ -55,11 +55,17 @@ const {
   resolveSurveySalesManagerName,
   resolvePayableAmount,
   getCommissionMilestones,
+  hasApprovedExtraExpenses,
+  getExtraExpenseItemsForResponse,
+  getApprovedExtraExpenseEntriesForResponse,
+  getCombinedContractorTotals,
+  mergeContractorPayments,
+  addContractorCombinedPayment,
+  isPayableSurvey,
+  roundMoney,
 } = require('../utils/payablesUtils');
 const {
   getExtraExpensePayableTotals,
-  addExtraExpensePayment,
-  getSurveyExpensesList,
 } = require('../utils/extraExpenseHelpers');
 
 function mapUserSummary(user) {
@@ -2471,56 +2477,69 @@ exports.getCustomerPayableDetails = async (req, res) => {
       return res.status(404).json({ message: 'Customer not found.' });
     }
 
-    const payableForRaw = String(payableFor || '').trim().toLowerCase();
-    if (payableForRaw === 'extra-expenses' || payableForRaw === 'extra expenses') {
+    const type = normalizePayableFor(payableFor);
+
+    if (type === 'Installation') {
       if (!surveyId || !mongoose.Types.ObjectId.isValid(surveyId)) {
         return res.status(400).json({ message: 'Valid surveyId is required.' });
       }
 
-      const survey = await Survey.findOne({
-        _id: surveyId,
-        customer_id: id,
-        'expenses.adminExpenseApprovalStatus': 'approved',
-      });
-
+      const survey = await Survey.findOne({ _id: surveyId, customer_id: id });
       if (!survey) {
-        return res.status(404).json({
-          message: 'No admin-approved extra expenses found for this survey.',
-        });
+        return res.status(404).json({ message: 'Survey not found for this customer.' });
+      }
+
+      const hasInstallation = isPayableSurvey(survey);
+      const hasExtra = hasApprovedExtraExpenses(survey);
+      if (!hasInstallation && !hasExtra) {
+        return res.status(404).json({ message: 'No contractor payables found for this survey.' });
+      }
+
+      const before = JSON.stringify(customer.commissions || []);
+      if (hasInstallation) {
+        await syncPayablesForCustomer(customer);
+        if (before !== JSON.stringify(customer.commissions || [])) {
+          await customer.save();
+        }
       }
 
       const leadFields = flattenPopulatedLead(customer.leadId, customer);
-      const totals = getExtraExpensePayableTotals(survey);
-      const extraExpenseItems = (getSurveyExpensesList(survey).flatMap((e) => e.expenseItem || []) || []).map((item) => ({
-        itemName: item.itemName || '',
-        price: Number(item.price) || 0,
-        approvedAmount: Number(item.approvedAmount) || 0,
-      }));
+      const payables = hasInstallation ? await calculateSurveyPayables(survey, customer) : null;
+      const combined = getCombinedContractorTotals(customer, survey, payables);
+      const record = hasInstallation ? findCommissionRecord(customer, survey._id, 'Installation') : null;
+      const milestones = hasInstallation
+        ? getCommissionMilestones('Installation', combined.installation.amount, customer, survey)
+        : { projectApproved: false, invoiceFullyPaid: false, schedule: [] };
 
       return res.status(200).json({
-        message: 'Extra expense payable details retrieved successfully.',
+        message: 'Contractor payable details retrieved successfully.',
         details: {
           customerId: customer._id,
           surveyId: survey._id,
-          commissionId: null,
+          commissionId: record?._id || null,
           legalName: customer.legalName || customer.name || '',
-          commission: totals.approvedTotal,
-          eligible: totals.approvedTotal,
-          paid: totals.paid,
-          pending: totals.pending,
-          locked: 0,
-          balance: totals.balance,
-          milestones: null,
+          commission: combined.commission,
+          eligible: combined.eligible,
+          paid: combined.paid,
+          pending: combined.pending,
+          locked: combined.locked,
+          balance: combined.balance,
+          installationCommission: combined.installation.amount,
+          installationPaid: combined.installation.paid,
+          installationPending: combined.installation.pending,
+          extraExpensesTotal: combined.extraExpenses.approvedTotal,
+          extraExpensesPaid: combined.extraExpenses.paid,
+          extraExpensesPending: combined.extraExpenses.pending,
+          milestones,
           leadId: leadFields.lead_id || '',
           leadSource: customer.leadSource || '',
-          quotationNumber: '—',
-          quotationAmount: 0,
-          surveyName: (survey.surveyName || '').trim(),
+          quotationNumber: payables?.quotationNumber || '—',
+          quotationAmount: payables?.quotationAmount || 0,
+          surveyName: payables?.surveyName || (survey.surveyName || '').trim(),
           jobNo: survey.job_id || '—',
-          extraExpenses: extraExpenseItems,
-          payments: (survey.extraExpensePayments || []).map((payment) =>
-            payment?.toObject ? payment.toObject() : payment
-          ),
+          extraExpenses: getExtraExpenseItemsForResponse(survey),
+          approvedExtraExpenseEntries: getApprovedExtraExpenseEntriesForResponse(survey),
+          payments: mergeContractorPayments(record, survey),
         },
       });
     }
@@ -2544,7 +2563,6 @@ exports.getCustomerPayableDetails = async (req, res) => {
       return res.status(404).json({ message: 'No quotation-approved survey found for this customer.' });
     }
 
-    const type = normalizePayableFor(payableFor);
     const before = JSON.stringify(customer.commissions || []);
     await syncPayablesForCustomer(customer);
     if (before !== JSON.stringify(customer.commissions || [])) {
@@ -2619,33 +2637,18 @@ exports.addCommissionPayment = async (req, res) => {
     }
 
     const payableForRaw = String(payableFor || '').trim().toLowerCase();
-    if (payableForRaw === 'extra-expenses' || payableForRaw === 'extra expenses') {
-      const survey = await Survey.findOne({
-        _id: surveyId,
-        customer_id: id,
-        'expenses.adminExpenseApprovalStatus': 'approved',
-      });
+    const type = normalizePayableFor(payableFor);
 
-      if (!survey) {
-        return res.status(404).json({
-          message: 'No admin-approved extra expenses found for this survey.',
-        });
-      }
-
-      const totals = await addExtraExpensePayment(survey, {
+    if (type === 'Installation' || payableForRaw === 'contractor' || payableForRaw === 'contractors') {
+      const result = await addContractorCombinedPayment(customer, {
+        surveyId,
         amount,
         paymentMethod,
         paymentDate,
         note,
       });
 
-      await createLog(
-        'Extra Expense Payment Added',
-        req.user.id,
-        customer.name,
-        'Customer',
-        customer._id
-      );
+      await createLog('Contractor Payment Added', req.user.id, customer.name, 'Customer', customer._id);
 
       const populatedCustomer = await Customer.findById(id).populate(
         'leadId',
@@ -2654,23 +2657,31 @@ exports.addCommissionPayment = async (req, res) => {
       const leadFields = flattenPopulatedLead(populatedCustomer.leadId, populatedCustomer);
 
       return res.status(200).json({
-        message: 'Extra expense payment added successfully.',
+        message: 'Contractor payment added successfully.',
         details: {
           customerId: customer._id,
-          surveyId: survey._id,
-          commission: totals.approvedTotal,
-          eligible: totals.approvedTotal,
-          paid: totals.paid,
-          pending: totals.pending,
-          locked: 0,
-          balance: totals.balance,
+          surveyId,
+          commission: result.combined.commission,
+          eligible: result.combined.eligible,
+          paid: result.combined.paid,
+          pending: result.combined.pending,
+          locked: result.combined.locked,
+          balance: result.combined.balance,
+          installationCommission: result.combined.installation.amount,
+          installationPaid: result.combined.installation.paid,
+          installationPending: result.combined.installation.pending,
+          extraExpensesTotal: result.combined.extraExpenses.approvedTotal,
+          extraExpensesPaid: result.combined.extraExpenses.paid,
+          extraExpensesPending: result.combined.extraExpenses.pending,
           leadId: leadFields.lead_id || '',
-          quotationNumber: '—',
-          quotationAmount: 0,
-          surveyName: (survey.surveyName || '').trim(),
-          payments: (survey.extraExpensePayments || []).map((payment) =>
-            payment?.toObject ? payment.toObject() : payment
-          ),
+          quotationNumber: result.payables?.quotationNumber || '—',
+          quotationAmount: result.payables?.quotationAmount || 0,
+          surveyName:
+            result.payables?.surveyName || (result.survey.surveyName || '').trim(),
+          jobNo: result.survey.job_id || '—',
+          extraExpenses: getExtraExpenseItemsForResponse(result.survey),
+          approvedExtraExpenseEntries: getApprovedExtraExpenseEntriesForResponse(result.survey),
+          payments: result.payments,
         },
       });
     }
@@ -2786,10 +2797,19 @@ exports.customerCommissionList = async (req, res) => {
         createdAt: -1,
       });
 
+    const extraExpenseSurveys = await Survey.find({
+      'expenses.adminExpenseApprovalStatus': 'approved',
+      'expenses.expenseItem.0': { $exists: true },
+    })
+      .populate('assignToContractor', 'fullName email userRole')
+      .populate('assignedTo', 'fullName email userRole')
+      .sort({ updatedAt: -1 });
+
     const customerIdSet = new Set(
-      approvedSurveys
-        .map((survey) => survey.customer_id?.toString())
-        .filter(Boolean)
+      [
+        ...approvedSurveys.map((survey) => survey.customer_id?.toString()),
+        ...extraExpenseSurveys.map((survey) => survey.customer_id?.toString()),
+      ].filter(Boolean)
     );
 
     if (!customerIdSet.size) {
@@ -2798,12 +2818,10 @@ exports.customerCommissionList = async (req, res) => {
         salesPersons: [],
         salesManagers: [],
         contractors: [],
-        extraExpenses: [],
         overallSummary: {
           salesPersons: { totalCommission: 0, totalPaid: 0, totalPending: 0 },
           salesManagers: { totalCommission: 0, totalPaid: 0, totalPending: 0 },
           contractors: { totalCommission: 0, totalPaid: 0, totalPending: 0 },
-          extraExpenses: { totalApproved: 0, totalPaid: 0, totalPending: 0 },
         },
       });
     }
@@ -2887,6 +2905,14 @@ exports.customerCommissionList = async (req, res) => {
           'Installation',
           payables.contractorCommission
         );
+        const extraTotals = hasApprovedExtraExpenses(survey)
+          ? getExtraExpensePayableTotals(survey)
+          : { approvedTotal: 0, paid: 0, pending: 0 };
+        const contractorCommission = roundMoney(
+          contractorPayments.amount + extraTotals.approvedTotal
+        );
+        const contractorPaid = roundMoney(contractorPayments.paid + extraTotals.paid);
+        const contractorPending = roundMoney(contractorPayments.pending + extraTotals.pending);
 
         salesPersons.push({
           id: `${customerKey}-${surveyId}`,
@@ -2938,27 +2964,22 @@ exports.customerCommissionList = async (req, res) => {
           jobNo,
           surveyName: payables.surveyName,
           installDate: installDate || '',
-          totalCharges: payables.quotationAmount,
-          commission: contractorPayments.amount,
-          paid: contractorPayments.paid,
-          pending: contractorPayments.pending,
+          installationCommission: contractorPayments.amount,
+          extraExpenses: extraTotals.approvedTotal,
+          commission: contractorCommission,
+          paid: contractorPaid,
+          pending: contractorPending,
         });
 
-        contractorTotalCommission += contractorPayments.amount;
-        contractorTotalPaid += contractorPayments.paid;
-        contractorTotalPending += contractorPayments.pending;
+        contractorTotalCommission += contractorCommission;
+        contractorTotalPaid += contractorPaid;
+        contractorTotalPending += contractorPending;
       }
     }
 
-    const extraExpenseSurveys = await Survey.find({
-      'expenses.adminExpenseApprovalStatus': 'approved',
-      'expenses.expenseItem.0': { $exists: true },
-    }).sort({ updatedAt: -1 });
-
-    const extraExpenses = [];
-    let extraTotalApproved = 0;
-    let extraTotalPaid = 0;
-    let extraTotalPending = 0;
+    const contractorSurveyKeys = new Set(
+      contractors.map((row) => `${row.customerId}-${row.surveyId}`)
+    );
 
     if (extraExpenseSurveys.length) {
       const extraCustomerIds = [
@@ -2967,6 +2988,7 @@ exports.customerCommissionList = async (req, res) => {
         ),
       ];
       const extraCustomers = await Customer.find({ _id: { $in: extraCustomerIds } })
+        .populate('assignToContractor', 'fullName email')
         .populate('leadId', 'lead_id leadName dba')
         .lean();
       const extraCustomerMap = new Map(
@@ -2977,30 +2999,41 @@ exports.customerCommissionList = async (req, res) => {
         const customerKey = survey.customer_id?.toString();
         if (!customerKey) continue;
 
+        const surveyId = survey._id.toString();
+        const rowKey = `${customerKey}-${surveyId}`;
+        if (contractorSurveyKeys.has(rowKey)) continue;
+
         const customer = extraCustomerMap.get(customerKey);
         if (!customer) continue;
 
         const totals = getExtraExpensePayableTotals(survey);
-        const lead = customer.leadId && typeof customer.leadId === 'object' ? customer.leadId : null;
-        const leadId = (lead?.lead_id || '').toString().trim();
-        const surveyId = survey._id.toString();
+        if (totals.approvedTotal <= 0 && totals.paid <= 0) continue;
 
-        extraExpenses.push({
-          id: `${customerKey}-${surveyId}-extra`,
+        const legalName = customer.legalName || customer.name || '';
+        const dba = customer.company || customer.leadId?.dba || '';
+        const contractorName = resolveSurveyContractorName(survey, customer);
+
+        contractors.push({
+          id: rowKey,
           customerId: customerKey,
           surveyId,
-          leadId,
-          legalName: customer.legalName || customer.name || '',
-          surveyName: (survey.surveyName || survey.areaName || '').trim(),
+          legalName,
+          dba,
+          contractor: contractorName,
           jobNo: survey.job_id || '—',
-          approvedAmount: totals.approvedTotal,
+          surveyName: (survey.surveyName || survey.areaName || '').trim(),
+          installDate: getInstallDate(customer) || '',
+          installationCommission: 0,
+          extraExpenses: totals.approvedTotal,
+          commission: totals.approvedTotal,
           paid: totals.paid,
           pending: totals.pending,
         });
 
-        extraTotalApproved += totals.approvedTotal;
-        extraTotalPaid += totals.paid;
-        extraTotalPending += totals.pending;
+        contractorTotalCommission += totals.approvedTotal;
+        contractorTotalPaid += totals.paid;
+        contractorTotalPending += totals.pending;
+        contractorSurveyKeys.add(rowKey);
       }
     }
 
@@ -3009,7 +3042,6 @@ exports.customerCommissionList = async (req, res) => {
       salesPersons,
       salesManagers,
       contractors,
-      extraExpenses,
       overallSummary: {
         salesPersons: {
           totalCommission: salesTotalCommission,
@@ -3025,11 +3057,6 @@ exports.customerCommissionList = async (req, res) => {
           totalCommission: contractorTotalCommission,
           totalPaid: contractorTotalPaid,
           totalPending: contractorTotalPending,
-        },
-        extraExpenses: {
-          totalApproved: extraTotalApproved,
-          totalPaid: extraTotalPaid,
-          totalPending: extraTotalPending,
         },
       },
     });

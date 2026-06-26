@@ -259,11 +259,48 @@ function sumExtraExpensePayments(survey) {
   return payments.reduce((total, item) => total + (Number(item?.amount) || 0), 0);
 }
 
+function isExtraExpenseEntryApproved(entry) {
+  return String(entry?.adminExpenseApprovalStatus || '').trim().toLowerCase() === 'approved';
+}
+
+function getApprovedExtraExpenseEntries(survey) {
+  return getSurveyExpensesList(survey).filter(isExtraExpenseEntryApproved);
+}
+
+function getApprovedExtraExpenseEntriesForResponse(survey) {
+  return getApprovedExtraExpenseEntries(survey)
+    .map((entry) => {
+      const items = (entry.expenseItem || [])
+        .map((item) => ({
+          itemName: String(item.itemName || '').trim(),
+          price: Number(item.price) || 0,
+          approvedAmount: Number(item.approvedAmount) || 0,
+        }))
+        .filter((item) => item.approvedAmount > 0);
+
+      const adminApprovalAmount = roundMoney(
+        items.reduce((sum, item) => sum + item.approvedAmount, 0) ||
+          Number(entry.adminApprovalAmount) ||
+          0
+      );
+
+      return {
+        id: (entry._id || '').toString(),
+        notes: entry.notes || '',
+        adminApprovalAmount,
+        items,
+      };
+    })
+    .filter((entry) => entry.adminApprovalAmount > 0 && entry.items.length > 0);
+}
+
+function getApprovedExtraExpenseItemsForResponse(survey) {
+  return getApprovedExtraExpenseEntriesForResponse(survey).flatMap((entry) => entry.items);
+}
+
 function getExtraExpensePayableTotals(survey) {
   const entries = getSurveyExpensesList(survey);
-  const approvedEntries = entries.filter(
-    (e) => String(e.adminExpenseApprovalStatus || '').toLowerCase() === 'approved'
-  );
+  const approvedEntries = entries.filter(isExtraExpenseEntryApproved);
   const approvedTotal = roundMoney(
     approvedEntries.reduce(
       (sum, e) =>
@@ -352,6 +389,39 @@ function coerceSurveyExpensesForSave(surveyDoc) {
   return list.map(normalizeExpensesEntry);
 }
 
+function applyExpenseFieldsToSurveyResponse(surveyObj) {
+  const formatted = formatExpensesForResponse(surveyObj);
+  const expenseEntries = Array.isArray(formatted.expenses) ? formatted.expenses : [];
+
+  surveyObj.expenses = expenseEntries;
+
+  const allItems = expenseEntries.flatMap((entry) => entry.expenseItem || []);
+  const primaryEntry = expenseEntries.length ? expenseEntries[expenseEntries.length - 1] : null;
+
+  surveyObj.extraExpenses = allItems.map((item) => ({
+    description: String(item?.itemName || '').trim(),
+    price: Number(item?.price) || 0,
+    approvedAmount: Number(item?.approvedAmount) || 0,
+  }));
+
+  surveyObj.extraExpensesTotalAmount = expenseEntries.reduce(
+    (sum, entry) => sum + (Number(entry.totalAmount) || 0),
+    0
+  );
+
+  surveyObj.adminApprovalStatus = String(
+    primaryEntry?.adminExpenseApprovalStatus || 'pending'
+  );
+  surveyObj.adminExpenseApprovalStatus = surveyObj.adminApprovalStatus;
+  surveyObj.adminApprovalAmount = Number(primaryEntry?.adminApprovalAmount) || 0;
+  surveyObj.expenseId = primaryEntry?.id || null;
+  surveyObj.uploadReceipts = expenseEntries.flatMap((entry) =>
+    Array.isArray(entry.receipt) ? entry.receipt : []
+  );
+
+  return surveyObj;
+}
+
 module.exports = {
   emptyExpenses,
   parseExpenseItemsInput,
@@ -364,6 +434,10 @@ module.exports = {
   sumExtraExpenses,
   sumApprovedExtraExpenses,
   sumExtraExpensePayments,
+  isExtraExpenseEntryApproved,
+  getApprovedExtraExpenseEntries,
+  getApprovedExtraExpenseEntriesForResponse,
+  getApprovedExtraExpenseItemsForResponse,
   getExtraExpensePayableTotals,
   addExtraExpensePayment,
   VALID_EXTRA_EXPENSE_PAYMENT_METHODS,
@@ -373,4 +447,5 @@ module.exports = {
   formatReceiptsForResponse,
   formatExpensesForResponse,
   formatExtraExpensesForResponse: formatExpensesForResponse,
+  applyExpenseFieldsToSurveyResponse,
 };
