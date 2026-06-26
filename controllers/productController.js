@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Product = require('../models/Product');
+const Survey = require('../models/Survey');
 const { createLog } = require('../utils/logger');
 const { CATEGORIES } = require('../models/Product');
 const {
@@ -45,6 +46,7 @@ function formatProduct(doc) {
     installationCost: p.installationCost ?? 0,
     productType: p.productType || 'Proposed Fixture',
     category: p.category || null,
+    isOtherFixture: Boolean(p.isOtherFixture),
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   };
@@ -153,6 +155,7 @@ function parseExistingFixturePayload(body, resolvedFixtureType, existingProduct 
       commission: 0,
       installationCost: 0,
       productType: resolvedFixtureType,
+      isOtherFixture: false,
     },
   };
 }
@@ -274,14 +277,47 @@ function applyProductFields(product, payload) {
   product.installationCost = payload.installationCost;
 }
 
+function applyExistingFixtureFilter(filter, { includeOther = false, otherOnly = false } = {}) {
+  if (otherOnly) {
+    filter.isOtherFixture = true;
+    return;
+  }
+
+  if (!includeOther) {
+    const withoutOther = {
+      $or: [
+        { isOtherFixture: false },
+        { isOtherFixture: { $exists: false } },
+        { isOtherFixture: null },
+      ],
+    };
+
+    if (filter.$and) {
+      filter.$and.push(withoutOther);
+    } else if (filter.$or) {
+      filter.$and = [{ $or: filter.$or }, withoutOther];
+      delete filter.$or;
+    } else {
+      Object.assign(filter, withoutOther);
+    }
+  }
+}
+
 exports.listExistingFixtureProducts = async (req, res) => {
-  req.query = { ...req.query, productType: 'Existing Fixture' };
+  req.query = { ...req.query, productType: 'Existing Fixture', includeOther: 'true' };
+  return exports.listProducts(req, res);
+};
+
+exports.listOtherFixtureProducts = async (req, res) => {
+  req.query = { ...req.query, productType: 'Existing Fixture', otherOnly: 'true' };
   return exports.listProducts(req, res);
 };
 
 exports.listProducts = async (req, res) => {
   try {
     const { productType, type, category } = req.query;
+    const includeOther = String(req.query.includeOther || '').toLowerCase() === 'true';
+    const otherOnly = String(req.query.otherOnly || '').toLowerCase() === 'true';
 
     const filter = {};
     const requestedFixtureType = resolveFixtureType(productType);
@@ -294,6 +330,10 @@ exports.listProducts = async (req, res) => {
         });
       }
       Object.assign(filter, buildFixtureTypeFilter(requestedFixtureType));
+
+      if (requestedFixtureType === 'Existing Fixture') {
+        applyExistingFixtureFilter(filter, { includeOther, otherOnly });
+      }
     }
 
     const requestedCategory = (category ?? (requestedFixtureType ? '' : type) ?? '')
@@ -463,5 +503,46 @@ exports.getProduct = async (req, res) => {
   } catch (error) {
     console.error('Get product error:', error);
     return res.status(500).json({ message: 'Server error fetching product.' });
+  }
+};
+
+exports.deleteProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const product = await Product.findById(id);
+
+    if (!product) {
+      return res.status(404).json({ message: 'Product not found.' });
+    }
+
+    if (!product.isOtherFixture) {
+      return res.status(400).json({
+        message: 'Only other fixtures can be deleted from the other fixtures list.',
+      });
+    }
+
+    const inUse = await Survey.exists({
+      'areas.fixtures.product_id': product._id,
+    });
+
+    if (inUse) {
+      return res.status(400).json({
+        message:
+          'This other fixture is used in one or more surveys and cannot be deleted.',
+      });
+    }
+
+    await Product.findByIdAndDelete(id);
+
+    if (req.user?.id) {
+      await createLog('Other Fixture Deleted', req.user.id, product.name, 'Product', product._id);
+    }
+
+    return res.status(200).json({
+      message: 'Other fixture deleted successfully.',
+    });
+  } catch (error) {
+    console.error('Delete product error:', error);
+    return res.status(500).json({ message: 'Server error deleting product.' });
   }
 };

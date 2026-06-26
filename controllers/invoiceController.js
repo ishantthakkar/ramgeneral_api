@@ -10,6 +10,11 @@ const {
   applySurveyInvoiceStatusFilter,
   attachInvoiceFieldsToSurvey,
   toInvoicePdfUrl,
+  roundMoney,
+  sumInvoicePayments,
+  getInvoicePaymentTotals,
+  mapInvoicePayments,
+  addInvoicePayment,
 } = require('../utils/invoiceHelpers');
 const { getLatestQuotationNumberForSurvey } = require('../utils/quotationHelpers');
 const {
@@ -30,6 +35,9 @@ function buildSurveyInvoicesList(surveys, customerMap) {
   return surveys.map((survey) => {
     const customer = customerMap.get(survey.customer_id?.toString());
     const invoiceFilename = getGenerateInvoiceForSurvey(survey);
+    const invoiceAmount = roundMoney(Number(survey.invoiceAmount) || 0);
+    const paidAmount = roundMoney(sumInvoicePayments(survey));
+    const pendingAmount = roundMoney(Math.max(0, invoiceAmount - paidAmount));
 
     return {
       customerId: survey.customer_id,
@@ -41,6 +49,9 @@ function buildSurveyInvoicesList(surveys, customerMap) {
       invoiceStatus: survey.invoiceStatus || 'pending',
       invoiceDate: invoiceFilename ? survey.invoiceGeneratedAt || survey.updatedAt || null : null,
       generateInvoice: invoiceFilename ? toInvoicePdfUrl(invoiceFilename) : '',
+      invoiceAmount,
+      paidAmount,
+      pendingAmount,
     };
   });
 }
@@ -92,7 +103,7 @@ async function fetchSurveyInvoicesList(req) {
 
   const surveys = await Survey.find(surveyFilter)
     .select(
-      'customer_id surveyName areaName status generateInvoice invoiceNumber invoiceStatus invoiceGeneratedAt updatedAt'
+      'customer_id surveyName areaName status generateInvoice invoiceNumber invoiceStatus invoiceGeneratedAt invoiceAmount invoicePayments updatedAt'
     )
     .sort({ updatedAt: -1 })
     .lean();
@@ -239,6 +250,7 @@ exports.createInvoice = async (req, res) => {
           generateInvoice: filename,
           invoiceStatus: 'approved',
           invoiceGeneratedAt: generatedAt,
+          invoiceAmount: roundMoney(preview.grandTotal || 0),
         },
       },
       { new: true }
@@ -266,9 +278,10 @@ exports.createInvoice = async (req, res) => {
   }
 };
 
-exports.markInvoiceFullyPaid = async (req, res) => {
+exports.addInvoicePayment = async (req, res) => {
   try {
     const surveyId = req.body?.surveyId || req.body?.survey_id;
+    const { amount, paymentMethod, paymentDate, note } = req.body;
 
     const surveyResult = await resolveSurveyById(surveyId);
     if (surveyResult.error) {
@@ -276,35 +289,37 @@ exports.markInvoiceFullyPaid = async (req, res) => {
     }
 
     const { survey } = surveyResult;
-    const invoiceFilename = getGenerateInvoiceForSurvey(survey);
 
-    if (!invoiceFilename) {
-      return res.status(400).json({ message: 'Generate an invoice before marking it as fully paid.' });
+    const customer = await Customer.findById(survey.customer_id)
+      .populate('user_id', 'fullName mobileNumber email')
+      .populate('leadId', 'lead_id leadName name')
+      .lean();
+
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found for this survey.' });
     }
 
-    if (String(survey.invoiceStatus || '').toLowerCase() === 'fully_paid') {
-      return res.status(400).json({ message: 'Invoice is already marked as fully paid.' });
+    let invoiceAmount = roundMoney(Number(survey.invoiceAmount) || 0);
+    if (!invoiceAmount) {
+      const preview = await buildQuotationPreviewData(survey, customer);
+      if (preview.error) {
+        return res.status(400).json({ message: preview.error });
+      }
+      invoiceAmount = roundMoney(preview.grandTotal || 0);
+      if (invoiceAmount > 0) {
+        survey.invoiceAmount = invoiceAmount;
+      }
     }
 
-    const paidAt = new Date();
-    const updatedSurvey = await Survey.findByIdAndUpdate(
-      survey._id,
-      {
-        $set: {
-          invoiceStatus: 'fully_paid',
-          invoicePaidAt: paidAt,
-        },
-      },
-      { new: true }
+    const result = await addInvoicePayment(
+      survey,
+      { amount, paymentMethod, paymentDate, note },
+      invoiceAmount
     );
-
-    const customer = survey.customer_id
-      ? await Customer.findById(survey.customer_id)
-      : null;
 
     if (req.user?.id && customer) {
       await createLog(
-        'Invoice Marked Fully Paid',
+        'Invoice Payment Added',
         req.user.id,
         getCustomerDisplayName(customer),
         'Customer',
@@ -313,16 +328,29 @@ exports.markInvoiceFullyPaid = async (req, res) => {
     }
 
     return res.status(200).json({
-      message: 'Invoice marked as fully paid successfully.',
-      survey_id: updatedSurvey._id,
-      invoiceStatus: updatedSurvey.invoiceStatus,
-      invoicePaidAt: updatedSurvey.invoicePaidAt,
+      message:
+        result.pending <= 0
+          ? 'Invoice marked as fully paid successfully.'
+          : 'Invoice payment recorded successfully.',
+      survey_id: survey._id,
+      invoiceStatus: result.invoiceStatus,
+      invoicePaidAt: result.invoicePaidAt,
+      invoiceAmount: result.invoiceAmount,
+      paidAmount: result.paid,
+      pendingAmount: result.pending,
+      payment: result.payment,
+      payments: mapInvoicePayments(survey),
     });
   } catch (error) {
-    console.error('Mark invoice fully paid error:', error);
-    return res.status(500).json({ message: 'Server error marking invoice as fully paid.' });
+    console.error('Add invoice payment error:', error);
+    const status = error.statusCode || 500;
+    return res.status(status).json({
+      message: error.message || 'Server error recording invoice payment.',
+    });
   }
 };
+
+exports.markInvoiceFullyPaid = exports.addInvoicePayment;
 exports.getSurveyInvoiceDetails = async (req, res) => {
   try {
     const surveyId = req.body?.surveyId || req.body?.survey_id || req.query?.surveyId || req.query?.survey_id;
@@ -350,6 +378,15 @@ exports.getSurveyInvoiceDetails = async (req, res) => {
 
     const invoiceFields = attachInvoiceFieldsToSurvey(survey);
     const { flatLineItems, ...estimate } = preview;
+    let invoiceAmount = roundMoney(
+      Number(survey.invoiceAmount) || estimate.grandTotal || 0
+    );
+    if (!Number(survey.invoiceAmount) && invoiceAmount > 0) {
+      survey.invoiceAmount = invoiceAmount;
+      await survey.save();
+    }
+    const paymentTotals = getInvoicePaymentTotals(survey, invoiceAmount);
+    const payments = mapInvoicePayments(survey);
 
     return res.status(200).json({
       message: 'Survey invoice details retrieved successfully.',
@@ -364,6 +401,10 @@ exports.getSurveyInvoiceDetails = async (req, res) => {
         ? survey.invoiceGeneratedAt || survey.updatedAt || null
         : null,
       generateInvoice: invoiceFields.generateInvoice,
+      invoiceAmount: paymentTotals.invoiceAmount,
+      paidAmount: paymentTotals.paid,
+      pendingAmount: paymentTotals.pending,
+      payments,
       estimate,
     });
   } catch (error) {

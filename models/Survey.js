@@ -38,6 +38,7 @@ const fixtureSchema = {
   heightIn: { type: String, trim: true, default: '' },
   existingBulbs: { type: String, trim: true, default: '' },
   existingFixtureType: { type: String, trim: true, default: '' },
+  otherFixtureName: { type: String, trim: true, default: '' },
   note: { type: String, trim: true, default: '' },
   existingQty: { type: String, trim: true, default: '' },
   proposedQty: { type: String, trim: true, default: '' },
@@ -112,21 +113,35 @@ const expensesSchema = new mongoose.Schema({
   receipt: [{ type: String, trim: true }],
 }, { _id: true });
 
+const paymentMethodEnum = [
+  'Cash',
+  'ACH Transfer',
+  'Wire Transfer',
+  'Check',
+  'Credit Card',
+  'Debit Card',
+  'PayPal',
+  'Stripe',
+  'Other',
+];
+
 const extraExpensePaymentSchema = {
   amount: { type: Number, required: true, min: 0 },
   paymentMethod: {
     type: String,
-    enum: [
-      'Cash',
-      'ACH Transfer',
-      'Wire Transfer',
-      'Check',
-      'Credit Card',
-      'Debit Card',
-      'PayPal',
-      'Stripe',
-      'Other',
-    ],
+    enum: paymentMethodEnum,
+    trim: true,
+  },
+  note: { type: String, trim: true, default: '' },
+  paymentDate: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now },
+};
+
+const invoicePaymentSchema = {
+  amount: { type: Number, required: true, min: 0 },
+  paymentMethod: {
+    type: String,
+    enum: paymentMethodEnum,
     trim: true,
   },
   note: { type: String, trim: true, default: '' },
@@ -247,6 +262,8 @@ const surveySchema = new mongoose.Schema({
     trim: true,
   },
   invoicePaidAt: { type: Date },
+  invoiceAmount: { type: Number, default: 0 },
+  invoicePayments: [invoicePaymentSchema],
   invoiceGeneratedAt: { type: Date },
   confirmDate: { type: Date },
   job_id: {

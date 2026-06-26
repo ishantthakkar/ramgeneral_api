@@ -67,13 +67,17 @@ const productSchema = new mongoose.Schema(
       type: Number,
       min: 0,
     },
+    isOtherFixture: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 );
 
-const Product = mongoose.model('Product', productSchema);
-
 productSchema.index({ sku: 1, productType: 1 }, { unique: true });
+
+const Product = mongoose.model('Product', productSchema);
 
 module.exports = Product;
 module.exports.CATEGORIES = CATEGORIES;

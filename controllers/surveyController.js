@@ -22,6 +22,7 @@ const {
     enrichAreasWithProducts,
 } = require('../utils/surveyProductUtils');
 const { buildFixtureTypeFilter } = require('../utils/productUtils');
+const { syncOtherFixturesFromAreas } = require('../utils/otherFixtureUtils');
 const {
     LEAD_FIELDS_FOR_POPULATE,
     stripCustomerLogFields,
@@ -193,6 +194,15 @@ const parseFixtureInput = (item) => {
     existingBulbs: (item?.existingBulbs ?? item?.existing_bulbs ?? '').toString().trim(),
     existingFixtureType: (
         item?.existingFixtureType ?? item?.existing_fixture_type ?? ''
+    )
+        .toString()
+        .trim(),
+    otherFixtureName: (
+        item?.otherFixtureName ??
+        item?.other_fixture_name ??
+        item?.otherFixture ??
+        item?.other_fixture ??
+        ''
     )
         .toString()
         .trim(),
@@ -378,6 +388,9 @@ const applyFixtureUpdates = (existingFixture, fixture) => {
     if (fixture.existingBulbs !== undefined) existingFixture.existingBulbs = fixture.existingBulbs;
     if (fixture.existingFixtureType !== undefined) {
         existingFixture.existingFixtureType = fixture.existingFixtureType;
+    }
+    if (fixture.otherFixtureName !== undefined) {
+        existingFixture.otherFixtureName = fixture.otherFixtureName;
     }
     if (fixture.note !== undefined) existingFixture.note = fixture.note;
     if (fixture.existingQty !== undefined) existingFixture.existingQty = fixture.existingQty;
@@ -990,6 +1003,8 @@ exports.createSurvey = async (req, res) => {
             if (!areaValidation.valid) {
                 return res.status(400).json({ message: areaValidation.message });
             }
+
+            await syncOtherFixturesFromAreas(processedAreas);
         }
 
         survey.status = status || survey.status;
