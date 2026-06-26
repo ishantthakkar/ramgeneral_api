@@ -39,6 +39,7 @@ const {
     mergeSurveyExpensesEntry,
     sumApprovedExtraExpenses,
     formatExpensesForResponse,
+    applyExpenseFieldsToSurveyResponse,
 } = require('../utils/extraExpenseHelpers');
 
 const WORKFLOW_SURVEY_STATUSES = [
@@ -157,26 +158,7 @@ const mapSurveyImageUrls = (surveyObj) => {
         })),
     }));
     surveyObj.verifyImages = (surveyObj.verifyImages || []).map(toSurveyImageUrl);
-    if (surveyObj.expenses) {
-        const formatted = formatExpensesForResponse({ _id: surveyObj._id, expenses: surveyObj.expenses });
-        surveyObj.expenses = formatted.expenses;
-    }
-    // Backwards/forwards compatibility:
-    // - Newer admin UI expects `extraExpenses`, `adminApprovalStatus`, `uploadReceipts`
-    // - Backend canonical storage is `expenses` (with `expenseItem[]` and `adminExpenseApprovalStatus`)
-    const expenses = surveyObj.expenses;
-    if (expenses && typeof expenses === 'object') {
-        const items = Array.isArray(expenses.expenseItem) ? expenses.expenseItem : [];
-        surveyObj.extraExpenses = items.map((item) => ({
-            description: String(item?.itemName || '').trim(),
-            price: Number(item?.price) || 0,
-            approvedAmount: Number(item?.approvedAmount) || 0,
-        }));
-        surveyObj.extraExpensesTotalAmount = Number(expenses.totalAmount) || 0;
-        surveyObj.adminApprovalStatus = String(expenses.adminExpenseApprovalStatus || 'pending');
-        surveyObj.uploadReceipts = Array.isArray(expenses.receipt) ? expenses.receipt : [];
-        surveyObj.adminExpenseApprovalStatus = surveyObj.adminApprovalStatus;
-    }
+    applyExpenseFieldsToSurveyResponse(surveyObj);
     return surveyObj;
 };
 

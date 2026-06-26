@@ -199,6 +199,69 @@ async function findProductByName(name, excludeId = null, productType = null) {
   return Product.findOne(filter);
 }
 
+function roundMoney(value) {
+  return Math.round(Number(value) * 100) / 100;
+}
+
+function getProposedPrices(product) {
+  const p = product.toObject ? product.toObject() : product;
+  return {
+    utilityPrice: roundMoney(resolveUtilityPrice(p)),
+    directPrice: roundMoney(resolveDirectPrice(p)),
+    agentCommission: roundMoney(resolveAgentCommission(p)),
+    managerCommission: roundMoney(resolveManagerCommission(p)),
+    installationCost: roundMoney(Number(p.installationCost ?? 0) || 0),
+  };
+}
+
+function proposedPricesMatch(a, b) {
+  const priceA = getProposedPrices(a);
+  const priceB = getProposedPrices(b);
+  return (
+    priceA.utilityPrice === priceB.utilityPrice &&
+    priceA.directPrice === priceB.directPrice &&
+    priceA.agentCommission === priceB.agentCommission &&
+    priceA.managerCommission === priceB.managerCommission &&
+    priceA.installationCost === priceB.installationCost
+  );
+}
+
+const PROPOSED_NAME_PRICE_MISMATCH_MESSAGE =
+  'A product with this name already exists with different prices. Products with the same name must have the same prices.';
+
+async function findProposedProductsByName(name, excludeId = null, productType = 'Proposed Fixture') {
+  const trimmedName = String(name || '').trim();
+  if (!trimmedName) return [];
+
+  const filter = {
+    name: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, 'i') },
+    ...buildFixtureTypeFilter(productType),
+  };
+
+  if (excludeId) {
+    filter._id = { $ne: excludeId };
+  }
+
+  return Product.find(filter);
+}
+
+async function validateProposedNamePriceConsistency(
+  name,
+  payload,
+  excludeId = null,
+  productType = 'Proposed Fixture'
+) {
+  const sameNameProducts = await findProposedProductsByName(name, excludeId, productType);
+
+  for (const existing of sameNameProducts) {
+    if (!proposedPricesMatch(payload, existing)) {
+      return { error: PROPOSED_NAME_PRICE_MISMATCH_MESSAGE };
+    }
+  }
+
+  return { ok: true };
+}
+
 function applyProductFields(product, payload) {
   product.sku = payload.sku;
   product.name = payload.name;
@@ -295,6 +358,16 @@ exports.createProduct = async (req, res) => {
           message: 'A product with this SKU already exists for this fixture type.',
         });
       }
+
+      const namePriceCheck = await validateProposedNamePriceConsistency(
+        parsed.value.name,
+        parsed.value,
+        null,
+        parsed.value.productType
+      );
+      if (namePriceCheck.error) {
+        return res.status(400).json({ message: namePriceCheck.error });
+      }
     }
 
     const product = await Product.create(parsed.value);
@@ -346,6 +419,16 @@ exports.updateProduct = async (req, res) => {
       const existingSku = await findProductBySku(parsed.value.sku, id, fixtureType);
       if (existingSku) {
         return res.status(400).json({ message: 'A product with this SKU already exists.' });
+      }
+
+      const namePriceCheck = await validateProposedNamePriceConsistency(
+        parsed.value.name,
+        parsed.value,
+        id,
+        fixtureType
+      );
+      if (namePriceCheck.error) {
+        return res.status(400).json({ message: namePriceCheck.error });
       }
 
       applyProductFields(product, parsed.value);
