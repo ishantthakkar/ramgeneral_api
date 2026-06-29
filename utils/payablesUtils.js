@@ -635,6 +635,175 @@ async function syncPayablesForCustomer(customer) {
   return customer;
 }
 
+function hasApprovedExtraExpenses(survey) {
+  const { getApprovedExtraExpenseEntries } = require('./extraExpenseHelpers');
+  return getApprovedExtraExpenseEntries(survey).length > 0;
+}
+
+function getExtraExpenseItemsForResponse(survey) {
+  const { getApprovedExtraExpenseItemsForResponse } = require('./extraExpenseHelpers');
+  return getApprovedExtraExpenseItemsForResponse(survey);
+}
+
+function getApprovedExtraExpenseEntriesForResponse(survey) {
+  const { getApprovedExtraExpenseEntriesForResponse: getEntries } = require('./extraExpenseHelpers');
+  return getEntries(survey);
+}
+
+function getCombinedContractorTotals(customer, survey, payables) {
+  const { getExtraExpensePayableTotals } = require('./extraExpenseHelpers');
+  const installationAmount = payables?.contractorCommission || 0;
+  const installationTotals = survey && isPayableSurvey(survey)
+    ? getPaymentTotals(customer, survey, 'Installation', installationAmount)
+    : { amount: 0, eligible: 0, paid: 0, pending: 0, locked: 0, balance: 0, record: null };
+
+  const extraTotals = survey && hasApprovedExtraExpenses(survey)
+    ? getExtraExpensePayableTotals(survey)
+    : { approvedTotal: 0, paid: 0, pending: 0, balance: 0 };
+
+  return {
+    installation: installationTotals,
+    extraExpenses: extraTotals,
+    commission: roundMoney(installationTotals.amount + extraTotals.approvedTotal),
+    eligible: roundMoney(installationTotals.eligible + extraTotals.approvedTotal),
+    paid: roundMoney(installationTotals.paid + extraTotals.paid),
+    pending: roundMoney(installationTotals.pending + extraTotals.pending),
+    locked: installationTotals.locked || 0,
+    balance: roundMoney(
+      Math.max(0, installationTotals.amount - installationTotals.paid) +
+        Math.max(0, extraTotals.approvedTotal - extraTotals.paid)
+    ),
+  };
+}
+
+function mergeContractorPayments(installationRecord, survey) {
+  const installationPayments = (installationRecord?.payments || []).map((payment) => {
+    const plain = payment?.toObject ? payment.toObject() : { ...payment };
+    return { ...plain, paymentCategory: 'installation' };
+  });
+  const extraPayments = (survey?.extraExpensePayments || []).map((payment) => {
+    const plain = payment?.toObject ? payment.toObject() : { ...payment };
+    return { ...plain, paymentCategory: 'extra_expense' };
+  });
+
+  return [...installationPayments, ...extraPayments].sort((a, b) => {
+    const aTime = new Date(a.paymentDate || a.createdAt || 0).getTime();
+    const bTime = new Date(b.paymentDate || b.createdAt || 0).getTime();
+    return bTime - aTime;
+  });
+}
+
+async function addContractorCombinedPayment(
+  customer,
+  { surveyId, amount, paymentMethod, paymentDate, note }
+) {
+  const Survey = require('../models/Survey');
+  const { getExtraExpensePayableTotals, addExtraExpensePayment } = require('./extraExpenseHelpers');
+
+  const survey = await Survey.findOne({ _id: surveyId, customer_id: customer._id });
+  if (!survey) {
+    const error = new Error('Survey not found for this customer.');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const hasInstallation = isPayableSurvey(survey);
+  const hasExtra = hasApprovedExtraExpenses(survey);
+  if (!hasInstallation && !hasExtra) {
+    const error = new Error('No contractor payables found for this survey.');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const paymentAmount = roundMoney(parseFloat(amount));
+  if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+    const error = new Error('Payment amount must be greater than 0.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!paymentMethod || !VALID_PAYMENT_METHODS.includes(paymentMethod)) {
+    const error = new Error('A valid payment method is required.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let installationPending = 0;
+  if (hasInstallation) {
+    await syncPayablesForCustomer(customer);
+    const payables = await calculateSurveyPayables(survey, customer);
+    installationPending = getPaymentTotals(
+      customer,
+      survey,
+      'Installation',
+      payables.contractorCommission
+    ).pending;
+  }
+
+  const extraPending = hasExtra ? getExtraExpensePayableTotals(survey).pending : 0;
+  const totalPending = roundMoney(installationPending + extraPending);
+
+  if (totalPending <= 0) {
+    const error = new Error('No contractor amount is payable yet.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (paymentAmount > totalPending) {
+    const error = new Error(
+      `Payment exceeds payable contractor balance. Maximum payable amount is ${totalPending}.`
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let remaining = paymentAmount;
+
+  if (remaining > 0 && installationPending > 0 && hasInstallation) {
+    const toInstallation = roundMoney(Math.min(remaining, installationPending));
+    await addPaymentToCommission(customer, {
+      surveyId,
+      payableFor: 'contractor',
+      amount: toInstallation,
+      paymentMethod,
+      paymentDate,
+      note,
+    });
+    await customer.save();
+    remaining = roundMoney(remaining - toInstallation);
+  }
+
+  if (remaining > 0 && hasExtra) {
+    const freshSurvey = await Survey.findOne({ _id: surveyId, customer_id: customer._id });
+    const currentExtraPending = getExtraExpensePayableTotals(freshSurvey).pending;
+    if (currentExtraPending > 0) {
+      const toExtra = roundMoney(Math.min(remaining, currentExtraPending));
+      await addExtraExpensePayment(freshSurvey, {
+        amount: toExtra,
+        paymentMethod,
+        paymentDate,
+        note,
+      });
+      remaining = roundMoney(remaining - toExtra);
+    }
+  }
+
+  const updatedSurvey = await Survey.findOne({ _id: surveyId, customer_id: customer._id });
+  const payables = hasInstallation ? await calculateSurveyPayables(updatedSurvey, customer) : null;
+  const combined = getCombinedContractorTotals(customer, updatedSurvey, payables);
+  const record = hasInstallation
+    ? findCommissionRecord(customer, updatedSurvey._id, 'Installation')
+    : null;
+
+  return {
+    survey: updatedSurvey,
+    combined,
+    record,
+    payments: mergeContractorPayments(record, updatedSurvey),
+    payables,
+  };
+}
+
 module.exports = {
   calculatePayablesFromAreas,
   calculateSurveyPayables,
@@ -657,4 +826,10 @@ module.exports = {
   normalizePayableFor,
   roundMoney,
   VALID_PAYMENT_METHODS,
+  hasApprovedExtraExpenses,
+  getExtraExpenseItemsForResponse,
+  getApprovedExtraExpenseEntriesForResponse,
+  getCombinedContractorTotals,
+  mergeContractorPayments,
+  addContractorCombinedPayment,
 };

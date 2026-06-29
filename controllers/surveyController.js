@@ -22,6 +22,7 @@ const {
     enrichAreasWithProducts,
 } = require('../utils/surveyProductUtils');
 const { buildFixtureTypeFilter } = require('../utils/productUtils');
+const { syncOtherFixturesFromAreas } = require('../utils/otherFixtureUtils');
 const {
     LEAD_FIELDS_FOR_POPULATE,
     stripCustomerLogFields,
@@ -39,6 +40,7 @@ const {
     mergeSurveyExpensesEntry,
     sumApprovedExtraExpenses,
     formatExpensesForResponse,
+    applyExpenseFieldsToSurveyResponse,
 } = require('../utils/extraExpenseHelpers');
 
 const WORKFLOW_SURVEY_STATUSES = [
@@ -157,26 +159,7 @@ const mapSurveyImageUrls = (surveyObj) => {
         })),
     }));
     surveyObj.verifyImages = (surveyObj.verifyImages || []).map(toSurveyImageUrl);
-    if (surveyObj.expenses) {
-        const formatted = formatExpensesForResponse({ _id: surveyObj._id, expenses: surveyObj.expenses });
-        surveyObj.expenses = formatted.expenses;
-    }
-    // Backwards/forwards compatibility:
-    // - Newer admin UI expects `extraExpenses`, `adminApprovalStatus`, `uploadReceipts`
-    // - Backend canonical storage is `expenses` (with `expenseItem[]` and `adminExpenseApprovalStatus`)
-    const expenses = surveyObj.expenses;
-    if (expenses && typeof expenses === 'object') {
-        const items = Array.isArray(expenses.expenseItem) ? expenses.expenseItem : [];
-        surveyObj.extraExpenses = items.map((item) => ({
-            description: String(item?.itemName || '').trim(),
-            price: Number(item?.price) || 0,
-            approvedAmount: Number(item?.approvedAmount) || 0,
-        }));
-        surveyObj.extraExpensesTotalAmount = Number(expenses.totalAmount) || 0;
-        surveyObj.adminApprovalStatus = String(expenses.adminExpenseApprovalStatus || 'pending');
-        surveyObj.uploadReceipts = Array.isArray(expenses.receipt) ? expenses.receipt : [];
-        surveyObj.adminExpenseApprovalStatus = surveyObj.adminApprovalStatus;
-    }
+    applyExpenseFieldsToSurveyResponse(surveyObj);
     return surveyObj;
 };
 
@@ -211,6 +194,15 @@ const parseFixtureInput = (item) => {
     existingBulbs: (item?.existingBulbs ?? item?.existing_bulbs ?? '').toString().trim(),
     existingFixtureType: (
         item?.existingFixtureType ?? item?.existing_fixture_type ?? ''
+    )
+        .toString()
+        .trim(),
+    otherFixtureName: (
+        item?.otherFixtureName ??
+        item?.other_fixture_name ??
+        item?.otherFixture ??
+        item?.other_fixture ??
+        ''
     )
         .toString()
         .trim(),
@@ -396,6 +388,9 @@ const applyFixtureUpdates = (existingFixture, fixture) => {
     if (fixture.existingBulbs !== undefined) existingFixture.existingBulbs = fixture.existingBulbs;
     if (fixture.existingFixtureType !== undefined) {
         existingFixture.existingFixtureType = fixture.existingFixtureType;
+    }
+    if (fixture.otherFixtureName !== undefined) {
+        existingFixture.otherFixtureName = fixture.otherFixtureName;
     }
     if (fixture.note !== undefined) existingFixture.note = fixture.note;
     if (fixture.existingQty !== undefined) existingFixture.existingQty = fixture.existingQty;
@@ -1008,6 +1003,8 @@ exports.createSurvey = async (req, res) => {
             if (!areaValidation.valid) {
                 return res.status(400).json({ message: areaValidation.message });
             }
+
+            await syncOtherFixturesFromAreas(processedAreas);
         }
 
         survey.status = status || survey.status;
