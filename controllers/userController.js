@@ -463,6 +463,15 @@ exports.createUser = async (req, res) => {
             return res.status(400).json({ message: reportsToResult.error });
         }
 
+        if (!id && isSalesPersonRole(roleResolved.userRole)) {
+            if (!email || !String(email).trim()) {
+                return res.status(400).json({ message: 'Email is required for sales person admin panel login.' });
+            }
+            if (!password || !String(password).trim()) {
+                return res.status(400).json({ message: 'Password is required for sales person.' });
+            }
+        }
+
         if (id) {
             if (email) {
                 const existingUserWithEmail = await User.findOne({

@@ -61,6 +61,71 @@ const {
     attachSurveyWorkflowStatus,
 } = require('../utils/surveyWorkflowStatus');
 
+const { isSalesPersonRole } = require('../constants/userRoles');
+
+const WORKFLOW_LIST_STATUSES = ['submitted', 'completed'];
+
+const buildWorkflowSurveyListStatusFilter = () => ({
+    status: { $regex: new RegExp(`^(${WORKFLOW_LIST_STATUSES.join('|')})$`, 'i') },
+});
+
+const WORKFLOW_SURVEY_POPULATE = [
+    {
+        path: 'customer_id',
+        select:
+            'accountNumber name company dba mobileNumber phone email customerCode status verifyStatus',
+        populate: [
+            { path: 'leadId', select: 'lead_id leadName dba' },
+            {
+                path: 'user_id',
+                select: 'fullName email userRole',
+                populate: { path: 'reportsTo', select: 'fullName userRole' },
+            },
+        ],
+    },
+    { path: 'user_id', select: 'fullName email mobileNumber userRole' },
+];
+
+async function buildWorkflowSurveyListFilter(userId, admin) {
+    const statusFilter = buildWorkflowSurveyListStatusFilter();
+
+    if (admin) {
+        return statusFilter;
+    }
+
+    const user = await User.findById(userId).select('userRole').lean();
+    if (!user) {
+        return null;
+    }
+
+    const role = (user.userRole || '').trim().toLowerCase();
+
+    if (role === 'project manager') {
+        return { ...statusFilter, assignedTo: userId };
+    }
+
+    if (isSalesPersonRole(user.userRole) || role === 'sales person') {
+        const customers = await Customer.find({ user_id: userId }).select('_id').lean();
+        const customerIds = customers.map((customer) => customer._id);
+
+        const scopeFilter = [
+            { user_id: userId },
+            { assignedTo: userId },
+        ];
+
+        if (customerIds.length) {
+            scopeFilter.push({ customer_id: { $in: customerIds } });
+        }
+
+        return {
+            ...statusFilter,
+            $or: scopeFilter,
+        };
+    }
+
+    return { ...statusFilter, user_id: userId };
+}
+
 const filterWorkflowSurveysForList = (surveys, verifiedCustomerIds) =>
     surveys.filter((survey) => {
         const customerRef = survey.customer_id;
@@ -1649,62 +1714,18 @@ exports.listWorkflowSurveys = async (req, res) => {
     try {
         const userId = req.user.id;
         const admin = await Admin.findById(userId).select('_id').lean();
+        const surveyFilter = await buildWorkflowSurveyListFilter(userId, admin);
 
-        const customerFilter = {
-            leadId: { $ne: null },
-            $or: [
-                { verifyStatus: 'verified' },
-                { status: { $in: WORKFLOW_SURVEY_STATUSES } },
-            ],
-        };
-
-        if (!admin) {
-            const user = await User.findById(userId).select('userRole').lean();
-            if (user?.userRole === 'Project Manager') {
-                customerFilter.assignedTo = userId;
-            }
+        if (!surveyFilter) {
+            return res.status(401).json({ message: 'Invalid authenticated user.' });
         }
 
-        const customers = await Customer.find(customerFilter)
-            .select('_id verifyStatus')
-            .lean();
-
-        const customerIds = customers.map((customer) => customer._id);
-        if (!customerIds.length) {
-            return res.status(200).json({
-                message: 'Workflow surveys retrieved successfully.',
-                total: 0,
-                surveys: [],
-            });
-        }
-
-        const verifiedCustomerIds = new Set(
-            customers
-                .filter((customer) => customer.verifyStatus === 'verified')
-                .map((customer) => customer._id.toString())
-        );
-
-        const surveys = await Survey.find({ customer_id: { $in: customerIds } })
-            .populate({
-                path: 'customer_id',
-                select:
-                    'accountNumber name company dba mobileNumber phone email customerCode status verifyStatus',
-                populate: [
-                    { path: 'leadId', select: 'lead_id leadName dba' },
-                    {
-                        path: 'user_id',
-                        select: 'fullName email userRole',
-                        populate: { path: 'reportsTo', select: 'fullName userRole' },
-                    },
-                ],
-            })
-            .populate('user_id', 'fullName email mobileNumber userRole')
+        const surveys = await Survey.find(surveyFilter)
+            .populate(WORKFLOW_SURVEY_POPULATE)
             .sort({ updatedAt: -1, createdAt: -1 })
             .lean();
 
-        const filteredSurveys = filterWorkflowSurveysForList(surveys, verifiedCustomerIds).map(
-            attachSurveyWorkflowStatus
-        );
+        const filteredSurveys = surveys.map(attachSurveyWorkflowStatus);
 
         return res.status(200).json({
             message: 'Workflow surveys retrieved successfully.',

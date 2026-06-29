@@ -1,6 +1,6 @@
 const { buildFullPermissions, buildPermissionsFromConfig } = require('./roleModules');
 
-const SYSTEM_ROLE_NAMES = ['Admin', 'Sales Manager', 'Project Manager'];
+const SYSTEM_ROLE_NAMES = ['Admin', 'Sales Manager', 'Project Manager', 'Sales Person'];
 
 const SYSTEM_ROLES = [
   {
@@ -14,17 +14,23 @@ const SYSTEM_ROLES = [
     notes: 'System role for sales team leadership. Permissions are customizable.',
     permissions: buildPermissionsFromConfig({
       Dashboard: { view: 1 },
-      User: { view: 1, create: 1, edit: 1 },
+      User: { view: 1, edit: 1 },
       Products: { view: 1 },
-      Leads: { view: 1, create: 1, edit: 1 },
+      Leads: { view: 1, edit: 1 },
       Customers: { view: 1, edit: 1 },
-      Surveys: { view: 1, create: 1, edit: 1 },
-      Installation: { view: 1, edit: 1 },
-      Inspection: { view: 1, edit: 1 },
+      Workflow: {
+        Surveys: { view: 1, edit: 1 },
+        Quotations: { view: 1, edit: 1 },
+        Installation: { view: 1, edit: 1 },
+        Inspection: { view: 1, edit: 1 },
+      },
       Services: { view: 1 },
-      Payables: { view: 1, edit: 1 },
+      Payables: {
+        'Sales Person': { view: 1, edit: 1 },
+        'Sales Manager': { view: 1, edit: 1 },
+        Contractor: { view: 1 },
+      },
       Invoices: { view: 1 },
-      Audit: { view: 1 },
     }),
     isSystemRole: true,
   },
@@ -37,12 +43,34 @@ const SYSTEM_ROLES = [
       Products: { view: 1 },
       Leads: { view: 1 },
       Customers: { view: 1, edit: 1 },
-      Surveys: { view: 1, create: 1, edit: 1 },
-      Installation: { view: 1, create: 1, edit: 1 },
-      Inspection: { view: 1, create: 1, edit: 1 },
+      Workflow: {
+        Surveys: { view: 1, edit: 1 },
+        Quotations: { view: 1, edit: 1 },
+        Installation: { view: 1, edit: 1 },
+        Inspection: { view: 1, edit: 1 },
+      },
       Services: { view: 1, edit: 1 },
-      Payables: { view: 1 },
+      Payables: {
+        'Sales Person': { view: 1 },
+        'Sales Manager': { view: 1 },
+        Contractor: { view: 1, edit: 1 },
+      },
       Invoices: { view: 1 },
+    }),
+    isSystemRole: true,
+  },
+  {
+    roleName: 'Sales Person',
+    notes: 'System role for sales representatives with mobile and admin panel access.',
+    permissions: buildPermissionsFromConfig({
+      Dashboard: { view: 1 },
+      Leads: { view: 1, edit: 1 },
+      Customers: { view: 1, edit: 1 },
+      Workflow: {
+        Surveys: { view: 1, edit: 1 },
+        Quotations: { view: 1, edit: 1 },
+      },
+      Services: { view: 1 },
     }),
     isSystemRole: true,
   },
