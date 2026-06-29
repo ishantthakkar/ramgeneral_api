@@ -8,6 +8,7 @@ const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
 const CustomerActivity = require('../models/CustomerActivity');
 const { generateAccessToken, generateRefreshToken } = require('../utils/token');
+const { getProfileStatsForUser } = require('../utils/profileStatsHelpers');
 
 const PROFILE_UPLOAD_DIR = path.join(__dirname, '../uploads/profiles');
 const PROFILE_IMAGE_BASE = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
@@ -873,29 +874,7 @@ exports.getProfile = async (req, res) => {
         delete user.otpVerified;
         delete user.refreshTokens;
 
-        let roleMetrics = {};
-
-        if (isContractorRole(user.userRole)) {
-            roleMetrics = {
-                assignedProjects: await Customer.countDocuments({ assignToContractor: user._id }),
-                completedInstallations: await Customer.countDocuments({ assignToContractor: user._id, installationStatus: 'completed' }),
-                pendingInstallations: await Customer.countDocuments({ assignToContractor: user._id, installationStatus: { $ne: 'completed' } }),
-            };
-        } else if (isSalesPersonRole(user.userRole)) {
-            roleMetrics = {
-                allLeads: await Lead.countDocuments({ user_id: user._id }),
-                activeLeads: await Lead.countDocuments({ user_id: user._id, status: { $in: ['New', 'In Progress'] } }),
-                convertedCustomers: await Customer.countDocuments({ user_id: user._id }),
-                lostLeads: await Lead.countDocuments({ user_id: user._id, status: 'Lost Leads' }),
-            };
-        } else if (isProjectManagerRole(user.userRole)) {
-            const Survey = require('../models/Survey');
-            roleMetrics = {
-                pendingInspections: await Survey.countDocuments({ assignedTo: user._id, status: { $ne: 'completed' } }),
-                completedInspections: await Survey.countDocuments({ assignedTo: user._id, status: 'completed' }),
-                totalSurveys: await Survey.countDocuments({ assignedTo: user._id }),
-            };
-        }
+        const stats = await getProfileStatsForUser(user);
 
         const recentActivitiesList = await CustomerActivity.find({ user_id: user._id })
             .populate('customer_id', 'fullName email mobileNumber')
@@ -925,8 +904,8 @@ exports.getProfile = async (req, res) => {
                 ...user,
                 profileImage: toProfileImageUrl(user.profileImage),
                 permissions: user.roleId ? user.roleId.permissions : {},
-                ...roleMetrics,
             },
+            stats,
             recentActivities,
         });
     } catch (error) {
