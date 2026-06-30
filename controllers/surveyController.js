@@ -239,6 +239,10 @@ const formatSurveyResponse = async (surveyObj) => {
         }))
     );
     surveyObj.notes = await enrichNotesWithAuthors(coerceSurveyNotes(surveyObj.notes));
+    surveyObj.reopenNote = await enrichNotesWithAuthors(surveyObj.reopenNote || []);
+    surveyObj.installationReopenNote = await enrichNotesWithAuthors(
+        surveyObj.installationReopenNote || []
+    );
     return surveyObj;
 };
 
@@ -1517,6 +1521,154 @@ exports.updateSurveyNotes = async (req, res) => {
     } catch (error) {
         console.error('Update survey notes error:', error);
         return res.status(500).json({ message: 'Server error updating survey notes.' });
+    }
+};
+
+const parseReopenNoteInput = (body, userId) => {
+    const { notes, title, note } = body;
+
+    if (note !== undefined && note !== null) {
+        const entry = buildNoteEntry({ title, note, userId });
+        if (!entry) {
+            return { error: 'note is required.' };
+        }
+        return { entries: [entry] };
+    }
+
+    if (notes !== undefined && notes !== null) {
+        const parsed = typeof notes === 'string' ? tryParseJson(notes) : notes;
+
+        if (Array.isArray(parsed)) {
+            const entries = attachUserIdToNotes(
+                normalizeNotes(parsed).filter((item) => item.note),
+                userId
+            );
+            if (!entries.length) {
+                return { error: 'note is required.' };
+            }
+            return { entries };
+        }
+
+        if (parsed && typeof parsed === 'object') {
+            const entry = buildNoteEntry({
+                title: parsed.title,
+                note: parsed.note,
+                userId,
+            });
+            if (!entry) {
+                return { error: 'note is required.' };
+            }
+            return { entries: [entry] };
+        }
+    }
+
+    return { error: 'note is required.' };
+};
+
+exports.reopenSurvey = async (req, res) => {
+    try {
+        const surveyId = req.body.survey_id ?? req.body.surveyId;
+
+        if (!surveyId) {
+            return res.status(400).json({ message: 'survey_id is required.' });
+        }
+
+        const { entries, error } = parseReopenNoteInput(req.body, req.user.id);
+        if (error) {
+            return res.status(400).json({ message: error });
+        }
+
+        const survey = await Survey.findById(surveyId);
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found.' });
+        }
+
+        survey.status = 'reopen';
+        survey.reopenNote = [...(survey.reopenNote || []), ...entries];
+        survey.notes = [...coerceSurveyNotes(survey.notes), ...entries];
+        survey.markModified('reopenNote');
+        survey.markModified('notes');
+        await survey.save();
+
+        const surveyResponse = await formatSurveyResponse(survey.toObject());
+
+        const customer = survey.customer_id
+            ? await Customer.findById(survey.customer_id).select('name')
+            : null;
+
+        await createLog(
+            'Survey Reopened',
+            req.user.id,
+            customer?.name || survey.surveyName || 'Survey',
+            'Survey',
+            survey._id
+        );
+
+        return res.status(200).json({
+            survey: surveyResponse,
+            message: 'Survey status updated to reopen successfully.',
+        });
+    } catch (error) {
+        console.error('Reopen survey error:', error);
+        return res.status(500).json({ message: 'Server error reopening survey.' });
+    }
+};
+
+exports.reopenInstallation = async (req, res) => {
+    try {
+        const surveyId = req.body.survey_id ?? req.body.surveyId;
+
+        if (!surveyId) {
+            return res.status(400).json({ message: 'survey_id is required.' });
+        }
+
+        const { entries, error } = parseReopenNoteInput(req.body, req.user.id);
+        if (error) {
+            return res.status(400).json({ message: error });
+        }
+
+        const survey = await Survey.findById(surveyId);
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found.' });
+        }
+
+        survey.installationStatus = 'reopen';
+        survey.installationReopenNote = [...(survey.installationReopenNote || []), ...entries];
+        survey.markModified('installationReopenNote');
+        await survey.save();
+
+        if (survey.customer_id) {
+            try {
+                await Customer.updateOne(
+                    { _id: survey.customer_id },
+                    { $set: { installationStatus: 'reopen' } }
+                );
+            } catch (customerErr) {
+                console.warn('Customer installationStatus sync warning:', customerErr.message);
+            }
+        }
+
+        const surveyResponse = await formatSurveyResponse(survey.toObject());
+
+        const customer = survey.customer_id
+            ? await Customer.findById(survey.customer_id).select('name')
+            : null;
+
+        await createLog(
+            'Survey Installation Reopened',
+            req.user.id,
+            customer?.name || survey.surveyName || 'Survey',
+            'Survey',
+            survey._id
+        );
+
+        return res.status(200).json({
+            survey: surveyResponse,
+            message: 'Installation status updated to reopen successfully.',
+        });
+    } catch (error) {
+        console.error('Reopen installation error:', error);
+        return res.status(500).json({ message: 'Server error reopening installation.' });
     }
 };
 

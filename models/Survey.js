@@ -170,7 +170,7 @@ const surveySchema = new mongoose.Schema({
   },
   installationStatus: {
     type: String,
-    enum: ['new', 'start', 'in_progress', 'continue', 'completed', 'submitted'],
+    enum: ['new', 'start', 'in_progress', 'continue', 'completed', 'submitted', 'reopen'],
     default: 'new',
   },
   surveyDate: {
@@ -211,13 +211,38 @@ const surveySchema = new mongoose.Schema({
         ref: 'User',
       },
       createdAt: { type: Date, default: Date.now },
+      timestamp: { type: Date, default: Date.now },
+    },
+  ],
+  reopenNote: [
+    {
+      title: { type: String, trim: true, default: '' },
+      note: { type: String, trim: true, required: true },
+      user_id: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+      createdAt: { type: Date, default: Date.now },
+      timestamp: { type: Date, default: Date.now },
+    },
+  ],
+  installationReopenNote: [
+    {
+      title: { type: String, trim: true, default: '' },
+      note: { type: String, trim: true, required: true },
+      user_id: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+      createdAt: { type: Date, default: Date.now },
+      timestamp: { type: Date, default: Date.now },
     },
   ],
   projectManagerStatus: { type: String, trim: true, default: 'new' },
   installationStatus: {
     type: String,
     trim: true,
-    enum: ['new', 'start', 'in_progress', 'continue', 'completed', 'submitted'],
+    enum: ['new', 'start', 'in_progress', 'continue', 'completed', 'submitted', 'reopen'],
     default: 'new',
   },
   installationDate: { type: Date },

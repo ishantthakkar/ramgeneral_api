@@ -78,6 +78,8 @@ router.post('/surveys/assign', verifyToken, surveyController.assignSurvey);
 router.post('/surveys/assign-contractor', verifyToken, surveyController.assignContractor);
 router.post('/surveys/name', verifyToken, surveyController.updateSurveyName);
 router.post('/surveys/notes', verifyToken, surveyController.updateSurveyNotes);
+router.post('/surveys/reopen', verifyToken, surveyController.reopenSurvey);
+router.post('/surveys/installation/reopen', verifyToken, surveyController.reopenInstallation);
 router.post('/surveys/area-report', verifyToken, upload.any(), surveyController.saveAreaReport);
 router.post('/surveys/area-verification', verifyToken, upload.any(), surveyController.saveAreaVerification);
 router.post(
