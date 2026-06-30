@@ -1,7 +1,8 @@
 const mongoose = require('mongoose');
 
 const CATEGORIES = ['PSE&G', 'JCP&L', 'ATLANTIC CITY ENERGY'];
-const FIXTURE_TYPES = ['Proposed Fixture', 'Existing Fixture'];
+const FIXTURE_TYPES = ['Proposed Fixture', 'Existing Fixture', 'Accessories'];
+const ACCESSORY_TYPES = ['Independent', 'Combo'];
 
 const productSchema = new mongoose.Schema(
   {
@@ -71,6 +72,11 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    accessoryType: {
+      type: String,
+      enum: ACCESSORY_TYPES,
+      trim: true,
+    },
   },
   { timestamps: true }
 );
@@ -82,3 +88,4 @@ const Product = mongoose.model('Product', productSchema);
 module.exports = Product;
 module.exports.CATEGORIES = CATEGORIES;
 module.exports.FIXTURE_TYPES = FIXTURE_TYPES;
+module.exports.ACCESSORY_TYPES = ACCESSORY_TYPES;

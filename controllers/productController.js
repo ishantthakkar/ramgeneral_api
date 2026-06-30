@@ -5,7 +5,9 @@ const { createLog } = require('../utils/logger');
 const { CATEGORIES } = require('../models/Product');
 const {
   FIXTURE_TYPES,
+  ACCESSORY_TYPES,
   resolveFixtureType,
+  resolveAccessoryType,
   buildFixtureTypeFilter,
 } = require('../utils/productUtils');
 
@@ -46,6 +48,7 @@ function formatProduct(doc) {
     installationCost: p.installationCost ?? 0,
     productType: p.productType || 'Proposed Fixture',
     category: p.category || null,
+    accessoryType: p.accessoryType || null,
     isOtherFixture: Boolean(p.isOtherFixture),
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
@@ -73,6 +76,10 @@ function buildSkuFilter(sku, productType = null) {
 
 function generateExistingFixtureSku() {
   return `EF-${new mongoose.Types.ObjectId().toString()}`;
+}
+
+function generateAccessorySku() {
+  return `AC-${new mongoose.Types.ObjectId().toString()}`;
 }
 
 function parseProposedProductPayload(body, resolvedFixtureType) {
@@ -160,6 +167,36 @@ function parseExistingFixturePayload(body, resolvedFixtureType, existingProduct 
   };
 }
 
+function parseAccessoryPayload(body, resolvedFixtureType, existingProduct = null) {
+  const { name, accessoryType } = body;
+  const resolvedAccessoryType =
+    resolveAccessoryType(accessoryType) ||
+    resolveAccessoryType(existingProduct?.accessoryType);
+
+  if (!resolvedAccessoryType) {
+    return {
+      error: 'Valid accessoryType is required. Use "Independent" or "Combo".',
+    };
+  }
+
+  if (!name || !String(name).trim()) {
+    return { error: 'Name is required.' };
+  }
+
+  return {
+    value: {
+      sku: existingProduct?.sku || generateAccessorySku(),
+      name: String(name).trim(),
+      accessoryType: resolvedAccessoryType,
+      salesPrice: 0,
+      commission: 0,
+      installationCost: 0,
+      productType: resolvedFixtureType,
+      isOtherFixture: false,
+    },
+  };
+}
+
 function parseProductPayload(body, existingProduct = null) {
   const resolvedFixtureType =
     resolveFixtureType(body.productType) ||
@@ -167,12 +204,17 @@ function parseProductPayload(body, existingProduct = null) {
 
   if (!resolvedFixtureType) {
     return {
-      error: 'Valid productType is required. Use "Proposed Fixture" or "Existing Fixture".',
+      error:
+        'Valid productType is required. Use "Proposed Fixture", "Existing Fixture", or "Accessories".',
     };
   }
 
   if (resolvedFixtureType === 'Existing Fixture') {
     return parseExistingFixturePayload(body, resolvedFixtureType, existingProduct);
+  }
+
+  if (resolvedFixtureType === 'Accessories') {
+    return parseAccessoryPayload(body, resolvedFixtureType, existingProduct);
   }
 
   return parseProposedProductPayload(body, resolvedFixtureType);
@@ -186,7 +228,7 @@ async function findProductBySku(sku, excludeId = null, productType = null) {
   return Product.findOne(filter);
 }
 
-async function findProductByName(name, excludeId = null, productType = null) {
+async function findProductByName(name, excludeId = null, productType = null, accessoryType = null) {
   const trimmedName = String(name || '').trim();
   if (!trimmedName) return null;
 
@@ -194,6 +236,10 @@ async function findProductByName(name, excludeId = null, productType = null) {
     name: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, 'i') },
     ...buildFixtureTypeFilter(productType || 'Existing Fixture'),
   };
+
+  if (productType === 'Accessories' && accessoryType) {
+    filter.accessoryType = accessoryType;
+  }
 
   if (excludeId) {
     filter._id = { $ne: excludeId };
@@ -315,7 +361,7 @@ exports.listOtherFixtureProducts = async (req, res) => {
 
 exports.listProducts = async (req, res) => {
   try {
-    const { productType, type, category } = req.query;
+    const { productType, type, category, accessoryType } = req.query;
     const includeOther = String(req.query.includeOther || '').toLowerCase() === 'true';
     const otherOnly = String(req.query.otherOnly || '').toLowerCase() === 'true';
 
@@ -333,6 +379,19 @@ exports.listProducts = async (req, res) => {
 
       if (requestedFixtureType === 'Existing Fixture') {
         applyExistingFixtureFilter(filter, { includeOther, otherOnly });
+      }
+
+      if (requestedFixtureType === 'Accessories') {
+        const requestedAccessoryType = resolveAccessoryType(accessoryType);
+        if (accessoryType !== undefined && accessoryType !== null && String(accessoryType).trim() !== '') {
+          if (!requestedAccessoryType) {
+            return res.status(400).json({
+              message: 'Invalid accessoryType.',
+              allowedTypes: ACCESSORY_TYPES,
+            });
+          }
+          filter.accessoryType = requestedAccessoryType;
+        }
       }
     }
 
@@ -385,6 +444,18 @@ exports.createProduct = async (req, res) => {
       if (existingName) {
         return res.status(400).json({
           message: 'A product with this name already exists.',
+        });
+      }
+    } else if (parsed.value.productType === 'Accessories') {
+      const existingName = await findProductByName(
+        parsed.value.name,
+        null,
+        parsed.value.productType,
+        parsed.value.accessoryType
+      );
+      if (existingName) {
+        return res.status(400).json({
+          message: 'An accessory with this name already exists for this type.',
         });
       }
     } else {
@@ -455,6 +526,21 @@ exports.updateProduct = async (req, res) => {
       }
 
       product.name = parsed.value.name;
+    } else if (fixtureType === 'Accessories') {
+      const existingName = await findProductByName(
+        parsed.value.name,
+        id,
+        fixtureType,
+        parsed.value.accessoryType
+      );
+      if (existingName) {
+        return res.status(400).json({
+          message: 'An accessory with this name already exists for this type.',
+        });
+      }
+
+      product.name = parsed.value.name;
+      product.accessoryType = parsed.value.accessoryType;
     } else {
       const existingSku = await findProductBySku(parsed.value.sku, id, fixtureType);
       if (existingSku) {

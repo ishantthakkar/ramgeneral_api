@@ -498,6 +498,21 @@ const resolveSalesManagerName = (salesUser) => {
   return '';
 };
 
+const resolveCustomerSalesManagerName = (customer) => {
+  const fromSalesPerson = resolveSalesManagerName(customer.user_id);
+  if (fromSalesPerson) return fromSalesPerson;
+
+  const lead = customer.leadId;
+  if (!lead || typeof lead !== 'object') return '';
+
+  const assignedBy = lead.assignedBy;
+  if (!assignedBy || typeof assignedBy !== 'object') return '';
+  if (isSalesManagerRole(assignedBy.userRole)) {
+    return assignedBy.fullName || '';
+  }
+  return '';
+};
+
 const CUSTOMER_STATUSES = [
   'New',
   'in_progress',
@@ -599,7 +614,11 @@ exports.listConvertedCustomers = async (req, res) => {
     }
 
     const customers = await Customer.find(filter)
-      .populate('leadId', LEAD_FIELDS_FOR_POPULATE)
+      .populate({
+        path: 'leadId',
+        select: `${LEAD_FIELDS_FOR_POPULATE} assignedBy assignedAt`,
+        populate: { path: 'assignedBy', select: 'fullName userRole email' },
+      })
       .populate('assignToContractor', 'fullName email')
       .populate({
         path: 'user_id',
@@ -641,7 +660,7 @@ exports.listConvertedCustomers = async (req, res) => {
         verifyStatus: customer.verifyStatus,
         confirmDate: customer.confirmDate || null,
         salesPersonName: customer.user_id?.fullName || customer.user_id?.name || '',
-        salesManagerName: resolveSalesManagerName(customer.user_id),
+        salesManagerName: resolveCustomerSalesManagerName(customer),
         material: (customer.material || []).map(m => {
           const materialObj = m.toObject();
           materialObj.images = (materialObj.images || []).map(img => `${materialBaseUrl}${img}`);
@@ -2299,7 +2318,7 @@ exports.assignToContractor = async (req, res) => {
 
 exports.reassignSalesPerson = async (req, res) => {
   try {
-    const userId = req.user.id; // actor
+    const userId = req.user.id;
     const { sales_person_user_id, customerId } = req.body;
 
     if (!sales_person_user_id) {
@@ -2310,31 +2329,105 @@ exports.reassignSalesPerson = async (req, res) => {
       return res.status(400).json({ message: 'customerId is required.' });
     }
 
-    const User = require('../models/User');
     const newSalesUser = await User.findById(sales_person_user_id);
     if (!newSalesUser) {
       return res.status(404).json({ message: 'Sales person user not found.' });
     }
 
-    // Find the single customer
     const customer = await Customer.findById(customerId);
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
     }
 
-    // Update fields
     customer.user_id = sales_person_user_id;
     customer.status = 'New';
     customer.lastActivity = new Date();
 
     await customer.save();
 
-    await createLog('Salesperson Reassigned', userId, `Reassigned to ${newSalesUser.fullName}`, 'Customer Reassign', customer._id);
+    await createLog(
+      'Salesperson Reassigned',
+      userId,
+      `Reassigned to ${newSalesUser.fullName}`,
+      'Customer Reassign',
+      customer._id
+    );
 
     return res.status(200).json({ message: 'Customer reassigned successfully.', customer });
   } catch (error) {
     console.error('Reassign sales person error:', error);
     return res.status(500).json({ message: 'Server error reassigning sales person.' });
+  }
+};
+
+exports.assignSalesManagerToCustomer = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { customerId, salesManagerId } = req.body;
+
+    if (!customerId) {
+      return res.status(400).json({ message: 'customerId is required.' });
+    }
+
+    if (!salesManagerId) {
+      return res.status(400).json({ message: 'salesManagerId is required.' });
+    }
+
+    const Admin = require('../models/Admin');
+    const isAdmin = await Admin.findById(userId);
+    if (!isAdmin) {
+      return res.status(403).json({ message: 'Only admins can assign a sales manager.' });
+    }
+
+    const salesManager = await User.findById(salesManagerId);
+    if (!salesManager || !isSalesManagerRole(salesManager.userRole)) {
+      return res.status(400).json({ message: 'Selected user must be a sales manager.' });
+    }
+
+    const customer = await Customer.findById(customerId);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    if (!customer.leadId) {
+      return res.status(400).json({ message: 'Customer is not linked to a lead.' });
+    }
+
+    const lead = await Lead.findById(customer.leadId);
+    if (!lead) {
+      return res.status(404).json({ message: 'Linked lead not found.' });
+    }
+
+    lead.assignedBy = salesManager._id;
+    lead.assignedAt = new Date();
+    lead.lastActivity = new Date();
+    lead.activityLog.push({
+      activityType: 'Assignment',
+      location: '',
+      date: new Date(),
+      time: '',
+      note: `Sales manager ${salesManager.fullName} assigned by admin`,
+      createdAt: new Date(),
+    });
+    lead.markModified('activityLog');
+    await lead.save();
+
+    await createLog(
+      'Sales Manager Assigned',
+      userId,
+      `${salesManager.fullName} assigned to ${customer.name || lead.leadName || 'customer'}`,
+      'Customer',
+      customer._id
+    );
+
+    return res.status(200).json({
+      message: 'Sales manager assigned successfully.',
+      salesManagerName: salesManager.fullName || '',
+      customerId: customer._id,
+    });
+  } catch (error) {
+    console.error('Assign sales manager error:', error);
+    return res.status(500).json({ message: 'Server error assigning sales manager.' });
   }
 };
 
