@@ -160,6 +160,7 @@ router.post('/invoice', verifyToken, invoiceController.createInvoice);
 router.post('/invoice/mark-paid', verifyToken, invoiceController.addInvoicePayment);
 router.post('/invoice/payment', verifyToken, invoiceController.addInvoicePayment);
 router.post('/customers/reassign-salesperson', verifyToken, customerController.reassignSalesPerson);
+router.post('/customers/assign-sales-manager', verifyToken, customerController.assignSalesManagerToCustomer);
 router.post('/notes', verifyToken, customerController.addCustomerNote);
 router.get('/customers/:id/notes', verifyToken, customerController.getCustomerNotes);
 router.post('/customers/:id/notes', verifyToken, customerController.addCustomerNote);
