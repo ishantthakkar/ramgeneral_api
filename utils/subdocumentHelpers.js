@@ -404,14 +404,17 @@ const normalizeContactInfo = (contactInfo) => {
     });
 };
 
-const buildNoteEntry = ({ title, note, userId, createdAt } = {}) => {
+const buildNoteEntry = ({ title, note, userId, createdAt, timestamp } = {}) => {
   const noteText = (note ?? '').toString().trim();
   if (!noteText) return null;
+
+  const at = createdAt ? new Date(createdAt) : timestamp ? new Date(timestamp) : new Date();
 
   const entry = {
     title: (title ?? '').toString().trim(),
     note: noteText,
-    createdAt: createdAt ? new Date(createdAt) : new Date(),
+    createdAt: at,
+    timestamp: at,
   };
 
   if (userId) {
@@ -423,9 +426,12 @@ const buildNoteEntry = ({ title, note, userId, createdAt } = {}) => {
 
 const attachUserIdToNotes = (notes, userId) => {
   if (!userId || !Array.isArray(notes)) return notes || [];
+  const now = new Date();
   return notes.map((note) => ({
     ...note,
-    user_id: note.user_id || userId,
+    user_id: userId,
+    createdAt: now,
+    timestamp: now,
   }));
 };
 
@@ -463,6 +469,7 @@ const formatNoteForResponse = (note) => {
     writtenByName: createdBy?.fullName || createdBy?.email || '',
     createdBy,
     createdAt: plain.createdAt,
+    timestamp: plain.timestamp || plain.createdAt || null,
   };
 };
 
