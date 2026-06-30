@@ -77,6 +77,21 @@ const productSchema = new mongoose.Schema(
       enum: ACCESSORY_TYPES,
       trim: true,
     },
+    description: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    isComboItem: {
+      type: Boolean,
+      default: false,
+    },
+    comboAccessoryIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Product',
+      },
+    ],
   },
   { timestamps: true }
 );

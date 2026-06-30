@@ -49,6 +49,11 @@ function formatProduct(doc) {
     productType: p.productType || 'Proposed Fixture',
     category: p.category || null,
     accessoryType: p.accessoryType || null,
+    description: p.description || '',
+    isComboItem: Boolean(p.isComboItem),
+    comboAccessoryIds: Array.isArray(p.comboAccessoryIds)
+      ? p.comboAccessoryIds.map((id) => String(id))
+      : [],
     isOtherFixture: Boolean(p.isOtherFixture),
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
@@ -86,6 +91,9 @@ function parseProposedProductPayload(body, resolvedFixtureType) {
   const {
     sku,
     name,
+    description,
+    isComboItem,
+    comboAccessoryIds,
     utilityPrice,
     directPrice,
     agentCommission,
@@ -135,6 +143,11 @@ function parseProposedProductPayload(body, resolvedFixtureType) {
     value: {
       sku: sku.trim(),
       name: name.trim(),
+      description: description ? String(description).trim() : '',
+      isComboItem: Boolean(isComboItem),
+      comboAccessoryIds: Array.isArray(comboAccessoryIds)
+        ? comboAccessoryIds.map((id) => String(id))
+        : [],
       utilityPrice: utilityPriceResult.value,
       directPrice: directPriceResult.value,
       agentCommission: agentCommissionResult.value,
@@ -145,6 +158,42 @@ function parseProposedProductPayload(body, resolvedFixtureType) {
       productType: resolvedFixtureType,
     },
   };
+}
+
+async function validateComboAccessories(payload) {
+  const isCombo = Boolean(payload.isComboItem);
+  const ids = Array.isArray(payload.comboAccessoryIds) ? payload.comboAccessoryIds : [];
+
+  if (!isCombo) return { ok: true };
+
+  if (ids.length === 0) {
+    return { error: 'Combo item requires at least one accessory in comboAccessoryIds.' };
+  }
+
+  const objectIds = ids
+    .map((id) => {
+      try {
+        return new mongoose.Types.ObjectId(String(id));
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+
+  if (objectIds.length !== ids.length) {
+    return { error: 'One or more comboAccessoryIds are invalid.' };
+  }
+
+  const accessories = await Product.find({
+    _id: { $in: objectIds },
+    productType: 'Accessories',
+  }).select({ _id: 1 });
+
+  if (accessories.length !== ids.length) {
+    return { error: 'Combo accessories must reference Products with productType "Accessories".' };
+  }
+
+  return { ok: true };
 }
 
 function parseExistingFixturePayload(body, resolvedFixtureType, existingProduct = null) {
@@ -479,6 +528,11 @@ exports.createProduct = async (req, res) => {
       if (namePriceCheck.error) {
         return res.status(400).json({ message: namePriceCheck.error });
       }
+
+      const comboCheck = await validateComboAccessories(parsed.value);
+      if (comboCheck.error) {
+        return res.status(400).json({ message: comboCheck.error });
+      }
     }
 
     const product = await Product.create(parsed.value);
@@ -557,7 +611,17 @@ exports.updateProduct = async (req, res) => {
         return res.status(400).json({ message: namePriceCheck.error });
       }
 
+      const comboCheck = await validateComboAccessories(parsed.value);
+      if (comboCheck.error) {
+        return res.status(400).json({ message: comboCheck.error });
+      }
+
       applyProductFields(product, parsed.value);
+      product.description = parsed.value.description || '';
+      product.isComboItem = Boolean(parsed.value.isComboItem);
+      product.comboAccessoryIds = Array.isArray(parsed.value.comboAccessoryIds)
+        ? parsed.value.comboAccessoryIds
+        : [];
     }
     await product.save();
 

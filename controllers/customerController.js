@@ -485,6 +485,7 @@ const flattenPopulatedLead = (leadId, customer) => {
     lead_id: lead?.lead_id || '',
     leadName: lead?.leadName || lead?.name || customer?.name || '',
     dba: lead?.dba || '',
+    electricCompany: lead?.electricCompany || customer?.electricCompany || '',
   };
 };
 
@@ -798,6 +799,10 @@ exports.getCustomer = async (req, res) => {
       (customer.dba ?? updatedCustomer.dba ?? '').toString().trim() ||
       (updatedCustomer.company ?? '').toString().trim() ||
       leadFields.dba ||
+      '';
+    updatedCustomer.electricCompany =
+      (customer.electricCompany ?? updatedCustomer.electricCompany ?? '').toString().trim() ||
+      leadFields.electricCompany ||
       '';
     if (updatedCustomer.material && Array.isArray(updatedCustomer.material)) {
       updatedCustomer.material = updatedCustomer.material.map(item => {
@@ -1130,6 +1135,14 @@ exports.updateCustomer = async (req, res) => {
     setString('accountNumber');
     setString('company');
     setString('customerCode');
+    if (body.electricCompany !== undefined) {
+      customer.electricCompany =
+        body.electricCompany === null ? '' : String(body.electricCompany).trim();
+    }
+    if (body.electric_company !== undefined) {
+      customer.electricCompany =
+        body.electric_company === null ? '' : String(body.electric_company).trim();
+    }
     if (body.customer_code !== undefined && body.customerCode === undefined) {
       customer.customerCode = body.customer_code === null ? '' : String(body.customer_code).trim();
     }

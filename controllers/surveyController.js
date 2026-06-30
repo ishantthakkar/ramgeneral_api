@@ -42,6 +42,7 @@ const {
     formatExpensesForResponse,
     applyExpenseFieldsToSurveyResponse,
 } = require('../utils/extraExpenseHelpers');
+const { generateSurveyProjectPdfBuffer } = require('../utils/surveyProjectPdf');
 
 const WORKFLOW_SURVEY_STATUSES = [
     'submitted',
@@ -1249,6 +1250,75 @@ exports.getSurvey = async (req, res) => {
     } catch (error) {
         console.error('Get survey error:', error);
         return res.status(500).json({ message: 'Server error fetching survey.', error: error.message });
+    }
+};
+
+exports.exportSurveyProjectPdf = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const download = String(req.query.download || '').trim() === '1';
+        const workflow = String(req.query.workflow || 'survey').trim().toLowerCase();
+        const isInstallationWorkflow = workflow === 'installation';
+
+        const survey = await Survey.findById(id)
+            .populate('assignToContractor', 'fullName email mobileNumber userRole')
+            .populate('assignedTo', 'fullName email mobileNumber userRole');
+        if (!survey) {
+            return res.status(404).json({ message: 'Survey not found.' });
+        }
+
+        if (!survey.customer_id) {
+            return res.status(404).json({ message: 'Customer not found for this survey.' });
+        }
+
+        const customer = await Customer.findById(survey.customer_id)
+            .populate('leadId', LEAD_FIELDS_FOR_POPULATE)
+            .populate('user_id', 'fullName name email userRole');
+
+        if (!customer) {
+            return res.status(404).json({ message: 'Customer not found.' });
+        }
+
+        const surveyResponse = await formatSurveyResponse(survey.toObject());
+        const customerObj = customer.toObject();
+        const lead =
+            customer.leadId && typeof customer.leadId === 'object' ? customer.leadId : null;
+        customerObj.dba =
+            (customer.dba ?? customerObj.dba ?? '').toString().trim() ||
+            (customerObj.company ?? '').toString().trim() ||
+            (lead?.dba ?? '').toString().trim() ||
+            '';
+        customerObj.electricCompany =
+            (customer.electricCompany ?? '').toString().trim() ||
+            (lead?.electricCompany ?? '').toString().trim() ||
+            '';
+        if (Array.isArray(customerObj.addresses)) {
+            customerObj.addresses = customerObj.addresses.map(formatAddressForResponse);
+        }
+
+        const pdfBuffer = await generateSurveyProjectPdfBuffer({
+            survey: surveyResponse,
+            customer: customerObj,
+            workflow: isInstallationWorkflow ? 'installation' : 'survey',
+        });
+
+        const safeName = String(surveyResponse.surveyName || customerObj.name || 'project')
+            .trim()
+            .replace(/[^a-zA-Z0-9-_]+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '')
+            .slice(0, 60) || 'project';
+        const filename = `${safeName}-details.pdf`;
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader(
+            'Content-Disposition',
+            `${download ? 'attachment' : 'inline'}; filename="${filename}"`
+        );
+        return res.status(200).send(pdfBuffer);
+    } catch (error) {
+        console.error('Export survey project PDF error:', error);
+        return res.status(500).json({ message: 'Server error exporting project details PDF.' });
     }
 };
 
