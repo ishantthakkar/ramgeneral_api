@@ -1631,6 +1631,7 @@ exports.reopenInstallation = async (req, res) => {
         }
 
         survey.installationStatus = 'reopen';
+        survey.inspectionStatus = 'reopen';
         survey.installationReopenNote = [...(survey.installationReopenNote || []), ...entries];
         survey.markModified('installationReopenNote');
         await survey.save();
