@@ -466,6 +466,7 @@ const formatNoteForResponse = (note) => {
     note: plain.note || '',
     user_id: createdBy?.id || plain.user_id || null,
     createdByName: createdBy?.fullName || createdBy?.email || '',
+    createdByEmail: createdBy?.email || '',
     writtenByName: createdBy?.fullName || createdBy?.email || '',
     createdBy,
     createdAt: plain.createdAt,

@@ -69,6 +69,10 @@ const enrichSurveyNotesInObject = async (surveyObj) => {
   return {
     ...surveyObj,
     notes: await enrichNotesWithAuthors(coerceSurveyNotes(surveyObj.notes)),
+    reopenNote: await enrichNotesWithAuthors(surveyObj.reopenNote || []),
+    installationReopenNote: await enrichNotesWithAuthors(
+      surveyObj.installationReopenNote || []
+    ),
   };
 };
 

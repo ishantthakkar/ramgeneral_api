@@ -1585,9 +1585,7 @@ exports.reopenSurvey = async (req, res) => {
 
         survey.status = 'reopen';
         survey.reopenNote = [...(survey.reopenNote || []), ...entries];
-        survey.notes = [...coerceSurveyNotes(survey.notes), ...entries];
         survey.markModified('reopenNote');
-        survey.markModified('notes');
         await survey.save();
 
         const surveyResponse = await formatSurveyResponse(survey.toObject());
