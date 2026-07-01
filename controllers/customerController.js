@@ -3345,7 +3345,7 @@ exports.inspectionListByUser = async (req, res) => {
 
     const surveys = await Survey.find({
       assignedTo: userId,
-      installationStatus: 'submitted',
+      installationStatus: { $in: ['submitted', 'reopen'] },
     })
       .populate({
         path: 'customer_id',
