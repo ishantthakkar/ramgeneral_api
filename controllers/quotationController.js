@@ -613,8 +613,8 @@ exports.createQuotation = async (req, res) => {
         'Quotation Generated',
         req.user.id,
         getCustomerDisplayName(customer),
-        'Customer',
-        customer._id
+        'Quotation',
+        survey._id
       );
     }
 
@@ -703,8 +703,8 @@ exports.uploadQuotation = async (req, res) => {
         'Quotation Uploaded',
         req.user.id,
         getCustomerDisplayName(customer),
-        'Customer',
-        customer._id
+        'Quotation',
+        survey._id
       );
     }
 
@@ -783,6 +783,17 @@ exports.updateQuotationFixtureSkus = async (req, res) => {
     }
 
     await survey.save();
+
+    const customer = await Customer.findById(survey.customer_id).select('name');
+    if (req.user?.id) {
+      await createLog(
+        'Quotation Fixture SKUs Updated',
+        req.user.id,
+        customer?.name || survey.surveyName || 'Survey',
+        'Quotation',
+        survey._id
+      );
+    }
 
     const skuValidation = await validateSurveyFixtureSkus(survey);
 
@@ -902,8 +913,8 @@ exports.approveQuotation = async (req, res) => {
       'Quotation Approved',
       approverId,
       getCustomerDisplayName(customer),
-      'Customer',
-      customer._id
+      'Quotation',
+      survey._id
     );
 
     const { syncPayablesForCustomer } = require('../utils/payablesUtils');

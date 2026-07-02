@@ -9,6 +9,7 @@ const Customer = require('../models/Customer');
 const CustomerActivity = require('../models/CustomerActivity');
 const { generateAccessToken, generateRefreshToken } = require('../utils/token');
 const { getProfileStatsForUser } = require('../utils/profileStatsHelpers');
+const { createLog } = require('../utils/logger');
 
 const PROFILE_UPLOAD_DIR = path.join(__dirname, '../uploads/profiles');
 const PROFILE_IMAGE_BASE = process.env.API_BASE_URL || 'https://ramgeneral-api.onrender.com';
@@ -524,6 +525,8 @@ exports.createUser = async (req, res) => {
             const userObj = updatedUser.toObject();
             userObj.reportsTo = formatReportsTo(userObj.reportsTo);
 
+            await createLog('User Updated', req.user.id, updatedUser.fullName, 'User', updatedUser._id);
+
             return res.status(200).json({ user: userObj, message: 'User updated successfully.' });
         }
 
@@ -563,6 +566,8 @@ exports.createUser = async (req, res) => {
             .lean();
 
         populated.reportsTo = formatReportsTo(populated.reportsTo);
+
+        await createLog('User Created', req.user.id, populated.fullName, 'User', populated._id);
 
         return res.status(201).json({ user: populated, message: 'User created successfully.' });
     } catch (error) {

@@ -583,6 +583,24 @@ exports.createLead = async (req, res) => {
         return res.status(500).json({ message: 'Could not generate a unique lead_id.' });
       }
 
+      await createLog(
+        'Lead Created',
+        req.user.id,
+        name || leadName || 'Lead',
+        'Lead',
+        lead._id
+      );
+
+      if (isAssigningToSalesPerson && assignedSalesPerson) {
+        await createLog(
+          'Lead Assigned',
+          req.user.id,
+          `${name || leadName} → ${assignedSalesPerson.fullName}`,
+          'Lead',
+          lead._id
+        );
+      }
+
       const leadObj = formatLeadResponse(lead.toObject());
       return res.status(201).json({ lead: leadObj, message: 'Lead created successfully.' });
     }
@@ -1252,6 +1270,7 @@ exports.convertToCustomer = async (req, res) => {
     );
 
     let customer = await Customer.findOne({ leadId: lead._id });
+    const isNewCustomer = !customer;
     if (!customer) {
       customer = await Customer.create(customerPayload);
     } else {
@@ -1274,6 +1293,10 @@ exports.convertToCustomer = async (req, res) => {
     await migrateLeadHistoryToCustomer(lead, customer, req.user.id);
 
     await createLog('Lead Converted to Customer', req.user.id, lead.name, 'Customer', customer._id);
+
+    if (isNewCustomer) {
+      await createLog('Customer Created', req.user.id, customer.name, 'Customer', customer._id);
+    }
 
     return res.status(200).json({ lead, customer, message: 'Lead converted to customer.' });
   } catch (error) {

@@ -1487,8 +1487,8 @@ exports.updateCustomerSurveyStatus = async (req, res) => {
             'Survey Submitted',
             req.user.id,
             customer.name,
-            'Customer',
-            customer._id
+            'Survey',
+            survey._id
           );
         } else if (status === 'completed') {
           customer.status = 'completed';
@@ -1505,8 +1505,8 @@ exports.updateCustomerSurveyStatus = async (req, res) => {
             'Survey Verified',
             req.user.id,
             customer.name,
-            'Customer',
-            customer._id
+            'Survey',
+            survey._id
           );
         }
       }
@@ -2362,7 +2362,7 @@ exports.reassignSalesPerson = async (req, res) => {
       'Salesperson Reassigned',
       userId,
       `Reassigned to ${newSalesUser.fullName}`,
-      'Customer Reassign',
+      'Customer',
       customer._id
     );
 
@@ -2754,7 +2754,13 @@ exports.addCommissionPayment = async (req, res) => {
         note,
       });
 
-      await createLog('Contractor Payment Added', req.user.id, customer.name, 'Customer', customer._id);
+      await createLog(
+        `Contractor Payment Added (${type})`,
+        req.user.id,
+        customer.name,
+        'Payables',
+        surveyId
+      );
 
       const populatedCustomer = await Customer.findById(id).populate(
         'leadId',
@@ -2802,7 +2808,13 @@ exports.addCommissionPayment = async (req, res) => {
     });
 
     await customer.save();
-    await createLog('Commission Payment Added', req.user.id, customer.name, 'Customer', customer._id);
+    await createLog(
+      `Commission Payment Added (${type})`,
+      req.user.id,
+      customer.name,
+      'Payables',
+      surveyId
+    );
 
     return res.status(200).json({
       message: 'Commission payment added successfully.',
@@ -2876,7 +2888,7 @@ exports.updateCustomerCommissions = async (req, res) => {
     customer.commissions = [...customer.commissions, ...newCommissions];
     await customer.save();
 
-    await createLog('Commissions Updated', req.user.id, customer.name, 'Customer', customer._id);
+    await createLog('Commissions Updated', req.user.id, customer.name, 'Payables', customer._id);
 
     return res.status(200).json({
       message: 'Commissions updated successfully.',
@@ -3417,7 +3429,7 @@ exports.addInstallationNote = async (req, res) => {
     customer.installationNotes.push(newNote);
     await customer.save();
 
-    await createLog('Installation Note Added', req.user.id, customer.name, 'Customer', customer._id);
+    await createLog('Installation Note Added', req.user.id, customer.name, 'Installation', customer._id);
 
     return res.status(201).json({
       message: 'Installation note added successfully.',
@@ -3447,7 +3459,7 @@ exports.addInspectionNote = async (req, res) => {
     customer.inspectionNotes.push(newNote);
     await customer.save();
 
-    await createLog('Inspection Note Added', req.user.id, customer.name, 'Customer', customer._id);
+    await createLog('Inspection Note Added', req.user.id, customer.name, 'Inspection', customer._id);
 
     return res.status(201).json({
       message: 'Inspection note added successfully.',
@@ -3525,7 +3537,7 @@ exports.scheduleInstallation = async (req, res) => {
       'Survey Installation Scheduled',
       user_id,
       customer?.name || survey.surveyName || 'Survey',
-      'Survey',
+      'Installation',
       survey._id
     );
 
@@ -3565,7 +3577,7 @@ exports.updateInstallationStatus = async (req, res) => {
       'Survey Installation Status Updated to completed',
       req.user.id,
       survey.surveyName || 'Survey',
-      'Survey',
+      'Installation',
       survey._id
     );
 
@@ -3673,11 +3685,11 @@ exports.updateInspectionStatus = async (req, res) => {
 
     await createLog(
       requestedStatus === 'verified'
-        ? 'Inspection verified by admin'
-        : 'Inspection status update successfully',
+        ? 'Inspection Verified by Admin'
+        : 'Inspection Status Updated',
       user_id,
       survey.surveyName || 'Survey',
-      'Survey',
+      'Inspection',
       survey._id
     );
 
