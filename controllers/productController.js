@@ -696,3 +696,106 @@ exports.deleteProduct = async (req, res) => {
     return res.status(500).json({ message: 'Server error deleting product.' });
   }
 };
+
+exports.replaceProducts = async (req, res) => {
+  try {
+    const requestedFixtureType = resolveFixtureType(req.body?.productType);
+    if (!requestedFixtureType) {
+      return res.status(400).json({
+        message:
+          'Valid productType is required. Use "Proposed Fixture", "Existing Fixture", or "Accessories".',
+        allowedTypes: FIXTURE_TYPES,
+      });
+    }
+
+    const payloadRows = Array.isArray(req.body?.products) ? req.body.products : [];
+    if (payloadRows.length === 0) {
+      return res.status(400).json({ message: 'Products array is required.' });
+    }
+
+    // Delete only within the selected tab scope.
+    // IMPORTANT: Existing Fixture "Other Fixtures" are managed separately and must not be removed here.
+    const deleteFilter = buildFixtureTypeFilter(requestedFixtureType);
+    if (requestedFixtureType === 'Existing Fixture') {
+      applyExistingFixtureFilter(deleteFilter, { includeOther: false, otherOnly: false });
+    }
+
+    const docsToInsert = [];
+    const seenKeys = new Set();
+
+    for (const row of payloadRows) {
+      const parsed = parseProductPayload({ ...row, productType: requestedFixtureType });
+      if (parsed.error) {
+        return res.status(400).json({ message: parsed.error });
+      }
+
+      if (requestedFixtureType === 'Existing Fixture') {
+        const key = String(parsed.value.name || '').trim().toLowerCase();
+        if (!key) return res.status(400).json({ message: 'Name is required.' });
+        if (seenKeys.has(key)) {
+          return res.status(400).json({ message: `Duplicate name in upload: "${parsed.value.name}".` });
+        }
+        seenKeys.add(key);
+      } else if (requestedFixtureType === 'Accessories') {
+        const key = `${String(parsed.value.name || '').trim().toLowerCase()}::${String(
+          parsed.value.accessoryType || ''
+        )
+          .trim()
+          .toLowerCase()}`;
+        if (seenKeys.has(key)) {
+          return res
+            .status(400)
+            .json({ message: `Duplicate accessory in upload: "${parsed.value.name}".` });
+        }
+        seenKeys.add(key);
+      } else {
+        const skuKey = String(parsed.value.sku || '').trim().toLowerCase();
+        if (!skuKey) return res.status(400).json({ message: 'SKU is required.' });
+        if (seenKeys.has(skuKey)) {
+          return res.status(400).json({ message: `Duplicate SKU in upload: "${parsed.value.sku}".` });
+        }
+        seenKeys.add(skuKey);
+
+        const namePriceCheck = await validateProposedNamePriceConsistency(
+          parsed.value.name,
+          parsed.value,
+          null,
+          requestedFixtureType
+        );
+        if (namePriceCheck.error) {
+          return res.status(400).json({ message: namePriceCheck.error });
+        }
+
+        const comboCheck = await validateComboAccessories(parsed.value);
+        if (comboCheck.error) {
+          return res.status(400).json({ message: comboCheck.error });
+        }
+      }
+
+      docsToInsert.push(parsed.value);
+    }
+
+    const deleteResult = await Product.deleteMany(deleteFilter);
+    const created = await Product.insertMany(docsToInsert, { ordered: true });
+
+    if (req.user?.id) {
+      await createLog(
+        'Products Replaced',
+        req.user.id,
+        `${requestedFixtureType} (${created.length})`,
+        'Product',
+        null
+      );
+    }
+
+    return res.status(200).json({
+      message: 'Products replaced successfully.',
+      productType: requestedFixtureType,
+      deletedCount: deleteResult?.deletedCount ?? 0,
+      createdCount: created.length,
+    });
+  } catch (error) {
+    console.error('Replace products error:', error);
+    return res.status(500).json({ message: 'Server error replacing products.' });
+  }
+};
