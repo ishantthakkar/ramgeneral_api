@@ -55,6 +55,20 @@ const resolveSalesPerson = async (salesPersonId) => {
   return { user };
 };
 
+const resolveSalesManager = async (salesManagerId) => {
+  if (!salesManagerId || !mongoose.Types.ObjectId.isValid(salesManagerId)) {
+    return { error: 'Valid salesManagerId is required.' };
+  }
+  const user = await User.findById(salesManagerId);
+  if (!user) {
+    return { error: 'Sales manager not found.' };
+  }
+  if (!isSalesManagerRole(user.userRole)) {
+    return { error: 'Selected user is not a sales manager.' };
+  }
+  return { user };
+};
+
 const formatLeadId = (sourceCode, date, sequence) => {
   const yy = String(date.getFullYear()).slice(-2);
   const mm = String(date.getMonth() + 1).padStart(2, '0');
@@ -364,6 +378,7 @@ exports.createLead = async (req, res) => {
       lastActivity,
       notes,
       activityLog,
+      salesManagerId,
     } = req.body;
 
     const resolvedUser = await resolveCurrentUser(req.user.id);
@@ -430,6 +445,18 @@ exports.createLead = async (req, res) => {
         lead.leadSource = leadSourceCode || '';
       }
 
+      if (salesManagerId !== undefined) {
+        if (!salesManagerId) {
+          lead.salesManagerId = undefined;
+        } else {
+          const resolvedManager = await resolveSalesManager(salesManagerId);
+          if (resolvedManager.error) {
+            return res.status(400).json({ message: resolvedManager.error });
+          }
+          lead.salesManagerId = resolvedManager.user._id;
+        }
+      }
+
       // Backward-compatible single address fields
       if (street !== undefined) lead.street = street || '';
       if (city !== undefined) lead.city = city || '';
@@ -482,7 +509,12 @@ exports.createLead = async (req, res) => {
 
       await createLog(`Lead Updated`, req.user.id, name, 'Lead', updatedLead._id);
 
-      const updatedObj = formatLeadResponse(updatedLead.toObject());
+      const updatedPopulated = await Lead.findById(updatedLead._id)
+        .populate('user_id', 'fullName email')
+        .populate('assignedBy', 'fullName email')
+        .populate('salesManagerId', 'fullName email');
+
+      const updatedObj = formatLeadResponse(updatedPopulated.toObject());
       return res.status(200).json({ lead: updatedObj, message: 'Lead updated successfully.' });
     } else {
       // CREATE RECORD
@@ -495,6 +527,7 @@ exports.createLead = async (req, res) => {
       }
 
       const salesPersonId = req.body.salesPersonId || req.body.sales_person_user_id;
+      const incomingSalesManagerId = req.body.salesManagerId || req.body.sales_manager_id || salesManagerId;
       let assignedSalesPerson = null;
       if (salesPersonId) {
         const resolved = await resolveSalesPerson(salesPersonId);
@@ -502,6 +535,20 @@ exports.createLead = async (req, res) => {
           return res.status(400).json({ message: resolved.error });
         }
         assignedSalesPerson = resolved.user;
+      }
+
+      let assignedSalesManager = null;
+      if (incomingSalesManagerId) {
+        const resolvedManager = await resolveSalesManager(incomingSalesManagerId);
+        if (resolvedManager.error) {
+          return res.status(400).json({ message: resolvedManager.error });
+        }
+        assignedSalesManager = resolvedManager.user;
+      } else if (assignedSalesPerson?.reportsTo && mongoose.Types.ObjectId.isValid(assignedSalesPerson.reportsTo)) {
+        const managerCandidate = await User.findById(assignedSalesPerson.reportsTo);
+        if (managerCandidate && isSalesManagerRole(managerCandidate.userRole)) {
+          assignedSalesManager = managerCandidate;
+        }
       }
 
       const isAssigningToSalesPerson =
@@ -552,6 +599,7 @@ exports.createLead = async (req, res) => {
         notes: processedNotes,
         activityLog: processedActivityLog,
         user_id: assignedSalesPerson ? assignedSalesPerson._id : currentUser._id,
+        ...(assignedSalesManager ? { salesManagerId: assignedSalesManager._id } : {}),
         ...(isAssigningToSalesPerson
           ? { assignedBy: currentUser._id, assignedAt: new Date() }
           : {}),
@@ -601,7 +649,12 @@ exports.createLead = async (req, res) => {
         );
       }
 
-      const leadObj = formatLeadResponse(lead.toObject());
+      const leadPopulated = await Lead.findById(lead._id)
+        .populate('user_id', 'fullName email')
+        .populate('assignedBy', 'fullName email')
+        .populate('salesManagerId', 'fullName email');
+
+      const leadObj = formatLeadResponse(leadPopulated.toObject());
       return res.status(201).json({ lead: leadObj, message: 'Lead created successfully.' });
     }
   } catch (error) {
@@ -1076,6 +1129,12 @@ exports.assignLeadToSalesPerson = async (req, res) => {
     }
 
     lead.user_id = salesPerson._id;
+    if (salesPerson.reportsTo && mongoose.Types.ObjectId.isValid(salesPerson.reportsTo)) {
+      const managerCandidate = await User.findById(salesPerson.reportsTo);
+      if (managerCandidate && isSalesManagerRole(managerCandidate.userRole)) {
+        lead.salesManagerId = managerCandidate._id;
+      }
+    }
     lead.assignedBy = req.user.id;
     lead.assignedAt = new Date();
     lead.status = 'Assigned';
@@ -1101,7 +1160,12 @@ exports.assignLeadToSalesPerson = async (req, res) => {
     );
 
     const leadObj = formatLeadResponse(
-      (await Lead.findById(lead._id).populate('user_id', 'fullName email').populate('assignedBy', 'fullName email')).toObject()
+      (
+        await Lead.findById(lead._id)
+          .populate('user_id', 'fullName email')
+          .populate('assignedBy', 'fullName email')
+          .populate('salesManagerId', 'fullName email')
+      ).toObject()
     );
 
     return res.status(200).json({
@@ -1148,12 +1212,33 @@ const mapLeadToSummary = (lead) => ({
   assignedByName: lead.assignedBy?.fullName || '',
   assignedAt: lead.assignedAt || null,
   createdByName: lead.createdByName,
+  salesManagerId: lead.salesManagerId?._id || lead.salesManagerId || null,
+  salesManagerName: lead.salesManagerId?.fullName || '',
 });
 
 exports.listLeads = async (req, res) => {
   try {
     const { status, salesPerson } = req.query;
     const filter = {};
+
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+    const { currentUser, is_admin } = resolvedUser;
+
+    if (!is_admin && isSalesManagerRole(currentUser.userRole)) {
+      const teamMemberIds = await getTeamMemberIds(req.user.id);
+      const visibleUserIds = [
+        ...teamMemberIds,
+        new mongoose.Types.ObjectId(req.user.id),
+      ];
+
+      filter.$or = [
+        { salesManagerId: req.user.id },
+        { user_id: { $in: visibleUserIds } },
+      ];
+    }
 
     if (status) {
       if (!ALLOWED_STATUSES.includes(status)) {
@@ -1165,13 +1250,18 @@ exports.listLeads = async (req, res) => {
     }
 
     if (salesPerson) {
-      filter.user_id = salesPerson;
+      if (filter.$or) {
+        filter.user_id = salesPerson;
+      } else {
+        filter.user_id = salesPerson;
+      }
     }
 
     const leads = await Lead.find(filter)
       .sort({ createdAt: -1 })
       .populate('user_id', 'fullName email')
-      .populate('assignedBy', 'fullName email');
+      .populate('assignedBy', 'fullName email')
+      .populate('salesManagerId', 'fullName email');
 
     const leadSummaries = await Promise.all(
       leads.map(async (lead) => {
@@ -1193,10 +1283,40 @@ exports.getLead = async (req, res) => {
     const { id } = req.params;
     const lead = await Lead.findById(id)
       .populate('user_id', 'fullName email')
-      .populate('assignedBy', 'fullName email');
+      .populate('assignedBy', 'fullName email')
+      .populate('salesManagerId', 'fullName email');
 
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+    const { currentUser, is_admin } = resolvedUser;
+
+    if (!is_admin && isSalesManagerRole(currentUser.userRole)) {
+      const managerId = req.user.id.toString();
+      const leadManagerId = lead.salesManagerId?._id
+        ? lead.salesManagerId._id.toString()
+        : lead.salesManagerId
+          ? lead.salesManagerId.toString()
+          : '';
+      const leadSalesPersonId = lead.user_id?._id
+        ? lead.user_id._id.toString()
+        : lead.user_id
+          ? lead.user_id.toString()
+          : '';
+
+      const teamMemberIds = await getTeamMemberIds(req.user.id);
+      const isOnTeam = teamMemberIds.some((teamId) => teamId.toString() === leadSalesPersonId);
+      const isOwn = leadSalesPersonId === managerId;
+      const isAssignedToManager = leadManagerId === managerId;
+
+      if (!isAssignedToManager && !isOnTeam && !isOwn) {
+        return res.status(403).json({ message: 'You are not allowed to view this lead.' });
+      }
     }
 
     const leadObj = formatLeadResponse(lead.toObject());

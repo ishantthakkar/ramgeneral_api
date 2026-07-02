@@ -136,6 +136,10 @@ const leadSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
   },
+  salesManagerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  },
   assignedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',

@@ -604,6 +604,22 @@ exports.listConvertedCustomers = async (req, res) => {
       if (user && user.userRole === 'Project Manager') {
         filter.assignedTo = user_id;
       }
+      if (user && isSalesManagerRole(user.userRole)) {
+        const teamMembers = await User.find({ reportsTo: user_id }).select('_id').lean();
+        const visibleUserIds = [
+          ...teamMembers.map((member) => member._id),
+          new mongoose.Types.ObjectId(user_id),
+        ];
+
+        const managerLeadIds = await Lead.find({ salesManagerId: user_id })
+          .select('_id')
+          .lean();
+
+        filter.$or = [
+          { user_id: { $in: visibleUserIds } },
+          { leadId: { $in: managerLeadIds.map((l) => l._id) } },
+        ];
+      }
     }
 
     if (salesPerson) {
@@ -617,7 +633,7 @@ exports.listConvertedCustomers = async (req, res) => {
     const customers = await Customer.find(filter)
       .populate({
         path: 'leadId',
-        select: `${LEAD_FIELDS_FOR_POPULATE} assignedBy assignedAt`,
+        select: `${LEAD_FIELDS_FOR_POPULATE} assignedBy assignedAt salesManagerId`,
         populate: { path: 'assignedBy', select: 'fullName userRole email' },
       })
       .populate('assignToContractor', 'fullName email')
@@ -770,13 +786,45 @@ exports.getCustomer = async (req, res) => {
 
     // ✅ Get customer
     const customer = await Customer.findById(id)
-    .populate('leadId', LEAD_FIELDS_FOR_POPULATE)
+      .populate('leadId', `${LEAD_FIELDS_FOR_POPULATE} salesManagerId`)
       .populate('assignToContractor', 'fullName email mobileNumber')
       .populate('assignedTo', 'fullName email mobileNumber')
       .populate('user_id', 'fullName name email userRole');
 
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
+    }
+
+    const Admin = require('../models/Admin');
+    const admin = await Admin.findById(req.user.id);
+    if (!admin) {
+      const user = await User.findById(req.user.id).select('userRole').lean();
+      if (!user) {
+        return res.status(401).json({ message: 'Invalid authenticated user.' });
+      }
+
+      if (isSalesManagerRole(user.userRole)) {
+        const managerId = req.user.id.toString();
+        const customerSalesPersonId = customer.user_id?._id
+          ? customer.user_id._id.toString()
+          : customer.user_id
+            ? customer.user_id.toString()
+            : '';
+        const leadManagerId = customer.leadId?.salesManagerId
+          ? String(customer.leadId.salesManagerId)
+          : '';
+
+        const teamMembers = await User.find({ reportsTo: req.user.id }).select('_id').lean();
+        const isOnTeam = teamMembers.some(
+          (member) => member._id.toString() === customerSalesPersonId
+        );
+        const isOwn = customerSalesPersonId === managerId;
+        const isAssignedToManager = leadManagerId === managerId;
+
+        if (!isAssignedToManager && !isOnTeam && !isOwn) {
+          return res.status(403).json({ message: 'You are not allowed to view this customer.' });
+        }
+      }
     }
 
     // ✅ Get all surveys of this customer
