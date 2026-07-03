@@ -129,6 +129,7 @@ const leadSchema = new mongoose.Schema({
     location: { type: String, trim: true, default: '' },
     date: { type: Date, default: Date.now },
     time: { type: String, trim: true, default: '' },
+    timeSlot: { type: String, trim: true, default: '' },
     note: { type: String, trim: true, default: '' },
     createdAt: { type: Date, default: Date.now },
   }],
