@@ -62,7 +62,7 @@ const {
     attachSurveyWorkflowStatus,
 } = require('../utils/surveyWorkflowStatus');
 
-const { isSalesPersonRole } = require('../constants/userRoles');
+const { isSalesPersonRole, isSalesManagerRole } = require('../constants/userRoles');
 
 const WORKFLOW_LIST_STATUSES = ['submitted', 'completed'];
 
@@ -106,18 +106,19 @@ async function buildWorkflowSurveyListFilter(userId, admin) {
     }
 
     if (isSalesPersonRole(user.userRole) || role === 'sales person') {
-        const customers = await Customer.find({ user_id: userId }).select('_id').lean();
-        const customerIds = customers.map((customer) => customer._id);
+        return {
+            ...statusFilter,
+            user_id: userId,
+        };
+    }
 
-        const scopeFilter = [
-            { user_id: userId },
-            { assignedTo: userId },
-        ];
-
-        if (customerIds.length) {
-            scopeFilter.push({ customer_id: { $in: customerIds } });
+    if (isSalesManagerRole(user.userRole) || role === 'sales manager') {
+        const teamMembers = await User.find({ reportsTo: userId }).select('_id').lean();
+        const teamIds = teamMembers.map((member) => member._id);
+        const scopeFilter = [{ user_id: userId }];
+        if (teamIds.length) {
+            scopeFilter.push({ user_id: { $in: teamIds } });
         }
-
         return {
             ...statusFilter,
             $or: scopeFilter,
@@ -1660,8 +1661,35 @@ const parseReopenNoteInput = (body, userId) => {
     return { error: 'note is required.' };
 };
 
+async function assertCanVerifyOrReopenSurvey(req, res) {
+    const admin = await Admin.findById(req.user.id).select('_id').lean();
+    if (admin) {
+        return true;
+    }
+
+    const user = await User.findById(req.user.id).select('userRole').lean();
+    if (!user) {
+        res.status(401).json({ message: 'Invalid authenticated user.' });
+        return false;
+    }
+
+    const role = (user.userRole || '').trim().toLowerCase().replace(/_/g, ' ');
+    if (role === 'admin' || isSalesManagerRole(user.userRole)) {
+        return true;
+    }
+
+    res.status(403).json({
+        message: 'Only Sales Manager or Admin can verify or reopen surveys.',
+    });
+    return false;
+}
+
 exports.reopenSurvey = async (req, res) => {
     try {
+        if (!(await assertCanVerifyOrReopenSurvey(req, res))) {
+            return;
+        }
+
         const surveyId = req.body.survey_id ?? req.body.surveyId;
 
         if (!surveyId) {
@@ -1841,6 +1869,10 @@ exports.verifySurvey = async (req, res) => {
 
 exports.confirmVerifySurvey = async (req, res) => {
     try {
+        if (!(await assertCanVerifyOrReopenSurvey(req, res))) {
+            return;
+        }
+
         const { id } = req.params;
         const user_id = req.user.id;
 

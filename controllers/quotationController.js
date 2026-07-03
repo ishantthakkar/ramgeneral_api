@@ -511,6 +511,95 @@ exports.listQuotationsForManagerApproval = exports.listSurveyQuotationsByUser;
 
 exports.listCustomerQuotationsForAdmin = exports.listSurveyQuotationsByUser;
 
+async function assertCanGenerateQuotation(req, res, survey) {
+  const userId = req.user?.id;
+  if (!userId) {
+    res.status(401).json({ message: 'User not authenticated.' });
+    return false;
+  }
+
+  const admin = await Admin.findById(userId).select('_id').lean();
+  if (admin) {
+    return true;
+  }
+
+  const user = await User.findById(userId).select('userRole').lean();
+  if (!user) {
+    res.status(401).json({ message: 'Invalid authenticated user.' });
+    return false;
+  }
+
+  const role = (user.userRole || '').trim().toLowerCase().replace(/_/g, ' ');
+  if (role === 'admin') {
+    return true;
+  }
+
+  if (isSalesManagerRole(user.userRole)) {
+    const customer = await Customer.findById(survey.customer_id).populate(
+      'user_id',
+      'reportsTo userRole'
+    );
+    if (!customer) {
+      res.status(404).json({ message: 'Customer not found for this survey.' });
+      return false;
+    }
+    const access = await assertSalesManagerCanAccessCustomer(userId, customer);
+    if (!access.ok) {
+      res.status(403).json({ message: access.message });
+      return false;
+    }
+    return true;
+  }
+
+  if (isSalesPersonRole(user.userRole)) {
+    const surveyUserId = survey.user_id?.toString?.() || String(survey.user_id || '');
+    if (surveyUserId && surveyUserId === userId.toString()) {
+      return true;
+    }
+
+    const customer = await Customer.findById(survey.customer_id).select('user_id').lean();
+    const customerSalesPersonId =
+      customer?.user_id?.toString?.() || String(customer?.user_id || '');
+    if (customerSalesPersonId === userId.toString()) {
+      return true;
+    }
+
+    res.status(403).json({
+      message: 'You can only generate quotations for your own surveys.',
+    });
+    return false;
+  }
+
+  res.status(403).json({
+    message: 'Only admin, sales manager, or sales person can generate quotations.',
+  });
+  return false;
+}
+
+async function assertCanManageQuotationFixtureSkus(req, res) {
+  const userId = req.user?.id;
+  if (!userId) {
+    res.status(401).json({ message: 'User not authenticated.' });
+    return false;
+  }
+
+  const admin = await Admin.findById(userId).select('_id').lean();
+  if (admin) {
+    return true;
+  }
+
+  const user = await User.findById(userId).select('userRole').lean();
+  const role = (user?.userRole || '').trim().toLowerCase().replace(/_/g, ' ');
+  if (user && role === 'admin') {
+    return true;
+  }
+
+  res.status(403).json({
+    message: 'Only admins can manage quotation fixture SKUs.',
+  });
+  return false;
+}
+
 exports.previewQuotation = async (req, res) => {
   try {
     const surveyId = req.body?.surveyId || req.body?.survey_id || req.query?.surveyId || req.query?.survey_id;
@@ -521,6 +610,10 @@ exports.previewQuotation = async (req, res) => {
     }
 
     const { survey } = surveyResult;
+
+    if (!(await assertCanGenerateQuotation(req, res, survey))) {
+      return;
+    }
 
     const customer = await Customer.findById(survey.customer_id)
       .populate('user_id', 'fullName mobileNumber email')
@@ -558,6 +651,11 @@ exports.createQuotation = async (req, res) => {
     }
 
     const { survey } = surveyResult;
+
+    if (!(await assertCanGenerateQuotation(req, res, survey))) {
+      return;
+    }
+
     const customerId = survey.customer_id;
 
     const customer = await Customer.findById(customerId)
@@ -654,6 +752,11 @@ exports.uploadQuotation = async (req, res) => {
     }
 
     const { survey } = surveyResult;
+
+    if (!(await assertCanGenerateQuotation(req, res, survey))) {
+      return;
+    }
+
     const customerId = survey.customer_id;
 
     const customer = await Customer.findById(customerId);
@@ -738,6 +841,10 @@ exports.updateQuotationFixtureSkus = async (req, res) => {
     }
 
     const { survey } = surveyResult;
+
+    if (!(await assertCanManageQuotationFixtureSkus(req, res))) {
+      return;
+    }
 
     if (survey.quotationStatus === 'approved') {
       return res.status(400).json({ message: 'Cannot update fixture SKUs on an approved quotation.' });
@@ -833,15 +940,11 @@ exports.approveQuotation = async (req, res) => {
     const admin = await Admin.findById(approverId).select('_id').lean();
     if (!admin) {
       const approver = await User.findById(approverId).select('userRole').lean();
-      if (!approver || !isSalesManagerRole(approver.userRole)) {
+      const role = (approver?.userRole || '').trim().toLowerCase().replace(/_/g, ' ');
+      if (!approver || role !== 'admin') {
         return res.status(403).json({
-          message: 'Only admins and sales managers can approve quotations.',
+          message: 'Only admins can approve quotations.',
         });
-      }
-
-      const access = await assertSalesManagerCanAccessCustomer(approverId, customer);
-      if (!access.ok) {
-        return res.status(403).json({ message: access.message });
       }
     }
 

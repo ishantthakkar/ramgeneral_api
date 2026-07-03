@@ -854,8 +854,15 @@ exports.getCustomer = async (req, res) => {
       }
     }
 
-    // ✅ Get all surveys of this customer
-    const surveys = await Survey.find({ customer_id: id }).sort({ createdAt: -1 });
+    // ✅ Get surveys of this customer (sales person sees only their own surveys)
+    let surveyQuery = { customer_id: id };
+    if (!admin) {
+      const user = await User.findById(req.user.id).select('userRole').lean();
+      if (user && isSalesPersonRole(user.userRole)) {
+        surveyQuery.user_id = req.user.id;
+      }
+    }
+    const surveys = await Survey.find(surveyQuery).sort({ createdAt: -1 });
 
     // ✅ Get all activities of this customer
     const activitiesList = await CustomerActivity.find({ customer_id: id })
