@@ -25,7 +25,9 @@ app.use(express.json());
 const allowedOrigins = [
   'http://localhost:3000',          // local frontend
   'https://ramgeneral-admin.vercel.app',          // live frontend
-  'https://ramgeneral-admin-web.vercel.app'
+  'https://ramgeneral-admin-web.vercel.app',
+  'https://www.ramgeneral.supply',
+  'https://ramgeneral.supply',
 ];
 
 app.use(cors({

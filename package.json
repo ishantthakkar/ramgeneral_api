@@ -4,8 +4,8 @@
   "description": "Admin login API with Node.js, Express, and MongoDB",
   "main": "app.js",
   "scripts": {
-    "start": "node app.js",
-    "dev": "nodemon app.js",
+    "start": "node init && node app.js",
+    "dev": "node init && nodemon app.js",
     "seed:products": "node seedProducts.js",
     "seed:other-fixtures": "node seedOtherFixtures.js",
     "seed:roles": "node seedRoles.js"
