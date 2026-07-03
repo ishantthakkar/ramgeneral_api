@@ -33,6 +33,10 @@ const {
   formatAddressForResponse,
 } = require('../utils/subdocumentHelpers');
 const { migrateLeadHistoryToCustomer } = require('../utils/customerLeadHelpers');
+const {
+  normalizeActivityTimeSlot,
+  parseActivityDateOnly,
+} = require('../utils/activityTimeSlot');
 
 const ALLOWED_STATUSES = ['New', 'Assigned', 'In Progress', 'Lost Leads', 'Converted To Customer'];
 
@@ -380,8 +384,23 @@ const normalizeLeadActivityLog = (activityLog) => {
       return {
         activityType,
         location: (entry.location ?? '').toString().trim(),
-        date: entry.date ? new Date(entry.date) : new Date(),
-        time: (entry.time ?? entry.timeSlot ?? '').toString().trim(),
+        date: parseActivityDateOnly(entry.date),
+        time: normalizeActivityTimeSlot({
+          time: entry.time,
+          timeSlot: entry.timeSlot,
+          fromTime: entry.fromTime,
+          toTime: entry.toTime,
+          startTime: entry.startTime,
+          endTime: entry.endTime,
+        }),
+        timeSlot: normalizeActivityTimeSlot({
+          time: entry.time,
+          timeSlot: entry.timeSlot,
+          fromTime: entry.fromTime,
+          toTime: entry.toTime,
+          startTime: entry.startTime,
+          endTime: entry.endTime,
+        }),
         note,
         createdAt: entry.createdAt ? new Date(entry.createdAt) : new Date(),
       };
@@ -391,12 +410,15 @@ const normalizeLeadActivityLog = (activityLog) => {
 
 function formatLeadActivity(activity) {
   const plain = activity?.toObject ? activity.toObject() : { ...activity };
+  const timeSlot = plain.timeSlot || plain.time || '';
+
   return {
     _id: plain._id,
     activityType: plain.activityType || '',
     location: plain.location || '',
     date: plain.date || plain.createdAt || null,
-    time: plain.time || plain.timeSlot || '',
+    time: timeSlot,
+    timeSlot,
     note: plain.note || plain.notes || plain.outcome || '',
     createdAt: plain.createdAt,
   };
@@ -1103,6 +1125,10 @@ exports.addLeadActivity = async (req, res) => {
       date,
       time,
       timeSlot,
+      fromTime,
+      toTime,
+      startTime,
+      endTime,
       note,
       notes,
     } = req.body;
@@ -1125,6 +1151,14 @@ exports.addLeadActivity = async (req, res) => {
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
+    const normalizedTimeSlot = normalizeActivityTimeSlot({
+      time,
+      timeSlot,
+      fromTime,
+      toTime,
+      startTime,
+      endTime,
+    });
     if (!(await assertLeadAccess(resolvedUser, lead, res))) {
       return;
     }
@@ -1132,13 +1166,14 @@ exports.addLeadActivity = async (req, res) => {
     const activityEntry = {
       activityType: activityType.toString().trim(),
       location: (location ?? '').toString().trim(),
-      date: date ? new Date(date) : new Date(),
-      time: (time ?? timeSlot ?? '').toString().trim(),
+      date: parseActivityDateOnly(date),
+      time: normalizedTimeSlot,
+      timeSlot: normalizedTimeSlot,
       note: (note ?? notes ?? '').toString().trim(),
       createdAt: new Date(),
     };
 
-    lead.activityLog = [...(lead.activityLog || []), activityEntry];
+    lead.activityLog.push(activityEntry);
     lead.lastActivity = new Date();
     lead.markModified('activityLog');
     await lead.save();

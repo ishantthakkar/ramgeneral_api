@@ -160,6 +160,110 @@ function formatMinutesToRange(startMinutes, endMinutes) {
   return `${toLabel(startMinutes)} - ${toLabel(endMinutes)}`;
 }
 
+const WORKING_SLOT_INTERVAL_MINUTES = 30;
+
+function isSameLocalDate(dateValue, targetDate) {
+  if (!dateValue) return false;
+  const parsed = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  if (Number.isNaN(parsed.getTime())) return false;
+  return formatLocalDate(parsed) === formatLocalDate(targetDate);
+}
+
+function getDayBounds(targetDate) {
+  const dayStart = new Date(targetDate);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(targetDate);
+  dayEnd.setHours(23, 59, 59, 999);
+  return { dayStart, dayEnd };
+}
+
+function parseActivityTimeRange(timeValue, fallbackDurationMinutes = 30) {
+  const text = (timeValue || '').toString().trim();
+  if (!text) return null;
+
+  const rangeParts = text
+    .split(/\s*(?:-|–|to)\s*/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const start = parseTimeToMinutes(rangeParts[0]);
+  if (start === null) return null;
+
+  let end = rangeParts[1] ? parseTimeToMinutes(rangeParts[1]) : null;
+  if (end === null || end <= start) {
+    end = start + fallbackDurationMinutes;
+  }
+
+  return { start, end };
+}
+
+function rangesOverlap(slotStart, slotEnd, busyStart, busyEnd) {
+  return slotStart < busyEnd && slotEnd > busyStart;
+}
+
+async function getUserBusyRangesForDate(userId, targetDate) {
+  const { dayStart, dayEnd } = getDayBounds(targetDate);
+  const busyRanges = [];
+
+  const customerActivities = await CustomerActivity.find({
+    user_id: userId,
+    date: { $gte: dayStart, $lte: dayEnd },
+  })
+    .select('timeSlot date')
+    .lean();
+
+  customerActivities.forEach((activity) => {
+    if (!isSameLocalDate(activity.date, targetDate)) return;
+    const range = parseActivityTimeRange(activity.timeSlot, WORKING_SLOT_INTERVAL_MINUTES);
+    if (range) busyRanges.push(range);
+  });
+
+  const leads = await Lead.find({ user_id: userId }).select('activityLog').lean();
+  leads.forEach((lead) => {
+    (lead.activityLog || []).forEach((activity) => {
+      if (!isSameLocalDate(activity.date, targetDate)) return;
+      const range = parseActivityTimeRange(
+        activity.time || activity.timeSlot,
+        WORKING_SLOT_INTERVAL_MINUTES
+      );
+      if (range) busyRanges.push(range);
+    });
+  });
+
+  return busyRanges;
+}
+
+function buildWorkingTimeSlots({ isWorkingDay, fromMinutes, toMinutes, busyRanges = [] }) {
+  const slot = [];
+
+  if (
+    !isWorkingDay ||
+    fromMinutes === null ||
+    toMinutes === null ||
+    toMinutes <= fromMinutes
+  ) {
+    return slot;
+  }
+
+  for (
+    let start = fromMinutes;
+    start + WORKING_SLOT_INTERVAL_MINUTES <= toMinutes;
+    start += WORKING_SLOT_INTERVAL_MINUTES
+  ) {
+    const end = start + WORKING_SLOT_INTERVAL_MINUTES;
+    const isBusy = busyRanges.some(({ start: busyStart, end: busyEnd }) =>
+      rangesOverlap(start, end, busyStart, busyEnd)
+    );
+
+    slot.push({
+      time: formatMinutesToRange(start, end),
+      available: !isBusy,
+    });
+  }
+
+  return slot;
+}
+
 const getCanonicalRole = (value) => {
   if (!value || typeof value !== 'string') return null;
   const normalized = normalizeRoleName(value);
@@ -445,21 +549,14 @@ exports.getUserWorkingHours = async (req, res) => {
 
     const fromMinutes = parseTimeToMinutes(resolvedHours.workingFrom);
     const toMinutes = parseTimeToMinutes(resolvedHours.workingTo);
+    const busyRanges = await getUserBusyRangesForDate(id, requestedDate);
 
-    const slot = [];
-    for (let start = 0; start < 24 * 60; start += 60) {
-      const end = Math.min(start + 60, 24 * 60);
-      const hasWorkingWindow =
-        fromMinutes !== null && toMinutes !== null && toMinutes > fromMinutes;
-      const isWithinWorkingHours = hasWorkingWindow
-        ? start >= fromMinutes && end <= toMinutes
-        : false;
-
-      slot.push({
-        time: formatMinutesToRange(start, end),
-        available: Boolean(isWorkingDay && isWithinWorkingHours),
-      });
-    }
+    const slot = buildWorkingTimeSlots({
+      isWorkingDay,
+      fromMinutes,
+      toMinutes,
+      busyRanges,
+    });
 
     const today = formatLocalDate(new Date());
 
