@@ -82,6 +82,7 @@ function mapUserSummary(user) {
 const { enrichAreasWithProducts } = require('../utils/surveyProductUtils');
 const { applySurveySiteUpdates } = require('../utils/surveySiteUpdate');
 const { enrichSurveyNotesInObject } = require('../utils/surveyNotes');
+const { sendScheduleMeetingInviteIfNeeded } = require('../utils/meetingInviteEmail');
 
 async function formatSurveysForResponse(surveys, surveyBaseUrl) {
   return Promise.all(
@@ -2585,13 +2586,29 @@ exports.addCustomerActivity = async (req, res) => {
   try {
     const { id: customer_id } = req.params;
     const user_id = req.user.id;
-    const { activityType, date, timeSlot, location, address, notes, outcome, nextFollowUpDate } = req.body;
+    const {
+      activityType,
+      date,
+      timeSlot,
+      location,
+      address,
+      notes,
+      outcome,
+      nextFollowUpDate,
+      meetLink,
+      googleMeetLink,
+      meetingTitle,
+      meetingType,
+    } = req.body;
 
     if (!activityType) {
       return res.status(400).json({ message: 'activityType is required.' });
     }
 
-    const customer = await Customer.findById(customer_id);
+    const customer = await Customer.findById(customer_id).populate(
+      'user_id',
+      'fullName email userRole'
+    );
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found.' });
     }
@@ -2612,9 +2629,28 @@ exports.addCustomerActivity = async (req, res) => {
     // Log the activity in the general activity log
     await createLog(`Activity Recorded: ${activityType}`, user_id, customer.name, 'Customer', customer._id);
 
+    const meetingInvite = await sendScheduleMeetingInviteIfNeeded({
+      customer,
+      activity: {
+        ...(activity.toObject ? activity.toObject() : activity),
+        meetLink,
+        googleMeetLink,
+        meetingTitle,
+        meetingType,
+      },
+      fallbackUserId: user_id,
+    }).catch((emailError) => {
+      console.error('Schedule meeting invite email error:', emailError);
+      return {
+        emailSent: false,
+        reason: emailError.message || 'Failed to send meeting invite email.',
+      };
+    });
+
     return res.status(201).json({
       message: 'Activity recorded successfully.',
       activity,
+      ...(meetingInvite ? { meetingInvite } : {}),
     });
   } catch (error) {
     console.error('Add customer activity error:', error);
