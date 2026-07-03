@@ -261,8 +261,8 @@ exports.createInvoice = async (req, res) => {
         'Invoice Generated',
         req.user.id,
         getCustomerDisplayName(customer),
-        'Customer',
-        customer._id
+        'Invoice',
+        survey._id
       );
     }
 
@@ -322,8 +322,8 @@ exports.addInvoicePayment = async (req, res) => {
         'Invoice Payment Added',
         req.user.id,
         getCustomerDisplayName(customer),
-        'Customer',
-        customer._id
+        'Invoice',
+        survey._id
       );
     }
 

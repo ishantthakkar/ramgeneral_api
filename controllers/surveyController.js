@@ -1657,7 +1657,7 @@ exports.reopenInstallation = async (req, res) => {
             'Survey Installation Reopened',
             req.user.id,
             customer?.name || survey.surveyName || 'Survey',
-            'Survey',
+            'Installation',
             survey._id
         );
 

@@ -19,7 +19,21 @@ const activityLogSchema = new mongoose.Schema({
   recordType: {
     type: String,
     required: true,
-    enum: ['Lead', 'Customer', 'Survey', 'User', 'Assignment', 'Service', 'Product'],
+    enum: [
+      'Lead',
+      'Customer',
+      'Survey',
+      'User',
+      'Assignment',
+      'Service',
+      'Product',
+      'Quotation',
+      'Invoice',
+      'Payables',
+      'Installation',
+      'Inspection',
+      'Role',
+    ],
     trim: true,
   },
   recordId: {

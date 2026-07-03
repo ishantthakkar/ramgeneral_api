@@ -1,6 +1,7 @@
 const Role = require('../models/Role');
 const { buildFullPermissions } = require('../constants/roleModules');
 const { SYSTEM_ROLE_NAMES } = require('../constants/systemRoles');
+const { createLog } = require('../utils/logger');
 
 exports.createRole = async (req, res) => {
   try {
@@ -35,6 +36,8 @@ exports.createRole = async (req, res) => {
           { new: true, runValidators: true }
         );
 
+        await createLog('Role Updated', req.user.id, role.roleName, 'Role', role._id);
+
         return res.status(200).json({ message: 'Role updated successfully.', role });
       }
 
@@ -53,6 +56,8 @@ exports.createRole = async (req, res) => {
         { new: true, runValidators: true }
       );
 
+      await createLog('Role Updated', req.user.id, role.roleName, 'Role', role._id);
+
       return res.status(200).json({ message: 'Role updated successfully.', role });
     }
 
@@ -66,6 +71,8 @@ exports.createRole = async (req, res) => {
     }
 
     const role = await Role.create({ roleName, permissions, notes, isSystemRole: false });
+
+    await createLog('Role Created', req.user.id, role.roleName, 'Role', role._id);
 
     return res.status(201).json({
       message: 'Role created successfully.',
@@ -112,6 +119,8 @@ exports.deleteRole = async (req, res) => {
     if (role.isSystemRole) {
       return res.status(400).json({ message: 'System roles cannot be deleted.' });
     }
+
+    await createLog('Role Deleted', req.user.id, role.roleName, 'Role', role._id);
 
     await Role.findByIdAndDelete(id);
     return res.status(200).json({ message: 'Role deleted successfully.' });
