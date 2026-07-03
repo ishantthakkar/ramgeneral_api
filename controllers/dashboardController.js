@@ -106,6 +106,14 @@ async function countScopedSurveyQuotations(userId, admin) {
 
 exports.getAdminDashboardStats = async (req, res) => {
   try {
+    const userId = req.user.id;
+    const admin = await Admin.findById(userId).select('_id').lean();
+    const currentUser = admin ? null : await User.findById(userId).select('userRole').lean();
+    const hideActivityLog = Boolean(
+      currentUser &&
+        (isSalesManagerRole(currentUser.userRole) || isSalesPersonRole(currentUser.userRole))
+    );
+
     const [
       totalActiveLeads,
       totalCustomers,
@@ -135,10 +143,11 @@ exports.getAdminDashboardStats = async (req, res) => {
       }),
     ]);
 
-    // Fetch recent activity logs
-    const activityLog = await ActivityLog.find({})
-      .sort({ createdAt: -1 })
-      .limit(10);
+    const activityLog = hideActivityLog
+      ? []
+      : await ActivityLog.find({})
+          .sort({ createdAt: -1 })
+          .limit(10);
 
     return res.status(200).json({
       totalActiveLeads,

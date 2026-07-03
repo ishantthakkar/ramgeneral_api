@@ -13,11 +13,18 @@ const resolveProductCategory = (electricCompany) => {
 };
 
 const getElectricCompanyForCustomer = async (customerId) => {
-  const customer = await Customer.findById(customerId).select('leadId');
-  if (!customer?.leadId) return '';
+  const customer = await Customer.findById(customerId)
+    .select('electricCompany leadId')
+    .lean();
+  if (!customer) return '';
 
-  const lead = await Lead.findById(customer.leadId).select('electricCompany');
-  return lead?.electricCompany?.trim() || '';
+  const fromCustomer = (customer.electricCompany || '').toString().trim();
+  if (fromCustomer) return fromCustomer;
+
+  if (!customer.leadId) return '';
+
+  const lead = await Lead.findById(customer.leadId).select('electricCompany').lean();
+  return (lead?.electricCompany || '').toString().trim();
 };
 
 const toProductObjectId = (value) => {

@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const User = require('../models/User');
 const Role = require('../models/Role');
+const Admin = require('../models/Admin');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const Lead = require('../models/Lead');
@@ -284,6 +285,51 @@ const isProjectManagerRole = (value) =>
 const isAdminRole = (value) =>
   ROLE_VARIANTS.admin.some((v) => normalizeRoleName(v) === normalizeRoleName(value));
 
+const getReportsToId = (reportsTo) => {
+  if (!reportsTo) return '';
+  if (typeof reportsTo === 'object' && reportsTo._id) {
+    return reportsTo._id.toString();
+  }
+  return reportsTo.toString();
+};
+
+const resolveListActor = async (actorId) => {
+  const adminActor = await Admin.findById(actorId).select('_id').lean();
+  if (adminActor) {
+    return { hasFullAccess: true, currentUser: null };
+  }
+
+  const currentUser = await User.findById(actorId).select('userRole').lean();
+  if (!currentUser) {
+    return { hasFullAccess: false, currentUser: null };
+  }
+
+  if (isAdminRole(currentUser.userRole)) {
+    return { hasFullAccess: true, currentUser };
+  }
+
+  return { hasFullAccess: false, currentUser };
+};
+
+const applySalesManagerListFilter = (filter, managerId) => {
+  filter.$or = [{ _id: managerId }, { reportsTo: managerId }];
+};
+
+const getSalesManagerAccessError = (managerId, targetUser) => {
+  if (!targetUser) return 'User not found.';
+  const managerIdStr = managerId.toString();
+  const targetId = targetUser._id.toString();
+
+  if (targetId === managerIdStr) return null;
+
+  if (isSalesPersonRole(targetUser.userRole)) {
+    if (getReportsToId(targetUser.reportsTo) === managerIdStr) return null;
+    return 'You do not have permission to access this user.';
+  }
+
+  return 'You do not have permission to access this user.';
+};
+
 const resolveRoleNameFromInput = async (userRole) => {
   if (mongoose.Types.ObjectId.isValid(userRole)) {
     const roleDoc = await Role.findById(userRole);
@@ -561,6 +607,26 @@ exports.createUser = async (req, res) => {
             return res.status(400).json({ message: reportsToResult.error });
         }
 
+        const { hasFullAccess, currentUser: actorUser } = await resolveListActor(req.user.id);
+        if (!hasFullAccess && actorUser && isSalesManagerRole(actorUser.userRole)) {
+            if (isSalesPersonRole(roleResolved.userRole)) {
+                if (id) {
+                    const existingTarget = await User.findById(id).select('userRole reportsTo').lean();
+                    const accessError = getSalesManagerAccessError(req.user.id, existingTarget);
+                    if (accessError) {
+                        return res.status(403).json({ message: accessError });
+                    }
+                }
+                reportsToResult.reportsTo = req.user.id;
+            } else if (id) {
+                if (id.toString() !== req.user.id.toString()) {
+                    return res.status(403).json({ message: 'You can only update your own profile.' });
+                }
+            } else {
+                return res.status(403).json({ message: 'You can only create sales person users.' });
+            }
+        }
+
         if (!id && isSalesPersonRole(roleResolved.userRole)) {
             if (!email || !String(email).trim()) {
                 return res.status(400).json({ message: 'Email is required for sales person admin panel login.' });
@@ -684,6 +750,14 @@ exports.getUser = async (req, res) => {
             return res.status(404).json({ message: 'User not found.' });
         }
 
+        const { hasFullAccess, currentUser: actorUser } = await resolveListActor(req.user.id);
+        if (!hasFullAccess && actorUser && isSalesManagerRole(actorUser.userRole)) {
+            const accessError = getSalesManagerAccessError(req.user.id, user);
+            if (accessError) {
+                return res.status(403).json({ message: accessError });
+            }
+        }
+
         delete user.password;
         delete user.refreshTokens;
         delete user.otpCode;
@@ -763,6 +837,11 @@ exports.listUsers = async (req, res) => {
             filter.userRole = { $in: ROLE_VARIANTS[requestedRoleKey] };
         }
 
+        const { hasFullAccess, currentUser: actorUser } = await resolveListActor(req.user.id);
+        if (!hasFullAccess && actorUser && isSalesManagerRole(actorUser.userRole)) {
+            applySalesManagerListFilter(filter, req.user.id);
+        }
+
         const users = await User.find(filter)
             .populate('reportsTo', 'fullName userRole company email mobileNumber')
             .sort({ createdAt: -1 })
@@ -805,13 +884,33 @@ exports.listUsers = async (req, res) => {
             };
         }));
 
+        const countsFilter = {};
+        if (!hasFullAccess && actorUser && isSalesManagerRole(actorUser.userRole)) {
+            applySalesManagerListFilter(countsFilter, req.user.id);
+        }
+
         const counts = {
-            total_users: await User.countDocuments(),
-            total_sales_persons: await User.countDocuments({ userRole: { $in: ROLE_VARIANTS.sales_person } }),
-            total_contractors: await User.countDocuments({ userRole: { $in: ROLE_VARIANTS.contractor } }),
-            total_project_managers: await User.countDocuments({ userRole: { $in: ROLE_VARIANTS.project_manager } }),
-            total_sales_managers: await User.countDocuments({ userRole: { $in: ROLE_VARIANTS.sales_manager } }),
-            total_admins: await User.countDocuments({ userRole: { $in: ROLE_VARIANTS.admin } }),
+            total_users: await User.countDocuments(countsFilter),
+            total_sales_persons: await User.countDocuments({
+                ...countsFilter,
+                userRole: { $in: ROLE_VARIANTS.sales_person },
+            }),
+            total_contractors: await User.countDocuments({
+                ...countsFilter,
+                userRole: { $in: ROLE_VARIANTS.contractor },
+            }),
+            total_project_managers: await User.countDocuments({
+                ...countsFilter,
+                userRole: { $in: ROLE_VARIANTS.project_manager },
+            }),
+            total_sales_managers: await User.countDocuments({
+                ...countsFilter,
+                userRole: { $in: ROLE_VARIANTS.sales_manager },
+            }),
+            total_admins: await User.countDocuments({
+                ...countsFilter,
+                userRole: { $in: ROLE_VARIANTS.admin },
+            }),
         };
 
         return res.status(200).json({ users: usersWithMetrics, counts });

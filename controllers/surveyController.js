@@ -200,6 +200,16 @@ const parseFormJsonInput = (value) => {
     return parsed;
 };
 
+const parseIdArrayInput = (value) => {
+    const parsed = parseFormJsonInput(value);
+    if (!parsed) return [];
+    if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item || '').trim()).filter(Boolean);
+    }
+    const single = String(parsed).trim();
+    return single ? [single] : [];
+};
+
 const toSurveyImageUrl = (filename) =>
     `${SURVEY_IMAGE_BASE}/uploads/surveys/${filename}`;
 
@@ -964,6 +974,35 @@ const processUploadedImages = async (files) => {
     return imageNames;
 };
 
+async function assertCanCreateSurveyForCustomer(req, customer, res) {
+    const admin = await Admin.findById(req.user.id);
+    if (admin) {
+        return true;
+    }
+
+    const user = await User.findById(req.user.id).select('userRole').lean();
+    if (!user) {
+        res.status(401).json({ message: 'Invalid authenticated user.' });
+        return false;
+    }
+
+    if (!isSalesPersonRole(user.userRole)) {
+        return true;
+    }
+
+    const salesPersonId = req.user.id.toString();
+    const customerSalesPersonId = customer.user_id ? customer.user_id.toString() : '';
+
+    if (customerSalesPersonId !== salesPersonId || !customer.leadId) {
+        res.status(403).json({
+            message: 'You are not allowed to create a survey for this customer.',
+        });
+        return false;
+    }
+
+    return true;
+}
+
 exports.createNewSurvey = async (req, res) => {
     try {
         const user_id = req.user.id;
@@ -988,6 +1027,11 @@ exports.createNewSurvey = async (req, res) => {
         const customer = await Customer.findById(customer_id);
         if (!customer) {
             return res.status(404).json({ message: 'Customer not found.' });
+        }
+
+        const canCreate = await assertCanCreateSurveyForCustomer(req, customer, res);
+        if (!canCreate) {
+            return;
         }
 
         let normalizedSurveyType = 'direct';
@@ -1094,6 +1138,38 @@ exports.createSurvey = async (req, res) => {
         if (surveyDate) survey.surveyDate = new Date(surveyDate);
         survey.markAsCompleted = completionFlag;
 
+        const deleteAreaIds = parseIdArrayInput(req.body.delete_area_ids);
+        const deleteFixtureIds = parseIdArrayInput(req.body.delete_fixture_ids);
+
+        if (deleteAreaIds.length) {
+            for (const areaId of deleteAreaIds) {
+                const existingArea = survey.areas.id(areaId);
+                if (!existingArea) {
+                    return res.status(404).json({ message: `Area not found: ${areaId}` });
+                }
+                existingArea.deleteOne();
+            }
+            survey.markModified('areas');
+        }
+
+        if (deleteFixtureIds.length) {
+            for (const fixtureId of deleteFixtureIds) {
+                let found = false;
+                for (const area of survey.areas) {
+                    const existingFixture = area.fixtures.id(fixtureId);
+                    if (existingFixture) {
+                        existingFixture.deleteOne();
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    return res.status(404).json({ message: `Fixture not found: ${fixtureId}` });
+                }
+            }
+            survey.markModified('areas');
+        }
+
         if (processedAreas !== null) {
             try {
                 upsertSurveyAreas(survey, processedAreas);
@@ -1135,25 +1211,24 @@ exports.getSurveyProducts = async (req, res) => {
         const electricCompany = await getElectricCompanyForCustomer(customer_id);
         const category = resolveProductCategory(electricCompany);
 
-        if (!category) {
-            return res.status(200).json({
-                electricCompany: electricCompany || '',
-                category: null,
-                products: [],
-                message:
-                    'Lead electric company does not match a product category. Use one of: PSE&G, JCP&L, ATLANTIC CITY ENERGY.',
-            });
+        const proposedFixtureFilter = buildFixtureTypeFilter('Proposed Fixture');
+
+        let products = [];
+        if (category) {
+            products = await Product.find({
+                category,
+                ...proposedFixtureFilter,
+            })
+                .sort({ name: 1 })
+                .lean();
         }
 
-        const products = await Product.find({
-            category,
-            ...buildFixtureTypeFilter('Proposed Fixture'),
-        })
-            .sort({ name: 1 })
-            .lean();
+        if (!products.length) {
+            products = await Product.find(proposedFixtureFilter).sort({ name: 1 }).lean();
+        }
 
         return res.status(200).json({
-            electricCompany,
+            electricCompany: electricCompany || '',
             category,
             products,
         });
@@ -1384,11 +1459,31 @@ exports.getInstallationWorkflow = async (req, res) => {
 exports.updateSurvey = async (req, res) => {
     try {
         const { id } = req.params;
-        const { surveyName, areaName, note, notes, status, surveyDate, markAsCompleted, MarkasCompleted } = req.body;
+        const {
+            surveyName,
+            surveyType,
+            survey_type,
+            areaName,
+            note,
+            notes,
+            status,
+            surveyDate,
+            markAsCompleted,
+            MarkasCompleted,
+        } = req.body;
+        const typeValue = surveyType !== undefined ? surveyType : survey_type;
 
         const survey = await Survey.findById(id);
         if (!survey) {
             return res.status(404).json({ message: 'Survey not found.' });
+        }
+
+        if (typeValue !== undefined && typeValue !== null && String(typeValue).trim()) {
+            const normalizedSurveyType = String(typeValue).trim().toLowerCase();
+            if (!['direct', 'utility'].includes(normalizedSurveyType)) {
+                return res.status(400).json({ message: 'Invalid surveyType. Allowed: direct, utility.' });
+            }
+            survey.surveyType = normalizedSurveyType;
         }
 
         if (surveyName !== undefined) survey.surveyName = surveyName;

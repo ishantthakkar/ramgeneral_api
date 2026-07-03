@@ -59,6 +59,20 @@ const resolveSalesPerson = async (salesPersonId) => {
   return { user };
 };
 
+const resolveSalesManager = async (salesManagerId) => {
+  if (!salesManagerId || !mongoose.Types.ObjectId.isValid(salesManagerId)) {
+    return { error: 'Valid salesManagerId is required.' };
+  }
+  const user = await User.findById(salesManagerId);
+  if (!user) {
+    return { error: 'Sales manager not found.' };
+  }
+  if (!isSalesManagerRole(user.userRole)) {
+    return { error: 'Selected user is not a sales manager.' };
+  }
+  return { user };
+};
+
 const formatLeadId = (sourceCode, date, sequence) => {
   const yy = String(date.getFullYear()).slice(-2);
   const mm = String(date.getMonth() + 1).padStart(2, '0');
@@ -174,6 +188,79 @@ async function formatLeadForUserListWithNotes(lead) {
 async function getTeamMemberIds(managerId) {
   const teamMembers = await User.find({ reportsTo: managerId }).select('_id').lean();
   return teamMembers.map((member) => member._id);
+}
+
+function getLeadAssigneeId(lead) {
+  if (!lead?.user_id) return '';
+  if (typeof lead.user_id === 'object' && lead.user_id._id) {
+    return lead.user_id._id.toString();
+  }
+  return lead.user_id.toString();
+}
+
+function getLeadManagerId(lead) {
+  if (!lead?.salesManagerId) return '';
+  if (typeof lead.salesManagerId === 'object' && lead.salesManagerId._id) {
+    return lead.salesManagerId._id.toString();
+  }
+  return lead.salesManagerId.toString();
+}
+
+function salesPersonCanAccessLead(currentUser, lead) {
+  const salesPersonId = currentUser._id.toString();
+  if (getLeadAssigneeId(lead) === salesPersonId) {
+    return true;
+  }
+
+  const createdByEmail = (lead.createdByEmail || '').toLowerCase();
+  const userEmail = (currentUser.email || '').toLowerCase();
+  return Boolean(createdByEmail && userEmail && createdByEmail === userEmail);
+}
+
+function buildSalesPersonLeadFilter(currentUser) {
+  const salesPersonId = currentUser._id;
+  const userEmail = (currentUser.email || '').toLowerCase();
+  const clauses = [{ user_id: salesPersonId }];
+  if (userEmail) {
+    clauses.push({ createdByEmail: userEmail });
+  }
+  return { $or: clauses };
+}
+
+async function assertLeadAccess(resolvedUser, lead, res) {
+  if (!lead) {
+    res.status(404).json({ message: 'Lead not found.' });
+    return false;
+  }
+
+  const { currentUser, is_admin } = resolvedUser;
+  if (is_admin) return true;
+
+  if (isSalesManagerRole(currentUser.userRole)) {
+    const managerId = currentUser._id.toString();
+    const leadManagerId = getLeadManagerId(lead);
+    const leadSalesPersonId = getLeadAssigneeId(lead);
+    const teamMemberIds = await getTeamMemberIds(currentUser._id);
+    const isOnTeam = teamMemberIds.some((teamId) => teamId.toString() === leadSalesPersonId);
+    const isOwn = leadSalesPersonId === managerId;
+    const isAssignedToManager = leadManagerId === managerId;
+
+    if (!isAssignedToManager && !isOnTeam && !isOwn) {
+      res.status(403).json({ message: 'You are not allowed to access this lead.' });
+      return false;
+    }
+    return true;
+  }
+
+  if (isSalesPersonRole(currentUser.userRole)) {
+    if (!salesPersonCanAccessLead(currentUser, lead)) {
+      res.status(403).json({ message: 'You are not allowed to access this lead.' });
+      return false;
+    }
+    return true;
+  }
+
+  return true;
 }
 
 const resolveNewBillFilenames = (req, uploadElectricityBill, upload_electricity_bill) => {
@@ -386,6 +473,7 @@ exports.createLead = async (req, res) => {
       lastActivity,
       notes,
       activityLog,
+      salesManagerId,
     } = req.body;
 
     const resolvedUser = await resolveCurrentUser(req.user.id);
@@ -420,6 +508,10 @@ exports.createLead = async (req, res) => {
         return res.status(404).json({ message: 'Lead not found.' });
       }
 
+      if (!(await assertLeadAccess(resolvedUser, lead, res))) {
+        return;
+      }
+
       // Update basic fields
       if (leadName !== undefined) lead.leadName = leadName;
       if (name !== undefined) lead.name = name;
@@ -450,6 +542,18 @@ exports.createLead = async (req, res) => {
           });
         }
         lead.leadSource = leadSourceCode || '';
+      }
+
+      if (salesManagerId !== undefined && !( !is_admin && isSalesPersonRole(currentUser.userRole))) {
+        if (!salesManagerId) {
+          lead.salesManagerId = undefined;
+        } else {
+          const resolvedManager = await resolveSalesManager(salesManagerId);
+          if (resolvedManager.error) {
+            return res.status(400).json({ message: resolvedManager.error });
+          }
+          lead.salesManagerId = resolvedManager.user._id;
+        }
       }
 
       // Backward-compatible single address fields
@@ -504,7 +608,12 @@ exports.createLead = async (req, res) => {
 
       await createLog(`Lead Updated`, req.user.id, name, 'Lead', updatedLead._id);
 
-      const updatedObj = formatLeadResponse(updatedLead.toObject());
+      const updatedPopulated = await Lead.findById(updatedLead._id)
+        .populate('user_id', 'fullName email')
+        .populate('assignedBy', 'fullName email')
+        .populate('salesManagerId', 'fullName email');
+
+      const updatedObj = formatLeadResponse(updatedPopulated.toObject());
       return res.status(200).json({ lead: updatedObj, message: 'Lead updated successfully.' });
     } else {
       // CREATE RECORD
@@ -516,7 +625,13 @@ exports.createLead = async (req, res) => {
         });
       }
 
-      const salesPersonId = req.body.salesPersonId || req.body.sales_person_user_id;
+      const salesPersonIdRaw = req.body.salesPersonId || req.body.sales_person_user_id;
+      let salesPersonId =
+        !is_admin && isSalesPersonRole(currentUser.userRole) ? null : salesPersonIdRaw;
+      let incomingSalesManagerId =
+        !is_admin && isSalesPersonRole(currentUser.userRole)
+          ? null
+          : req.body.salesManagerId || req.body.sales_manager_id || salesManagerId;
       let assignedSalesPerson = null;
       if (salesPersonId) {
         const resolved = await resolveSalesPerson(salesPersonId);
@@ -524,6 +639,28 @@ exports.createLead = async (req, res) => {
           return res.status(400).json({ message: resolved.error });
         }
         assignedSalesPerson = resolved.user;
+      }
+
+      let assignedSalesManager = null;
+      if (incomingSalesManagerId) {
+        const resolvedManager = await resolveSalesManager(incomingSalesManagerId);
+        if (resolvedManager.error) {
+          return res.status(400).json({ message: resolvedManager.error });
+        }
+        assignedSalesManager = resolvedManager.user;
+      } else if (assignedSalesPerson?.reportsTo && mongoose.Types.ObjectId.isValid(assignedSalesPerson.reportsTo)) {
+        const managerCandidate = await User.findById(assignedSalesPerson.reportsTo);
+        if (managerCandidate && isSalesManagerRole(managerCandidate.userRole)) {
+          assignedSalesManager = managerCandidate;
+        }
+      } else if (!is_admin && isSalesPersonRole(currentUser.userRole)) {
+        const creator = await User.findById(currentUser._id).select('reportsTo').lean();
+        if (creator?.reportsTo && mongoose.Types.ObjectId.isValid(creator.reportsTo)) {
+          const managerCandidate = await User.findById(creator.reportsTo);
+          if (managerCandidate && isSalesManagerRole(managerCandidate.userRole)) {
+            assignedSalesManager = managerCandidate;
+          }
+        }
       }
 
       const isAssigningToSalesPerson =
@@ -574,6 +711,7 @@ exports.createLead = async (req, res) => {
         notes: processedNotes,
         activityLog: processedActivityLog,
         user_id: assignedSalesPerson ? assignedSalesPerson._id : currentUser._id,
+        ...(assignedSalesManager ? { salesManagerId: assignedSalesManager._id } : {}),
         ...(isAssigningToSalesPerson
           ? { assignedBy: currentUser._id, assignedAt: new Date() }
           : {}),
@@ -623,7 +761,12 @@ exports.createLead = async (req, res) => {
         );
       }
 
-      const leadObj = formatLeadResponse(lead.toObject());
+      const leadPopulated = await Lead.findById(lead._id)
+        .populate('user_id', 'fullName email')
+        .populate('assignedBy', 'fullName email')
+        .populate('salesManagerId', 'fullName email');
+
+      const leadObj = formatLeadResponse(leadPopulated.toObject());
       return res.status(201).json({ lead: leadObj, message: 'Lead created successfully.' });
     }
   } catch (error) {
@@ -654,6 +797,10 @@ exports.addLeadNote = async (req, res) => {
     const lead = await Lead.findById(id);
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    if (!(await assertLeadAccess(resolvedUser, lead, res))) {
+      return;
     }
 
     const noteEntry = buildNoteEntry({
@@ -690,9 +837,20 @@ exports.getLeadAddresses = async (req, res) => {
       return res.status(400).json({ message: 'Valid lead id is required.' });
     }
 
-    const lead = await Lead.findById(id).select('addresses name leadName');
+    const lead = await Lead.findById(id).select(
+      'addresses name leadName user_id salesManagerId createdByEmail'
+    );
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+
+    if (!(await assertLeadAccess(resolvedUser, lead, res))) {
+      return;
     }
 
     const addresses = (lead.addresses || []).map(formatAddressForResponse);
@@ -741,6 +899,10 @@ exports.saveLeadAddresses = async (req, res) => {
     const lead = await Lead.findById(id);
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    if (!(await assertLeadAccess(resolvedUser, lead, res))) {
+      return;
     }
 
     let addresses;
@@ -795,9 +957,20 @@ exports.getLeadContacts = async (req, res) => {
       return res.status(400).json({ message: 'Valid lead id is required.' });
     }
 
-    const lead = await Lead.findById(id).select('contactInfo name leadName');
+    const lead = await Lead.findById(id).select(
+      'contactInfo name leadName user_id salesManagerId createdByEmail'
+    );
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+
+    if (!(await assertLeadAccess(resolvedUser, lead, res))) {
+      return;
     }
 
     const contacts = (lead.contactInfo || []).map(formatContactForResponse);
@@ -846,6 +1019,10 @@ exports.saveLeadContacts = async (req, res) => {
     const lead = await Lead.findById(id);
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    if (!(await assertLeadAccess(resolvedUser, lead, res))) {
+      return;
     }
 
     const uploadsByIdx = resolveContactBusinessCardUploads(req);
@@ -908,9 +1085,20 @@ exports.getLeadNotes = async (req, res) => {
       return res.status(400).json({ message: 'Valid lead id is required.' });
     }
 
-    const lead = await Lead.findById(id).select('notes name leadName');
+    const lead = await Lead.findById(id).select(
+      'notes name leadName user_id salesManagerId createdByEmail'
+    );
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+
+    if (!(await assertLeadAccess(resolvedUser, lead, res))) {
+      return;
     }
 
     const notes = (await enrichNotesWithAuthors(lead.notes || [])).sort(
@@ -971,6 +1159,9 @@ exports.addLeadActivity = async (req, res) => {
       startTime,
       endTime,
     });
+    if (!(await assertLeadAccess(resolvedUser, lead, res))) {
+      return;
+    }
 
     const activityEntry = {
       activityType: activityType.toString().trim(),
@@ -1016,9 +1207,20 @@ exports.getLeadActivities = async (req, res) => {
       return res.status(400).json({ message: 'Valid lead id is required.' });
     }
 
-    const lead = await Lead.findById(id).select('activityLog name leadName');
+    const lead = await Lead.findById(id).select(
+      'activityLog name leadName user_id salesManagerId createdByEmail'
+    );
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+
+    if (!(await assertLeadAccess(resolvedUser, lead, res))) {
+      return;
     }
 
     const activities = [...(lead.activityLog || [])]
@@ -1100,6 +1302,11 @@ exports.assignLeadToSalesPerson = async (req, res) => {
     }
 
     const assigner = await User.findById(req.user.id);
+    if (isSalesPersonRole(assigner?.userRole)) {
+      return res.status(403).json({
+        message: 'Sales persons cannot assign leads to other users.',
+      });
+    }
     const assignerName = assigner?.fullName || assigner?.email || 'Manager';
 
     if (isSalesManagerRole(assigner?.userRole)) {
@@ -1112,6 +1319,12 @@ exports.assignLeadToSalesPerson = async (req, res) => {
     }
 
     lead.user_id = salesPerson._id;
+    if (salesPerson.reportsTo && mongoose.Types.ObjectId.isValid(salesPerson.reportsTo)) {
+      const managerCandidate = await User.findById(salesPerson.reportsTo);
+      if (managerCandidate && isSalesManagerRole(managerCandidate.userRole)) {
+        lead.salesManagerId = managerCandidate._id;
+      }
+    }
     lead.assignedBy = req.user.id;
     lead.assignedAt = new Date();
     lead.status = 'Assigned';
@@ -1137,7 +1350,12 @@ exports.assignLeadToSalesPerson = async (req, res) => {
     );
 
     const leadObj = formatLeadResponse(
-      (await Lead.findById(lead._id).populate('user_id', 'fullName email').populate('assignedBy', 'fullName email')).toObject()
+      (
+        await Lead.findById(lead._id)
+          .populate('user_id', 'fullName email')
+          .populate('assignedBy', 'fullName email')
+          .populate('salesManagerId', 'fullName email')
+      ).toObject()
     );
 
     return res.status(200).json({
@@ -1150,7 +1368,29 @@ exports.assignLeadToSalesPerson = async (req, res) => {
   }
 };
 
-const mapLeadToSummary = (lead) => ({
+function enrichLeadAssignmentFields(leadObj) {
+  const salesManagerFromField =
+    leadObj.salesManagerId && typeof leadObj.salesManagerId === 'object'
+      ? leadObj.salesManagerId
+      : null;
+  const salesPersonUser =
+    leadObj.user_id && typeof leadObj.user_id === 'object' ? leadObj.user_id : null;
+  const managerFromReportsTo =
+    salesPersonUser?.reportsTo && typeof salesPersonUser.reportsTo === 'object'
+      ? salesPersonUser.reportsTo
+      : null;
+
+  const salesManager = salesManagerFromField || managerFromReportsTo;
+  leadObj.salesManager = mapUserSummary(salesManager);
+  leadObj.salesManagerName =
+    salesManagerFromField?.fullName ||
+    managerFromReportsTo?.fullName ||
+    '';
+  leadObj.salesPersonName = salesPersonUser?.fullName || leadObj.salesPersonName || '';
+  return leadObj;
+}
+
+const mapLeadToSummary = (lead) => enrichLeadAssignmentFields({
   id: lead._id,
   lead_id: lead.lead_id || '',
   leadName: lead.leadName,
@@ -1184,12 +1424,35 @@ const mapLeadToSummary = (lead) => ({
   assignedByName: lead.assignedBy?.fullName || '',
   assignedAt: lead.assignedAt || null,
   createdByName: lead.createdByName,
+  salesManagerId: lead.salesManagerId?._id || lead.salesManagerId || null,
+  salesManagerName: lead.salesManagerId?.fullName || '',
 });
 
 exports.listLeads = async (req, res) => {
   try {
     const { status, salesPerson } = req.query;
     const filter = {};
+
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+    const { currentUser, is_admin } = resolvedUser;
+
+    if (!is_admin && isSalesManagerRole(currentUser.userRole)) {
+      const teamMemberIds = await getTeamMemberIds(req.user.id);
+      const visibleUserIds = [
+        ...teamMemberIds,
+        new mongoose.Types.ObjectId(req.user.id),
+      ];
+
+      filter.$or = [
+        { salesManagerId: req.user.id },
+        { user_id: { $in: visibleUserIds } },
+      ];
+    } else if (!is_admin && isSalesPersonRole(currentUser.userRole)) {
+      Object.assign(filter, buildSalesPersonLeadFilter(currentUser));
+    }
 
     if (status) {
       if (!ALLOWED_STATUSES.includes(status)) {
@@ -1201,13 +1464,27 @@ exports.listLeads = async (req, res) => {
     }
 
     if (salesPerson) {
-      filter.user_id = salesPerson;
+      if (!is_admin && isSalesPersonRole(currentUser.userRole)) {
+        if (salesPerson.toString() !== req.user.id.toString()) {
+          return res.status(403).json({ message: 'You can only view your own leads.' });
+        }
+      }
+      if (filter.$or) {
+        filter.user_id = salesPerson;
+      } else {
+        filter.user_id = salesPerson;
+      }
     }
 
     const leads = await Lead.find(filter)
       .sort({ createdAt: -1 })
-      .populate('user_id', 'fullName email')
-      .populate('assignedBy', 'fullName email');
+      .populate({
+        path: 'user_id',
+        select: 'fullName email userRole',
+        populate: { path: 'reportsTo', select: 'fullName email userRole' },
+      })
+      .populate('assignedBy', 'fullName email')
+      .populate('salesManagerId', 'fullName email');
 
     const leadSummaries = await Promise.all(
       leads.map(async (lead) => {
@@ -1228,14 +1505,28 @@ exports.getLead = async (req, res) => {
   try {
     const { id } = req.params;
     const lead = await Lead.findById(id)
-      .populate('user_id', 'fullName email')
-      .populate('assignedBy', 'fullName email');
+      .populate({
+        path: 'user_id',
+        select: 'fullName email userRole',
+        populate: { path: 'reportsTo', select: 'fullName email userRole' },
+      })
+      .populate('assignedBy', 'fullName email userRole')
+      .populate('salesManagerId', 'fullName email userRole');
 
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    const leadObj = formatLeadResponse(lead.toObject());
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+
+    if (!(await assertLeadAccess(resolvedUser, lead, res))) {
+      return;
+    }
+
+    const leadObj = enrichLeadAssignmentFields(formatLeadResponse(lead.toObject()));
     leadObj.notes = await enrichNotesWithAuthors(leadObj.notes || []);
     return res.status(200).json({ lead: leadObj });
   } catch (error) {
@@ -1284,10 +1575,20 @@ exports.convertToCustomer = async (req, res) => {
   try {
     const { id } = req.params;
     const { accountNumber, account_number } = req.body;
+
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+
     const lead = await Lead.findById(id);
 
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    if (!(await assertLeadAccess(resolvedUser, lead, res))) {
+      return;
     }
 
     const hasAccountNumberField = accountNumber !== undefined || account_number !== undefined;
@@ -1349,9 +1650,18 @@ exports.markLeadAsLost = async (req, res) => {
         ? String(req.body.reason).trim()
         : '';
 
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+
     const lead = await Lead.findById(id);
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    if (!(await assertLeadAccess(resolvedUser, lead, res))) {
+      return;
     }
 
     if (lead.status === 'Converted To Customer') {
@@ -1402,6 +1712,20 @@ exports.updateLeadStatus = async (req, res) => {
       });
     }
 
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+
+    const existingLead = await Lead.findById(id);
+    if (!existingLead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    if (!(await assertLeadAccess(resolvedUser, existingLead, res))) {
+      return;
+    }
+
     const lead = await Lead.findByIdAndUpdate(
       id,
       {
@@ -1446,7 +1770,7 @@ exports.getLeadsByUser = async (req, res) => {
       return res.status(401).json({ message: 'User not authenticated.' });
     }
 
-    const user = await User.findById(userId).select('userRole').lean();
+    const user = await User.findById(userId).select('userRole email').lean();
     if (!user) {
       return res.status(401).json({ message: 'Invalid authenticated user.' });
     }
@@ -1479,6 +1803,8 @@ exports.getLeadsByUser = async (req, res) => {
       } else {
         leadFilter.user_id = { $in: visibleUserIds };
       }
+    } else if (isSalesPersonRole(user.userRole)) {
+      Object.assign(leadFilter, buildSalesPersonLeadFilter(user));
     } else {
       leadFilter.user_id = userId;
     }
@@ -1528,6 +1854,20 @@ exports.updateLeadStatusById = async (req, res) => {
       return res.status(400).json({
         message: `Invalid status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`,
       });
+    }
+
+    const resolvedUser = await resolveCurrentUser(req.user.id);
+    if (resolvedUser.error) {
+      return res.status(401).json({ message: resolvedUser.error });
+    }
+
+    const existingLead = await Lead.findById(leadId);
+    if (!existingLead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    if (!(await assertLeadAccess(resolvedUser, existingLead, res))) {
+      return;
     }
 
     const lead = await Lead.findByIdAndUpdate(
