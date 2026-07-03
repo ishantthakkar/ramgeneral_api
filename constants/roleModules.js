@@ -1,6 +1,18 @@
 const PERMISSION_TABS = [
   { id: 'dashboard', name: 'Dashboard', allowed: ['view'] },
-  { id: 'user', name: 'User', allowed: ['view', 'edit'] },
+  {
+    id: 'user',
+    name: 'User',
+    allowed: [],
+    scopes: [
+      { id: 'all_users', name: 'All Users', allowed: ['view', 'edit'] },
+      { id: 'sales_person', name: 'Sales Person', allowed: ['view', 'edit'] },
+      { id: 'contractor', name: 'Contractor', allowed: ['view', 'edit'] },
+      { id: 'project_manager', name: 'Project Manager', allowed: ['view', 'edit'] },
+      { id: 'sales_manager', name: 'Sales Manager', allowed: ['view', 'edit'] },
+      { id: 'admin', name: 'Admin', allowed: ['view', 'edit'] },
+    ],
+  },
   { id: 'products', name: 'Products', allowed: ['view', 'edit'] },
   { id: 'leads', name: 'Leads', allowed: ['view', 'edit'] },
   { id: 'customers', name: 'Customers', allowed: ['view', 'edit'] },

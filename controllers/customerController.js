@@ -36,7 +36,7 @@ const {
   stripCustomerLogFields,
   mergeLeadHistoryForCustomerResponse,
 } = require('../utils/customerLeadHelpers');
-const { isSalesManagerRole } = require('../constants/userRoles');
+const { isSalesManagerRole, isSalesPersonRole } = require('../constants/userRoles');
 const {
   attachSurveysWithQuotations,
   stripCustomerQuotationFields,
@@ -545,6 +545,9 @@ exports.listCustomers = async (req, res) => {
     } else if (user.userRole === 'Project Manager') {
       const assignedCustomerIds = await Customer.distinct('_id', { assignedTo: user_id });
       filter._id = { $in: assignedCustomerIds };
+    } else if (isSalesPersonRole(user.userRole)) {
+      filter.user_id = user_id;
+      filter.leadId = { $ne: null };
     }
 
     if (status) {
@@ -599,12 +602,13 @@ exports.listConvertedCustomers = async (req, res) => {
     const User = require('../models/User');
 
     const admin = await Admin.findById(user_id);
+    let currentUser = null;
     if (!admin) {
-      const user = await User.findById(user_id);
-      if (user && user.userRole === 'Project Manager') {
+      currentUser = await User.findById(user_id);
+      if (currentUser && currentUser.userRole === 'Project Manager') {
         filter.assignedTo = user_id;
       }
-      if (user && isSalesManagerRole(user.userRole)) {
+      if (currentUser && isSalesManagerRole(currentUser.userRole)) {
         const teamMembers = await User.find({ reportsTo: user_id }).select('_id').lean();
         const visibleUserIds = [
           ...teamMembers.map((member) => member._id),
@@ -620,10 +624,19 @@ exports.listConvertedCustomers = async (req, res) => {
           { leadId: { $in: managerLeadIds.map((l) => l._id) } },
         ];
       }
+      if (currentUser && isSalesPersonRole(currentUser.userRole)) {
+        filter.user_id = user_id;
+      }
     }
 
     if (salesPerson) {
-      filter.user_id = salesPerson;
+      if (currentUser && isSalesPersonRole(currentUser.userRole)) {
+        if (salesPerson.toString() !== user_id.toString()) {
+          return res.status(403).json({ message: 'You can only view your own customers.' });
+        }
+      } else {
+        filter.user_id = salesPerson;
+      }
     }
 
     if (status) {
@@ -822,6 +835,19 @@ exports.getCustomer = async (req, res) => {
         const isAssignedToManager = leadManagerId === managerId;
 
         if (!isAssignedToManager && !isOnTeam && !isOwn) {
+          return res.status(403).json({ message: 'You are not allowed to view this customer.' });
+        }
+      }
+
+      if (isSalesPersonRole(user.userRole)) {
+        const salesPersonId = req.user.id.toString();
+        const customerSalesPersonId = customer.user_id?._id
+          ? customer.user_id._id.toString()
+          : customer.user_id
+            ? customer.user_id.toString()
+            : '';
+
+        if (customerSalesPersonId !== salesPersonId || !customer.leadId) {
           return res.status(403).json({ message: 'You are not allowed to view this customer.' });
         }
       }
@@ -1615,6 +1641,9 @@ exports.getCustomersByUser = async (req, res) => {
       } else {
         customerFilter.user_id = { $in: allowedUserIds };
       }
+    } else if (isSalesPersonRole(user.userRole)) {
+      customerFilter.user_id = userId;
+      customerFilter.leadId = { $ne: null };
     } else {
       customerFilter.user_id = userId;
     }
