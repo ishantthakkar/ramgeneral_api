@@ -24,7 +24,8 @@ connectDB();
 app.use(express.json());
 const allowedOrigins = [
   'http://localhost:3000',          // local frontend
-  'https://ramgeneral-admin.vercel.app'          // live frontend
+  'https://ramgeneral-admin.vercel.app',          // live frontend
+  'https://ramgeneral-admin-web.vercel.app'
 ];
 
 app.use(cors({
